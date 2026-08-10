@@ -242,6 +242,9 @@ export async function createUserSelenium(
 
         } catch (error: any) {
             console.error(`❌ Error en el intento ${attempt} de creación de usuario de Selenium para Cas-EPC:`, error.message || error);
+            if (proxySession && proxySession.rawProxy) {
+                ProxyManager.markProxyFailed(proxySession.rawProxy);
+            }
             if (driver) {
                 try {
                     console.log("📸 Tomando captura de pantalla por fallo de creación...");

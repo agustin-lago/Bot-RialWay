@@ -82,6 +82,9 @@ export async function withdrawalUser(
             }
         } catch (error: any) {
             console.error(`❌ [Cas-EPC] Error en intento ${attempt} de retiro:`, error.message || error);
+            if (proxySession && proxySession.rawProxy) {
+                ProxyManager.markProxyFailed(proxySession.rawProxy);
+            }
             
             if (localDriver) {
                 try {
