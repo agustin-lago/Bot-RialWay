@@ -41,7 +41,7 @@ export async function updateAllDocs(projectId?: string, serviceId?: string) {
 
         if (docSettings && docSettings.length > 0) {
             for (const s of docSettings) {
-                const ids = (s.value || "").split(",").map(id => id.trim()).filter(Boolean);
+                const ids = (s.value || "").split(",").map((id: string) => id.trim()).filter(Boolean);
                 for (const docxId of ids) {
                     if (docxId && docxId !== "default" && docxId !== "PENDING" && !docxId.startsWith("default_")) {
                         docTasks.push({ projectId: s.project_id, serviceId: s.service_id, docxId });
@@ -51,7 +51,7 @@ export async function updateAllDocs(projectId?: string, serviceId?: string) {
         }
 
         if (envDocx && envDocx !== "default" && envDocx !== "PENDING") {
-            const ids = envDocx.split(",").map(id => id.trim()).filter(Boolean);
+            const ids = envDocx.split(",").map((id: string) => id.trim()).filter(Boolean);
             for (const docxId of ids) {
                 if (docxId && !docTasks.some(t => t.docxId === docxId)) {
                     docTasks.push({ projectId: currentProjectId, serviceId: currentServiceId || null, docxId });

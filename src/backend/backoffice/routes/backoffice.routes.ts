@@ -991,7 +991,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const { id } = req.params;
             const projectId = resolveProjectId(req);
             const serviceId = resolveServiceId(req);
-            const chat = await depsHistoryHandler.getChat(id, projectId, serviceId);
+            const chat = await depsHistoryHandler.getChat(id, projectId || undefined, serviceId || undefined);
             if (!chat) return res.status(404).json({ success: false, error: 'Chat not found' });
             res.json(chat);
         } catch (err: any) {
@@ -1566,9 +1566,9 @@ export const registerBackofficeRoutes = (app: any) => {
             trackSentMessage(externalId);
 
             const projectId = resolveProjectId(req);
-            await depsHistoryHandler.saveMessage(chatId, 'assistant', mediaUrl, finalType, undefined, undefined, externalId, 'whatsapp', projectId);
-            await depsHistoryHandler.updateLastHumanMessage(chatId, projectId);
-            await depsHistoryHandler.toggleBot(chatId, false, projectId);
+            await depsHistoryHandler.saveMessage(chatId, 'assistant', mediaUrl, finalType, undefined, undefined, externalId, 'whatsapp', projectId || undefined);
+            await depsHistoryHandler.updateLastHumanMessage(chatId, projectId || undefined);
+            await depsHistoryHandler.toggleBot(chatId, false, projectId || undefined);
 
             res.json({ success: true, message: 'Archivo reenviado correctamente' });
         } catch (e: any) {
@@ -1663,7 +1663,7 @@ export const registerBackofficeRoutes = (app: any) => {
         try {
             const { id } = req.params;
             const projectId = resolveProjectId(req);
-            const contact = await depsHistoryHandler.getChat(id, projectId);
+            const contact = await depsHistoryHandler.getChat(id, projectId || undefined);
             if (!contact) {
                 return res.status(404).json({ success: false, error: 'Contact not found' });
             }
@@ -1685,7 +1685,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 crm_status, crm_due_date,
                 is_lead: true,
                 ticket_title
-            }, projectId, serviceId);
+            }, projectId || undefined, serviceId || undefined);
             res.json(result);
         } catch (err: any) {
             res.status(500).json({ success: false, error: err.message });
@@ -1799,7 +1799,7 @@ export const registerBackofficeRoutes = (app: any) => {
         try {
             const { id } = req.params;
             const projectId = resolveProjectId(req);
-            const result = await depsHistoryHandler.deleteTicket(id, projectId);
+            const result = await depsHistoryHandler.deleteTicket(id, projectId || undefined);
             res.json(result);
         } catch (err: any) {
             res.status(500).json({ success: false, error: err.message });
@@ -1817,7 +1817,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
             let deletedCount = 0;
             for (const ticketId of ticketIds) {
-                const resDel = await depsHistoryHandler.deleteTicket(ticketId, projectId);
+                const resDel = await depsHistoryHandler.deleteTicket(ticketId, projectId || undefined);
                 if (resDel && resDel.success) {
                     deletedCount++;
                 }
@@ -2070,7 +2070,7 @@ export const registerBackofficeRoutes = (app: any) => {
             if (manualWabaId || manualToken) {
                 await depsHistoryHandler.saveMetaOnboardingData(
                     wabaId, 
-                    null, 
+                    phoneId, 
                     token, 
                     { activatedVia: 'manual-advanced-form' }, 
                     projectId,
@@ -2465,13 +2465,13 @@ export const registerBackofficeRoutes = (app: any) => {
 
                 if (mediaHeader && mediaHeader.url) {
                     const mediaType = mediaHeader.type || 'document';
-                    await depsHistoryHandler.saveMessage(targetJid, 'assistant', mediaHeader.url, mediaType, undefined, undefined, `${msgId}_media`, 'whatsapp', projectId);
+                    await depsHistoryHandler.saveMessage(targetJid, 'assistant', mediaHeader.url, mediaType, undefined, undefined, `${msgId}_media`, 'whatsapp', projectId || undefined);
                 }
 
                 const textToSave = renderedText || `[Plantilla Meta: ${templateName}]`;
-                await depsHistoryHandler.saveMessage(targetJid, 'assistant', textToSave, 'text', undefined, undefined, msgId, 'whatsapp', projectId);
-                await depsHistoryHandler.updateLastHumanMessage(targetJid, projectId);
-                await depsHistoryHandler.toggleBot(targetJid, false, projectId);
+                await depsHistoryHandler.saveMessage(targetJid, 'assistant', textToSave, 'text', undefined, undefined, msgId, 'whatsapp', projectId || undefined);
+                await depsHistoryHandler.updateLastHumanMessage(targetJid, projectId || undefined);
+                await depsHistoryHandler.toggleBot(targetJid, false, projectId || undefined);
 
                 return res.json({ success: true, messageId: msgId });
             } else {
@@ -2694,10 +2694,10 @@ export const registerBackofficeRoutes = (app: any) => {
                             // Si la plantilla tiene cabecera multimedia, guardar primero el mensaje multimedia
                             if (headerComp && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(headerComp.format) && mediaLink) {
                                 const mediaType = headerComp.format.toLowerCase();
-                                await depsHistoryHandler.saveMessage(chat.id, 'assistant', mediaLink, mediaType, undefined, undefined, `${msgId}_media`, 'whatsapp', projectId);
+                                await depsHistoryHandler.saveMessage(chat.id, 'assistant', mediaLink, mediaType, undefined, undefined, `${msgId}_media`, 'whatsapp', projectId || undefined);
                             }
 
-                            await depsHistoryHandler.saveMessage(chat.id, 'assistant', historyContent, 'text', undefined, undefined, msgId, 'whatsapp', projectId);
+                            await depsHistoryHandler.saveMessage(chat.id, 'assistant', historyContent, 'text', undefined, undefined, msgId, 'whatsapp', projectId || undefined);
                             sent++;
                         } else {
                             errors++;

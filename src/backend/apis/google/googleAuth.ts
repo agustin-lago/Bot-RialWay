@@ -10,7 +10,7 @@ const googleProxyUrl = envGoogleProxy === 'direct' ? null : (envGoogleProxy || "
 if (googleProxyUrl) {
     console.log(`🔌 [GoogleAuth] Configurando proxy global de Google a: ${googleProxyUrl}`);
     const originalRequest = DefaultTransporter.prototype.request;
-    DefaultTransporter.prototype.request = function (opts: any) {
+    (DefaultTransporter.prototype as any).request = function (opts: any) {
         if (opts.url) {
             const originalUrlStr = opts.url;
             let targetHost = "www.googleapis.com";

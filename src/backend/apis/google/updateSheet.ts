@@ -31,8 +31,7 @@ const getSheetsClient = () => {
 };
 
 const getOpenAIClient = async (projectId?: string, serviceId?: string) => {
-    let key = projectId ? await HistoryHandler.getConfig('OPENAI_API_KEY', projectId, serviceId) : null;
-    if (!key) key = process.env.OPENAI_API_KEY;
+    let key = (projectId ? await HistoryHandler.getConfig('OPENAI_API_KEY', projectId, serviceId) : null) || process.env.OPENAI_API_KEY || null;
     const baseURL = getOpenAIBaseUrl();
     return key ? new OpenAI({ 
         apiKey: key,
@@ -70,7 +69,7 @@ export async function updateAllSheets(options: { forceRecreate?: boolean; projec
 
         if (sheetSettings && sheetSettings.length > 0) {
             for (const s of sheetSettings) {
-                const ids = (s.value || "").split(",").map(id => id.trim()).filter(Boolean);
+                const ids = (s.value || "").split(",").map((id: string) => id.trim()).filter(Boolean);
                 for (const sheetId of ids) {
                     if (sheetId && sheetId !== "default" && sheetId !== "PENDING" && !sheetId.startsWith("default_")) {
                         sheetTasks.push({ projectId: s.project_id, serviceId: s.service_id, sheetId });
@@ -82,7 +81,7 @@ export async function updateAllSheets(options: { forceRecreate?: boolean; projec
         // Fallback env
         const envSheet = process.env.SHEET_ID_UPDATE || "";
         if (envSheet && envSheet !== "default" && envSheet !== "PENDING") {
-            const ids = envSheet.split(",").map(id => id.trim()).filter(Boolean);
+            const ids = envSheet.split(",").map((id: string) => id.trim()).filter(Boolean);
             for (const sheetId of ids) {
                 if (sheetId && !sheetTasks.some(t => t.sheetId === sheetId)) {
                     sheetTasks.push({ projectId: currentProjectId, serviceId: currentServiceId || null, sheetId });
