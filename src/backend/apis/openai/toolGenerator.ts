@@ -129,8 +129,19 @@ ${JSON.stringify(tablesSchema, null, 2)}
                     try {
                         const clientSlug = await HistoryHandler.getConfig('CLIENT_SLUG', projectId, serviceId);
                         if (clientSlug) {
-                            const { moduleRegistry } = await import('../../bot/toolRegistry');
-                            const activeModule = (moduleRegistry as any)[clientSlug.trim().toLowerCase()];
+                            let activeModule: any = null;
+                            const normalizedSlug = clientSlug.trim().toLowerCase();
+                            if (normalizedSlug === 'aquavita') {
+                                const mod = await import('../../modules/aquavita/index');
+                                activeModule = mod.aquavitaModule;
+                            } else if (normalizedSlug === 'cas-epc' || normalizedSlug === 'casepc') {
+                                const mod = await import('../../modules/cas-epc/index');
+                                activeModule = mod.casEpcModule;
+                            } else if (normalizedSlug === 'ganemos' || normalizedSlug === 'ganemos-net') {
+                                const mod = await import('../../modules/ganemos-net/index');
+                                activeModule = mod.ganemosModule;
+                            }
+
                             if (activeModule && activeModule.openAiTools) {
                                 const moduleTools = activeModule.openAiTools;
                                 console.log(`🤖 [ToolGenerator] Combinando herramientas del módulo '${clientSlug}' con query_database...`);

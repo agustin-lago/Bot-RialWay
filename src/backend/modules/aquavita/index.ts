@@ -511,9 +511,9 @@ export const aquavitaModule = {
       let preciosCliente = null;
       
       const resData = (apiResponse as any).data || apiResponse;
+      const clientes = resData.clientesCercanos || resData.data;
       
-      if (resData.clientesCercanos && Array.isArray(resData.clientesCercanos) && resData.clientesCercanos.length > 0) {
-        const clientes = resData.clientesCercanos;
+      if (clientes && Array.isArray(clientes) && clientes.length > 0) {
         clienteSeleccionado = clientes.reduce((min: any, c: any) => c.distanciaMetros < min.distanciaMetros ? c : min, clientes[0]);
         try {
           const preciosResp = await ListaDePreciosApi.obtenerListaDePrecios(clienteSeleccionado.cliente_id);
@@ -521,7 +521,11 @@ export const aquavitaModule = {
         } catch (err) {
           console.error('[API Debug] Error obteniendo lista de precios:', err);
         }
-        resumen = `La dirección está dentro de la zona de cobertura.\nCliente más cercano: ${clienteSeleccionado.cliente_id}, Reparto: ${clienteSeleccionado.nombreReparto}`;
+        const dias = Array.isArray(clienteSeleccionado.visitas) 
+          ? [...new Set(clienteSeleccionado.visitas.map((v: any) => v.dia).filter(Boolean))] 
+          : [];
+        const diasStr = dias.length > 0 ? dias.join(', ') : 'Sin especificar';
+        resumen = `La dirección está dentro de la zona de cobertura.\nCliente más cercano: ${clienteSeleccionado.cliente_id}, Día de reparto: ${diasStr}`;
         const datosCliente = {
           cliente_id: clienteSeleccionado.cliente_id,
           nombreReparto: clienteSeleccionado.nombreReparto,

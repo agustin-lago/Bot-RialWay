@@ -1,5 +1,4 @@
 // src/bot/clientModuleLoader.ts
-import { moduleRegistry } from "./toolRegistry";
 
 export async function loadActiveClientModule() {
   const clientSlugRaw = process.env.CLIENT_SLUG;
@@ -10,7 +9,18 @@ export async function loadActiveClientModule() {
   }
 
   const clientSlug = clientSlugRaw.trim().toLowerCase();
-  const activeModule = moduleRegistry[clientSlug as keyof typeof moduleRegistry];
+  
+  let activeModule: any = null;
+  if (clientSlug === 'aquavita') {
+    const mod = await import("../modules/aquavita/index");
+    activeModule = mod.aquavitaModule;
+  } else if (clientSlug === 'cas-epc' || clientSlug === 'casepc') {
+    const mod = await import("../modules/cas-epc/index");
+    activeModule = mod.casEpcModule;
+  } else if (clientSlug === 'ganemos' || clientSlug === 'ganemos-net') {
+    const mod = await import("../modules/ganemos-net/index");
+    activeModule = mod.ganemosModule;
+  }
 
   if (!activeModule) {
     throw new Error(`No existe módulo registrado para CLIENT_SLUG=${clientSlug}`);

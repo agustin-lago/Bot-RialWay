@@ -10,36 +10,43 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 // Capturar argumentos de la línea de comandos
 const args = process.argv.slice(2);
 const projectId = args[0];
+const serviceId = args[1];
 
 if (!projectId || projectId.startsWith("-")) {
     console.error("\n❌ Error: Falta el ID de Proyecto.");
     console.log("\n📖 Uso correcto:");
-    console.log("  npx tsx src/backend/backoffice/meta_webhook_register.ts <project_id>");
+    console.log("  npx tsx src/backend/backoffice/meta_webhook_register.ts <project_id> [service_id]");
     console.log("  Ejemplo:");
-    console.log("  npx tsx src/backend/backoffice/meta_webhook_register.ts 5678d0d0-7256-496e-ac1c-d0dd2c41db07\n");
+    console.log("  npx tsx src/backend/backoffice/meta_webhook_register.ts 5678d0d0-7256-496e-ac1c-d0dd2c41db07 7f8e7a76-00c1-436d-b124-fb59b1779a68\n");
     process.exit(1);
 }
 
 async function main() {
-    console.log(`\n📡 [REGISTRO] Buscando credenciales de Meta para el Proyecto: ${projectId}...\n`);
+    console.log(`\n📡 [REGISTRO] Buscando credenciales de Meta para el Proyecto: ${projectId}, Servicio: ${serviceId || 'cualquiera'}...\n`);
 
     try {
         // 1. Obtener onboarding de Supabase
-        const { data: onboarding, error: onboardErr } = await supabase
+        let query = supabase
             .from("meta_onboarding")
             .select("*")
-            .eq("project_id", projectId)
-            .maybeSingle();
+            .eq("project_id", projectId);
+
+        if (serviceId) {
+            query = query.eq("service_id", serviceId);
+        }
+
+        const { data: onboarding, error: onboardErr } = await query.maybeSingle();
 
         if (onboardErr) throw onboardErr;
 
         if (!onboarding) {
-            console.error(`❌ Error: No se encontraron credenciales en 'meta_onboarding' para el proyecto: ${projectId}.`);
+            console.error(`❌ Error: No se encontraron credenciales en 'meta_onboarding' para el proyecto: ${projectId}${serviceId ? ` y servicio: ${serviceId}` : ''}.`);
             console.log("Por favor, asegúrate de que el proyecto haya completado la fase de onboarding en el Backoffice.\n");
             return;
         }
 
-        const { waba_id: wabaId, phone_number_id: phoneId, access_token: token } = onboarding;
+        const { waba_id: wabaId, phone_number_id: phoneId, access_token: token, service_id: onboardServiceId } = onboarding;
+        const targetServiceId = serviceId || onboardServiceId || 'default_service';
 
         if (!wabaId || !phoneId) {
             console.error("❌ Error: Faltan identificadores críticos (WABA ID o Phone ID) en el registro de onboarding.");
@@ -60,11 +67,17 @@ async function main() {
         let projectUrl = "https://bot-rialway-monoagente-production-1287.up.railway.app"; // Fallback por defecto
         
         console.log("📡 Consultando la base de datos para obtener la URL estática de Railway para este proyecto...");
-        const { data: allDomains } = await supabase
+        let domainQuery = supabase
             .from("settings")
             .select("key, value")
             .eq("project_id", projectId)
             .in("key", ["RAILWAY_STATIC_URL", "RAILWAY_PUBLIC_DOMAIN", "PROJECT_URL"]);
+
+        if (targetServiceId) {
+            domainQuery = domainQuery.eq("service_id", targetServiceId);
+        }
+
+        const { data: allDomains } = await domainQuery;
 
         // Priorizar siempre el dominio estático nativo de Railway (*.up.railway.app) ya que no depende de DNS personalizados
         const staticRailwayDomain = allDomains?.find(d => d.value && d.value.includes('.up.railway.app'));
@@ -87,13 +100,14 @@ async function main() {
         }
 
         // 3. Sincronizar la routing_table para el enrutador central de webhooks
-        console.log(`\n📡 [MIGRACIÓN] Sincronizando enrutador 'routing_table'...`);
+        console.log(`\n📡 [MIGRACIÓN] Sincronizando enrutador 'routing_table' (Servicio: ${targetServiceId})...`);
         const { error: routeErr } = await supabase
             .from("routing_table")
             .upsert({
                 phone_number_id: phoneId,
                 waba_id: wabaId,
                 project_id: projectId,
+                service_id: targetServiceId,
                 project_url: projectUrl,
                 updated_at: new Date().toISOString()
             }, { onConflict: "phone_number_id" });
