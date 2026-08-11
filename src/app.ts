@@ -484,7 +484,16 @@ const main = async () => {
 
             res.json({ name });
         });
-        app.get("/api/dashboard-status", async (_req: any, res: any) => res.json(await hasActiveSession(adapterProvider, groupProvider)));
+        app.get("/api/dashboard-status", async (req: any, res: any) => {
+            const sessionStatus = await hasActiveSession(adapterProvider, groupProvider);
+            const projectId = sessionStatus.activeProjectId || HistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || HistoryHandler.SERVICE_IDENTIFIER;
+            const clientSlug = await HistoryHandler.getConfig('CLIENT_SLUG', projectId, serviceId);
+            res.json({
+                ...sessionStatus,
+                clientSlug
+            });
+        });
 
         // API Session Control
         app.post("/api/delete-session", async (_req: any, res: any) => {

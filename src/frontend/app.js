@@ -21,6 +21,7 @@ const ROUTES = {
     '/reportes':                 '/js/reportes/reportes.view.js',
     '/usuarios':                 '/js/usuarios/usuarios.view.js',
     '/webhooks':                 '/js/webhook-config/webhook-config.view.js',
+    '/epc-cbu-cvu':              '/js/epc-cbu-cvu/epc-cbu-cvu.view.js',
 };
 
 const _loadedScripts = {};
@@ -327,6 +328,20 @@ document.addEventListener('DOMContentLoaded', () => {
             window.supportWidget.init();
         }
     });
+
+    // Verificar si el cliente EPC está activo para mostrar el menú CBU/CVU/ALIAS
+    const backofficeTokenForSlug = localStorage.getItem('backoffice_token');
+    if (backofficeTokenForSlug) {
+        fetch(`/api/dashboard-status?token=${encodeURIComponent(backofficeTokenForSlug)}`)
+            .then(res => res.json())
+            .then(data => {
+                const epcMenuItem = document.getElementById('nav-epc-cbu-cvu');
+                if (epcMenuItem) {
+                    epcMenuItem.style.display = (data.clientSlug === 'cas-epc' || data.clientSlug === 'casepc') ? 'block' : 'none';
+                }
+            })
+            .catch(err => console.error('[Router] Error checking client slug:', err));
+    }
 
     // Escuchar cambios de settings en tiempo real
     const _appSocket = io();

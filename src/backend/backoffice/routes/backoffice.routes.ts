@@ -3215,7 +3215,8 @@ export const registerBackofficeRoutes = (app: any) => {
         if (!key) return res.status(400).json({ success: false, error: 'key is required' });
         try {
             const projectId = resolveProjectId(req);
-            const value = await depsHistoryHandler.getSetting(key, projectId);
+            const serviceId = resolveServiceId(req);
+            const value = await depsHistoryHandler.getSetting(key, projectId, serviceId);
             res.json({ success: true, value });
         } catch (error: any) {
             res.status(500).json({ success: false, error: error.message });
@@ -3231,7 +3232,8 @@ export const registerBackofficeRoutes = (app: any) => {
                 return res.status(403).json({ success: false, error: 'Esta variable es estática y solo puede editarse vía base de datos.' });
             }
             const projectId = resolveProjectId(req);
-            await depsHistoryHandler.saveSetting(key, value, projectId);
+            const serviceId = resolveServiceId(req);
+            await depsHistoryHandler.saveSetting(key, value, projectId, serviceId);
             if (key === 'SYSTEM_CONFIG_VISIBLE') {
                 invalidateVisibilityCache();
                 historyEvents.emit('setting_changed', { key, value });

@@ -93,18 +93,62 @@ export const casEpcModule = {
       return `❌ No se pudo procesar el retiro de $${amount} para el usuario ${username}.`;
     },
 
+    BUSCAR_CVU: async (args: any, context: any) => {
+      console.log(`[casEpcModule] 🏦 Invocando BUSCAR_CVU...`);
+      try {
+        const { HistoryHandler } = await import("../../db/historyHandler.js");
+        const projectId = context?.projectId || HistoryHandler.PROJECT_IDENTIFIER;
+        const serviceId = context?.serviceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || HistoryHandler.SERVICE_IDENTIFIER;
+        
+        // Cargar el listado de CBU/CVU/ALIAS
+        const dataStr = await HistoryHandler.getConfig('EPC_CBU_CVU_DATA', projectId, serviceId);
+        if (!dataStr) {
+          return `❌ No se han configurado cuentas CBU/CVU/ALIAS en el sistema.`;
+        }
+        
+        const list = JSON.parse(dataStr);
+        if (!Array.isArray(list) || list.length === 0) {
+          return `❌ No se han configurado cuentas CBU/CVU/ALIAS en el sistema.`;
+        }
+        
+        const activeItem = list.find((item: any) => item.active === true);
+        if (!activeItem) {
+          return `❌ No hay ninguna cuenta CBU/CVU/ALIAS activa en este momento.`;
+        }
+        
+        const label = activeItem.type === 'alias' ? 'Alias' : activeItem.type.toUpperCase();
+        return `🏦 Datos de transferencia activos:\n- Tipo: ${activeItem.type.toUpperCase()}\n- ${label}: ${activeItem.number}\n- Titular: ${activeItem.holder || 'N/A'}\n- Banco/Plataforma: ${activeItem.bank || 'N/A'}`;
+      } catch (err: any) {
+        console.error(`[casEpcModule] ❌ Error en BUSCAR_CVU:`, err.message);
+        return `❌ Ocurrió un error al buscar los datos de transferencia.`;
+      }
+    },
+
     // ----------------------------------------------------
     // ALIASES Y SINÓNIMOS LEGACY
     // ----------------------------------------------------
     CREAR_USUARIO: async (args: any, context: any) => casEpcModule.tools.CREAR_JUGADOR(args, context),
     RECARGAR: async (args: any, context: any) => casEpcModule.tools.DEPOSITAR(args, context),
     RETIRO: async (args: any, context: any) => casEpcModule.tools.RETIRAR(args, context),
+    buscar_cvu: async (args: any, context: any) => casEpcModule.tools.BUSCAR_CVU(args, context),
   },
 
   // ----------------------------------------------------
   // NATIVE OPENAI TOOLS SCHEMAS
   // ----------------------------------------------------
   openAiTools: [
+    {
+      "type": "function",
+      "function": {
+        "name": "BUSCAR_CVU",
+        "description": "Obtiene los datos de la cuenta bancaria (CBU, CVU o Alias) activa de la plataforma para recibir transferencias.",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      }
+    },
     {
       "type": "function",
       "function": {
