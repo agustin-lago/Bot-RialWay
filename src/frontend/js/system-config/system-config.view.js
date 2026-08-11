@@ -7,7 +7,6 @@ window.systemConfigView = {
         <!-- Contenido principal -->
         <div id="main-config-content" style="display:flex; opacity:1; flex:1; overflow:auto; flex-direction:column;">
             <main class="crm-main-container relative" style="z-index:10; max-width:none; padding:0;">
-
                 <div class="kanban-header animate-fade">
                     <div class="header-info">
                         <h1><i class="fas fa-gears kanban-header-icon"></i> Configuracion del Sistema</h1>
@@ -16,6 +15,21 @@ window.systemConfigView = {
                 </div>
 
                 <form id="variables-form" style="padding: 2rem 2.5rem;">
+                    <div class="variables-grid project-identity-grid">
+                        <div class="section-header">
+                            <h2><i class="fas fa-diagram-project"></i> Proyecto</h2>
+                        </div>
+                        <div class="variable-group">
+                            <h3>NOMBRE DEL PROYECTO</h3>
+                            <p class="description">Identificador visible del backoffice.</p>
+                            <div class="project-identity-value">${window.BOT_NAME || 'Neurolinks'}</div>
+                        </div>
+                        <div class="variable-group">
+                            <h3>PROJECT_ID</h3>
+                            <p class="description">ID tecnico del proyecto Railway.</p>
+                            <div class="project-identity-value project-identity-id" title="${window.railwayProjectId || ''}">${window.railwayProjectId || 'Sin project_id'}</div>
+                        </div>
+                    </div>
 
                     <!-- Seccion 1: OpenAI & Asistentes -->
                     <div class="variables-grid">
@@ -359,7 +373,7 @@ window.systemConfigView = {
                                     <input type="text" id="ADMIN_PASS" autocomplete="off" placeholder="Nueva contraseña (vacío = sin cambio)" style="width:100%; padding:8px 12px; border-radius:8px; border:1.5px solid var(--border); background:var(--bg-card); color:var(--text-main); font-size:0.9rem; box-sizing:border-box;">
                                 </div>
                             </div>
-                            <button type="button" id="save-credentials-btn" style="padding:9px 20px; border-radius:10px; border:none; background:linear-gradient(135deg,#6366f1,#8b5cf6); color:white; cursor:pointer; font-size:0.88rem; font-weight:600; display:flex; align-items:center; gap:8px;">
+                            <button type="button" id="save-credentials-btn" class="btn-success">
                                 <i class="fas fa-key"></i> Guardar Credenciales
                             </button>
                             <p id="credentials-status" style="margin:8px 0 0; font-size:0.82rem; color:var(--text-muted);"></p>
@@ -419,9 +433,8 @@ window.systemConfigView = {
                     <textarea name="ASSISTANT_PROMPT_5" id="ASSISTANT_PROMPT_5_VAL" hidden></textarea>
 
                     <div class="actions">
-                        <button type="button" id="cancel-btn" class="btn-outline px-6 py-2.5">Cancelar</button>
-                        <button type="submit" id="update-btn" class="btn px-8"
-                            style="background:linear-gradient(135deg,#10b981,#059669); box-shadow:0 4px 12px rgba(16,185,129,0.3);">
+                        <button type="button" id="cancel-btn" class="btn-cancel">Cancelar</button>
+                        <button type="submit" id="update-btn" class="btn-success">
                             <i class="fas fa-floppy-disk"></i> Guardar cambios
                         </button>
                     </div>
@@ -485,7 +498,7 @@ window.systemConfigView = {
                     <button type="button" id="sync-prompt-btn" class="btn-outline px-4 py-2 text-sm">
                         <i class="fas fa-rotate"></i> Sincronizar
                     </button>
-                    <button type="button" id="save-prompt-hot-btn" class="btn-primary px-5 py-2 text-sm">
+                    <button type="button" id="save-prompt-hot-btn" class="btn-success px-5 py-2 text-sm">
                         <i class="fas fa-floppy-disk"></i> Guardar
                     </button>
                 </div>

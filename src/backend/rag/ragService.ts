@@ -8,7 +8,8 @@ import { HistoryHandler } from '../db/historyHandler.js';
 import { getOpenAIBaseUrl } from '../apis/openai/openaiHelper.js';
 
 async function getOpenAIClient(projectId?: string, serviceId?: string) {
-    let key = (projectId ? await HistoryHandler.getConfig('OPENAI_API_KEY', projectId, serviceId) : null) || process.env.OPENAI_API_KEY || null;
+    let key = projectId ? await HistoryHandler.getConfig('OPENAI_API_KEY', projectId, serviceId) : null;
+    if (!key) key = process.env.OPENAI_API_KEY || null;
     const baseURL = getOpenAIBaseUrl();
     return (key && key.length > 5) ? new OpenAI({
         apiKey: key,

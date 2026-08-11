@@ -456,7 +456,8 @@ export class AssistantResponseProcessor {
         currentAssistantId: string,
         assignedAgentName: string,
         assistantMap: Record<string, string | undefined>,
-        projectId: string
+        projectId: string,
+        serviceId: string | null = null
     ) {
         if (!response) return;
 
@@ -477,7 +478,7 @@ export class AssistantResponseProcessor {
         if (nextAgentName) {
             if (nextAgentName === 'asistente_humano') {
                 console.log(`🚀 [MultiAgent] Handover a HUMANO: Apagando bot para ${ctx.from}`);
-                await HistoryHandler.toggleBot(ctx.from, false);
+                await HistoryHandler.toggleBot(ctx.from, false, projectId, serviceId);
                 
                 await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
                     response, ctx, flowDynamic, state, provider, gotoFlow,
@@ -504,7 +505,7 @@ export class AssistantResponseProcessor {
                 console.log(`🚀 [MultiAgent] Handover detectado: ${assignedAgentName} -> ${nextAgentName} (User: ${ctx.from})`);
                 
                 // 1. Persistir cambio de agente en DB y state
-                await HistoryHandler.setAssignedAgent(ctx.from, nextAgentName, projectId);
+                await HistoryHandler.setAssignedAgent(ctx.from, nextAgentName, projectId, serviceId || undefined);
                 await state.update({ assignedAgent: nextAgentName });
 
                 // 2. Procesar respuesta del agente saliente
@@ -521,7 +522,7 @@ export class AssistantResponseProcessor {
                 if (!threadId && state?.get) threadId = state.get('thread_id');
 
                 const nextResponseRaw = await getAssistantResponse(
-                    nextAssistantId, resumenContextual, state, undefined, ctx.from, threadId, projectId, nextAgentName
+                    nextAssistantId, resumenContextual, state, undefined, ctx.from, threadId, projectId, nextAgentName, serviceId
                 );
                 
                 if (nextResponseRaw) {

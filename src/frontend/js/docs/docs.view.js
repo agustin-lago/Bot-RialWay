@@ -1,6 +1,6 @@
 /* global loadViewScript, marked */
 window.docsView = {
-    title: 'Manual - ' + (window.BOT_NAME || 'Backoffice'),
+    title: 'Centro de ayuda - ' + (window.BOT_NAME || 'Backoffice'),
 
     getHTML() {
         return `

@@ -18,12 +18,14 @@ async function login() {
         const result = await response.json();
         if (result.success) {
             const token = result.token; // Usamos el token devuelto por el servidor
+            const isSuperAdmin = result.isSuperAdmin === true;
             localStorage.setItem('user_role', result.role || 'subuser');
             localStorage.setItem('user_id', result.userId || '');
             localStorage.setItem('user_name', result.user || user);
+            localStorage.setItem('is_superadmin', isSuperAdmin ? 'true' : 'false');
 
             if (target === 'system-config') {
-                if (token !== "neuroadmin25") {
+                if (!isSuperAdmin) {
                     errorDiv.innerText = 'Solo el administrador maestro tiene acceso a esta sección';
                     errorDiv.style.display = 'block';
                     return;
@@ -32,12 +34,12 @@ async function login() {
                 window.location.href = '/system-config';
             } else {
                 localStorage.setItem('backoffice_token', token);
-                if (token === "neuroadmin25") {
+                if (isSuperAdmin) {
                     localStorage.setItem('system_config_token', token);
                 } else {
                     localStorage.removeItem('system_config_token');
                 }
-                window.location.href = '/backoffice';
+                window.location.href = '/conversaciones';
             }
         } else {
             errorDiv.innerText = 'Usuario o Contraseña Inválidos';

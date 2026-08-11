@@ -21,14 +21,14 @@ export class AiManager {
     /**
      * Resuelve el ASSISTANT_MAP de forma dinámica para Hot-update.
      */
-    public async getAssistantMap(projectId: string | null = null): Promise<Record<string, string | undefined>> {
-        const assistant1 = await HistoryHandler.getConfig('ASSISTANT_1', projectId) || await HistoryHandler.getConfig('ASSISTANT_ID', projectId);
+    public async getAssistantMap(projectId: string | null = null, serviceId: string | null = null): Promise<Record<string, string | undefined>> {
+        const assistant1 = await HistoryHandler.getConfig('ASSISTANT_1', projectId, serviceId) || await HistoryHandler.getConfig('ASSISTANT_ID', projectId, serviceId);
         const map = {
             asistente1: assistant1 || this.assistantId,
-            asistente2: await HistoryHandler.getConfig('ASSISTANT_2', projectId) || undefined,
-            asistente3: await HistoryHandler.getConfig('ASSISTANT_3', projectId) || undefined,
-            asistente4: await HistoryHandler.getConfig('ASSISTANT_4', projectId) || undefined,
-            asistente5: await HistoryHandler.getConfig('ASSISTANT_5', projectId) || undefined,
+            asistente2: await HistoryHandler.getConfig('ASSISTANT_2', projectId, serviceId) || undefined,
+            asistente3: await HistoryHandler.getConfig('ASSISTANT_3', projectId, serviceId) || undefined,
+            asistente4: await HistoryHandler.getConfig('ASSISTANT_4', projectId, serviceId) || undefined,
+            asistente5: await HistoryHandler.getConfig('ASSISTANT_5', projectId, serviceId) || undefined,
         };
 
         // Log de diagnóstico silencioso para debug interno si se necesita
@@ -52,7 +52,7 @@ export class AiManager {
         return assistantId;
     }
 
-    public getAssistantResponse = async (assistantId: string, message: string, state: any, fallbackMessage: string | undefined, userId: string, thread_id: string | null = null, projectId: string | null = null, agentName?: string) => {
+    public getAssistantResponse = async (assistantId: string, message: string, state: any, fallbackMessage: string | undefined, userId: string, thread_id: string | null = null, projectId: string | null = null, agentName: string | undefined = undefined, serviceId: string | null = null) => {
         if (this.userTimeouts.has(userId)) {
             clearTimeout(this.userTimeouts.get(userId)!);
             this.userTimeouts.delete(userId);
@@ -66,8 +66,10 @@ export class AiManager {
 
             const isWhatsApp = !!(userId && userId.includes('@s.whatsapp.net'));
             const targetProjectId = projectId || HistoryHandler.PROJECT_IDENTIFIER;
+            const stateServiceId = (typeof state?.get === 'function') ? state.get('dynamicServiceId') : state?.dynamicServiceId;
+            const targetServiceId = serviceId || stateServiceId || HistoryHandler.SERVICE_IDENTIFIER;
 
-            safeToAsk(assistantId, message, state, userId, this.errorReporter, 5, isWhatsApp, targetProjectId, false, agentName)
+            safeToAsk(assistantId, message, state, userId, this.errorReporter, 5, isWhatsApp, targetProjectId, false, agentName, targetServiceId)
                 .then(result => {
                     if (this.userTimeouts.has(userId)) {
                         clearTimeout(this.userTimeouts.get(userId)!);
@@ -129,10 +131,9 @@ export class AiManager {
         // Si no hay agente en el 'state' (redeploy/reset), forzamos asistente1
         let assigned = state.get('assignedAgent');
         if (!assigned) {
-            console.log(`[AiManager] 🔄 Sesión fresca o redeploy detectado para ${ctx.from}. Forzando asistente1.`);
-            assigned = 'asistente1';
-            await HistoryHandler.setAssignedAgent(ctx.from, 'asistente1', dynamicProjectId, dynamicServiceId);
-            await state.update({ assignedAgent: 'asistente1' });
+            console.log(`[AiManager] 🔄 Sesión fresca o redeploy detectado para ${ctx.from}. Cargando agente asignado desde DB.`);
+            assigned = await HistoryHandler.getAssignedAgent(ctx.from, dynamicProjectId, dynamicServiceId);
+            await state.update({ assignedAgent: assigned });
         } else {
             // Si ya hay en state, verificar que coincida con DB (opcional, pero seguro)
             const dbAssigned = await HistoryHandler.getAssignedAgent(ctx.from, dynamicProjectId, dynamicServiceId);
@@ -142,13 +143,14 @@ export class AiManager {
             }
         }
 
-        const assistantMap = await this.getAssistantMap(dynamicProjectId);
+        const assistantMap = await this.getAssistantMap(dynamicProjectId, dynamicServiceId);
         const assignedAssistantId = assistantMap[assigned] || this.assistantId;
 
         // Guardar contexto en el state para uso en flujos (como idleFlow o reconectionFlow)
         if (state && state.update) {
             await state.update({ 
                 dynamicProjectId,
+                dynamicServiceId,
                 assignedAssistantId,
                 botPhoneNumber
             });
@@ -160,7 +162,7 @@ export class AiManager {
         if (ctx.body && ctx.body.trim().toUpperCase() === '#RESET#') {
             const chatId = ctx.from;
             console.log(`[AiManager] ♻️ Reiniciando historial y agente para ${chatId}`);
-            await HistoryHandler.setAssignedAgent(chatId, 'asistente1', dynamicProjectId);
+            await HistoryHandler.setAssignedAgent(chatId, 'asistente1', dynamicProjectId, dynamicServiceId);
             await state.update({ assignedAgent: 'asistente1' });
             return await flowDynamic("✅ Historial de conversación y asignación de asistente reiniciados.");
         }
@@ -174,48 +176,47 @@ export class AiManager {
             await HistoryHandler.clearChatHistory(chatId, dynamicProjectId);
             
             // Resetear el agente asignado a asistente1
-            await HistoryHandler.setAssignedAgent(chatId, 'asistente1', dynamicProjectId);
+            await HistoryHandler.setAssignedAgent(chatId, 'asistente1', dynamicProjectId, dynamicServiceId);
             await state.update({ assignedAgent: 'asistente1' });
             
             return await flowDynamic("✅ Se ha borrado todo el historial de conversación de este contacto y se ha iniciado un nuevo hilo de chat.");
         }
         
-        await typing(ctx, provider);
         try {
             const body = ctx.body && ctx.body.trim();
 
             // COMANDOS DE CONTROL (WhatsApp Admin)
             if (body === "#ON#") {
-                await HistoryHandler.toggleBot(ctx.from, true);
-                if (ctx.pushName) await HistoryHandler.getOrCreateChat(ctx.from, 'whatsapp', ctx.pushName, ctx.userId);
+                await HistoryHandler.toggleBot(ctx.from, true, dynamicProjectId, dynamicServiceId);
+                if (ctx.pushName) await HistoryHandler.getOrCreateChat(ctx.from, 'whatsapp', ctx.pushName, ctx.userId, dynamicProjectId, dynamicServiceId);
                 const msg = "🤖 Bot activado para este chat.";
                 await flowDynamic([{ body: msg }]);
-                await HistoryHandler.saveMessage(ctx.from, 'assistant', msg, 'text', null, ctx.userId, null, ctx.platform);
+                await HistoryHandler.saveMessage(ctx.from, 'assistant', msg, 'text', null, ctx.userId, null, ctx.platform, dynamicProjectId, dynamicServiceId);
                 return state;
             }
 
             if (body === "#OFF#") {
-                await HistoryHandler.toggleBot(ctx.from, false);
-                if (ctx.pushName) await HistoryHandler.getOrCreateChat(ctx.from, 'whatsapp', ctx.pushName, ctx.userId);
+                await HistoryHandler.toggleBot(ctx.from, false, dynamicProjectId, dynamicServiceId);
+                if (ctx.pushName) await HistoryHandler.getOrCreateChat(ctx.from, 'whatsapp', ctx.pushName, ctx.userId, dynamicProjectId, dynamicServiceId);
                 const msg = "🛑 Bot desactivado. (Intervención humana activa)";
                 await flowDynamic([{ body: msg }]);
-                await HistoryHandler.saveMessage(ctx.from, 'assistant', msg, 'text', null, ctx.userId, null, ctx.platform);
+                await HistoryHandler.saveMessage(ctx.from, 'assistant', msg, 'text', null, ctx.userId, null, ctx.platform, dynamicProjectId, dynamicServiceId);
                 return state;
             }
 
             if (body === "#FULL_OFF#") {
-                await HistoryHandler.saveSetting('GLOBAL_BOT_ENABLED', 'false', dynamicProjectId);
+                await HistoryHandler.saveSetting('GLOBAL_BOT_ENABLED', 'false', dynamicProjectId, dynamicServiceId);
                 const msg = "🛑 Bot desactivado GLOBALMENTE para todas las conversaciones.";
                 await flowDynamic([{ body: msg }]);
-                await HistoryHandler.saveMessage(ctx.from, 'assistant', msg, 'text', null, ctx.userId, null, ctx.platform, dynamicProjectId);
+                await HistoryHandler.saveMessage(ctx.from, 'assistant', msg, 'text', null, ctx.userId, null, ctx.platform, dynamicProjectId, dynamicServiceId);
                 return state;
             }
 
             if (body === "#FULL_ON#") {
-                await HistoryHandler.saveSetting('GLOBAL_BOT_ENABLED', 'true', dynamicProjectId);
+                await HistoryHandler.saveSetting('GLOBAL_BOT_ENABLED', 'true', dynamicProjectId, dynamicServiceId);
                 const msg = "🤖 Bot activado GLOBALMENTE para todas las conversaciones.";
                 await flowDynamic([{ body: msg }]);
-                await HistoryHandler.saveMessage(ctx.from, 'assistant', msg, 'text', null, ctx.userId, null, ctx.platform, dynamicProjectId);
+                await HistoryHandler.saveMessage(ctx.from, 'assistant', msg, 'text', null, ctx.userId, null, ctx.platform, dynamicProjectId, dynamicServiceId);
                 return state;
             }
 
@@ -244,6 +245,8 @@ export class AiManager {
                 return state;
             }
 
+            await typing(ctx, provider);
+
             // --- FILTRO DE LISTA NEGRA ---
             const blacklistActive = await HistoryHandler.getSetting('BLACKLIST_ACTIVE', dynamicProjectId, dynamicServiceId);
             if (blacklistActive === 'true') {
@@ -261,7 +264,7 @@ export class AiManager {
                         // El worker de inactividad lo excluye, por lo que permanecerá así indefinidamente.
                         const currentBotState = await HistoryHandler.isBotEnabled(ctx.from, dynamicProjectId, dynamicServiceId);
                         if (currentBotState) {
-                            await HistoryHandler.toggleBot(ctx.from, false, dynamicProjectId);
+                            await HistoryHandler.toggleBot(ctx.from, false, dynamicProjectId, dynamicServiceId);
                         }
                         return state;
                     }
@@ -298,10 +301,10 @@ export class AiManager {
             }
 
             // --- LÓGICA MULTI-AGENTE ---
-            const currentAssistantMap = await this.getAssistantMap(dynamicProjectId);
+            const currentAssistantMap = await this.getAssistantMap(dynamicProjectId, dynamicServiceId);
             const currentAssistantId = currentAssistantMap[assigned] || this.assistantId;
 
-            const response = (await this.getAssistantResponse(assignedAssistantId, ctx.body, state, undefined, ctx.from, ctx.thread_id, dynamicProjectId, assigned)) as string;
+            const response = (await this.getAssistantResponse(assignedAssistantId, ctx.body, state, undefined, ctx.from, ctx.thread_id, dynamicProjectId, assigned, dynamicServiceId)) as string;
 
             if (!response) return state;
 
@@ -319,7 +322,8 @@ export class AiManager {
                     assignedAssistantId,
                     assigned,
                     currentAssistantMap,
-                    dynamicProjectId
+                    dynamicProjectId,
+                    dynamicServiceId
                 );
 
             const timeoutCierreValue = await HistoryHandler.getConfig('timeOutCierre') || 5;

@@ -24,6 +24,142 @@ const sentMessageCache = new Set<string>();
 let lastMetaSyncTime = 0;
 const META_SYNC_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutos de caché
 
+function unwrapBaileysMessage(message: any): any {
+    let current = message || {};
+    for (let i = 0; i < 5; i += 1) {
+        const next = current?.ephemeralMessage?.message ||
+            current?.viewOnceMessage?.message ||
+            current?.viewOnceMessageV2?.message ||
+            current?.viewOnceMessageV2Extension?.message ||
+            current?.documentWithCaptionMessage?.message ||
+            current?.editedMessage?.message ||
+            null;
+        if (!next || next === current) break;
+        current = next;
+    }
+    return current;
+}
+
+function getReplyContextInfo(raw: any): any {
+    const message = unwrapBaileysMessage(raw?.message || raw?.payload?.message || {});
+    return raw?.context ||
+        raw?.message?.context ||
+        raw?.payload?.context ||
+        raw?.payload?.message?.context ||
+        message.extendedTextMessage?.contextInfo ||
+        message.conversationMessage?.contextInfo ||
+        message.imageMessage?.contextInfo ||
+        message.videoMessage?.contextInfo ||
+        message.audioMessage?.contextInfo ||
+        message.documentMessage?.contextInfo ||
+        message.stickerMessage?.contextInfo ||
+        message.buttonsResponseMessage?.contextInfo ||
+        message.templateButtonReplyMessage?.contextInfo ||
+        message.listResponseMessage?.contextInfo ||
+        null;
+}
+
+function getReplyIdFromContext(contextInfo: any): string | null {
+    return contextInfo?.id ||
+        contextInfo?.message_id ||
+        contextInfo?.messageId ||
+        contextInfo?.stanzaId ||
+        contextInfo?.quotedMessageId ||
+        null;
+}
+
+function getQuotedPreview(raw: any): { content: string; type: string } | null {
+    const quoted = getReplyContextInfo(raw)?.quotedMessage;
+    if (!quoted) return null;
+
+    if (quoted.conversation) return { content: quoted.conversation, type: 'text' };
+    if (quoted.extendedTextMessage?.text) return { content: quoted.extendedTextMessage.text, type: 'text' };
+    if (quoted.imageMessage) return { content: quoted.imageMessage.caption || 'Imagen', type: 'image' };
+    if (quoted.videoMessage) return { content: quoted.videoMessage.caption || 'Video', type: 'video' };
+    if (quoted.audioMessage) return { content: 'Audio', type: 'audio' };
+    if (quoted.documentMessage) return { content: quoted.documentMessage.fileName || quoted.documentMessage.caption || 'Archivo', type: 'document' };
+    if (quoted.stickerMessage) return { content: 'Sticker', type: 'image' };
+
+    return { content: 'Mensaje', type: 'text' };
+}
+
+function normalizeReplyPreviewText(content: any, type: string): string {
+    if (type !== 'text') {
+        if (type === 'image') return 'Imagen';
+        if (type === 'video') return 'Video';
+        if (type === 'audio' || type === 'voice') return 'Audio';
+        return 'Archivo';
+    }
+
+    return String(content || 'Mensaje')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 120) || 'Mensaje';
+}
+
+function buildCompactRawPayload(ctx: any, raw: any, contextInfo: any): any {
+    return {
+        id: ctx?.id || raw?.id || null,
+        key: ctx?.key || raw?.key || null,
+        from: ctx?.from || raw?.from || null,
+        to: ctx?.to || raw?.to || raw?.recipient_id || null,
+        body: ctx?.body || raw?.text?.body || raw?.button?.text || raw?.interactive?.button_reply?.title || raw?.interactive?.list_reply?.title || null,
+        type: ctx?.type || raw?.type || null,
+        platform: ctx?.platform || null,
+        userId: ctx?.userId || null,
+        recipientPhoneId: ctx?.recipientPhoneId || null,
+        context: contextInfo || ctx?.context || raw?.context || ctx?.payload?.context || raw?.payload?.context || null,
+        message: raw?.message ? unwrapBaileysMessage(raw.message) : null,
+        payloadKeys: raw && typeof raw === 'object' ? Object.keys(raw).slice(0, 40) : []
+    };
+}
+
+async function buildReplyRawPayload(ctx: any, chatId: string, projectId: string, serviceId?: string | null): Promise<any> {
+    const raw = ctx?.payload || ctx?.rawPayload || ctx || {};
+    const contextInfo = getReplyContextInfo(ctx) || getReplyContextInfo(raw);
+    const replyId = getReplyIdFromContext(contextInfo);
+    const baseRawPayload = buildCompactRawPayload(ctx, raw, contextInfo);
+
+    if (!replyId) return baseRawPayload;
+
+    console.log(`[ReplyTrace] Reply context detected. chat=${chatId} project=${projectId} service=${serviceId || 'none'} replyId=${replyId}`);
+
+    let referenced: any = null;
+    try {
+        const recentMessages = await HistoryHandler.getMessages(chatId, 1000, 0, projectId, serviceId || null);
+        referenced = recentMessages.find((m: any) => m.external_id === replyId || m.id === replyId);
+    } catch {
+        referenced = null;
+    }
+
+    const quotedPreview = getQuotedPreview(ctx) || getQuotedPreview(raw);
+    const replyType = referenced?.type || quotedPreview?.type || 'text';
+    const replyContent = referenced
+        ? normalizeReplyPreviewText(referenced.content, replyType)
+        : normalizeReplyPreviewText(quotedPreview?.content, replyType);
+    let replyAuthor = 'Cliente';
+    if (referenced?.role === 'assistant') {
+        replyAuthor = 'Vos';
+    } else {
+        const chatInfo = await HistoryHandler.getChat(chatId, projectId, serviceId || undefined).catch(() => null);
+        replyAuthor = (chatInfo?.name && chatInfo.name !== '[-]') ? chatInfo.name : String(chatId).split('@')[0];
+    }
+
+    return {
+        ...baseRawPayload,
+        replyTo: replyId,
+        replyPreview: {
+            id: replyId,
+            localId: referenced?.id || null,
+            role: referenced?.role || null,
+            author: replyAuthor,
+            content: replyContent,
+            type: replyType
+        }
+    };
+}
+
 export const trackSentMessage = (id: string) => {
     if (!id) return;
     sentMessageCache.add(id);
@@ -116,10 +252,15 @@ export const registerProviderEvents = (provider: any, isGroupProvider: boolean =
                                        provider?.config?.phone_number_id ||
                                        (ctx.to ? ctx.to.replace(/\D/g, '') : null);
                 let dynamicProjectId = HistoryHandler.PROJECT_IDENTIFIER;
+                let dynamicServiceId = HistoryHandler.SERVICE_IDENTIFIER;
                 if (botPhoneNumber) {
                     const resolvedId = await HistoryHandler.getProjectIdByRecipient(botPhoneNumber);
                     if (resolvedId) {
                         dynamicProjectId = resolvedId;
+                    }
+                    const resolvedServiceId = await HistoryHandler.getServiceIdByRecipient(botPhoneNumber);
+                    if (resolvedServiceId) {
+                        dynamicServiceId = resolvedServiceId;
                     }
                 }
                 
@@ -159,6 +300,8 @@ export const registerProviderEvents = (provider: any, isGroupProvider: boolean =
                         }
                     }
                 }
+
+                const rawPayloadToSave = await buildReplyRawPayload(ctx, chatId, dynamicProjectId, dynamicServiceId);
                 
                 await HistoryHandler.saveMessage(
                     chatId, 
@@ -170,15 +313,15 @@ export const registerProviderEvents = (provider: any, isGroupProvider: boolean =
                     externalId,
                     ctx.platform || 'whatsapp',
                     dynamicProjectId,
-                    undefined,
-                    ctx.payload
+                    dynamicServiceId,
+                    rawPayloadToSave
                 );
 
                 // Si el mensaje original provino de un LID, guardamos el mapeo en metadata de chats para poder resolverlo en la intervención manual
                 if (ctx.payload?.key?.remoteJid?.endsWith('@lid')) {
                     const originalLid = ctx.payload.key.remoteJid;
                     try {
-                        const chat = await HistoryHandler.getChat(chatId, dynamicProjectId);
+                        const chat = await HistoryHandler.getChat(chatId, dynamicProjectId, dynamicServiceId);
                         if (chat) {
                             const currentMeta = chat.metadata || {};
                             if (currentMeta.lid !== originalLid) {
@@ -221,10 +364,15 @@ export const registerProviderEvents = (provider: any, isGroupProvider: boolean =
                                    provider?.config?.phone_number_id ||
                                    (ctx.to ? ctx.to.replace(/\D/g, '') : null);
             let dynamicProjectId = HistoryHandler.PROJECT_IDENTIFIER;
+            let dynamicServiceId = HistoryHandler.SERVICE_IDENTIFIER;
             if (botPhoneNumber) {
                 const resolvedId = await HistoryHandler.getProjectIdByRecipient(botPhoneNumber);
                 if (resolvedId) {
                     dynamicProjectId = resolvedId;
+                }
+                const resolvedServiceId = await HistoryHandler.getServiceIdByRecipient(botPhoneNumber);
+                if (resolvedServiceId) {
+                    dynamicServiceId = resolvedServiceId;
                 }
             }
 
@@ -293,6 +441,8 @@ export const registerProviderEvents = (provider: any, isGroupProvider: boolean =
                 }
             }
 
+            const rawPayloadToSave = await buildReplyRawPayload(ctx, chatId, dynamicProjectId, dynamicServiceId);
+
             // Guardamos como 'assistant' para que aparezca en el lado derecho del chat en el backoffice
             await HistoryHandler.saveMessage(
                 chatId, 
@@ -303,7 +453,9 @@ export const registerProviderEvents = (provider: any, isGroupProvider: boolean =
                 null,
                 externalId,
                 ctx.platform || 'whatsapp',
-                dynamicProjectId
+                dynamicProjectId,
+                dynamicServiceId,
+                rawPayloadToSave
             );
 
             // Si fue una intervención manual desde la app de WhatsApp (y no es grupo),
@@ -314,8 +466,8 @@ export const registerProviderEvents = (provider: any, isGroupProvider: boolean =
                     console.log(`${prefix} ℹ️ Intervención desde App WhatsApp detectada para ${chatId}, pero DISABLE_AUTO_HUMAN_ON_APP_MESSAGE está activo (No se desactiva el bot).`);
                 } else {
                     console.log(`${prefix} 🛑 Activando modo Atención Humana para ${chatId} (operador escribió desde la app) para proyecto ${dynamicProjectId}`);
-                    await HistoryHandler.toggleBot(chatId, false, dynamicProjectId);
-                    await HistoryHandler.updateLastHumanMessage(chatId, dynamicProjectId);
+                    await HistoryHandler.toggleBot(chatId, false, dynamicProjectId, dynamicServiceId);
+                    await HistoryHandler.updateLastHumanMessage(chatId, dynamicProjectId, dynamicServiceId);
                 }
             }
         } catch (err) {

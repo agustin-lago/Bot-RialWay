@@ -6,7 +6,6 @@ window.usuariosView = {
         return `
         <!-- Contenido principal -->
         <main class="crm-main-container relative" style="z-index:10; max-width:none; padding:0; flex:1; display:flex; flex-direction:column; overflow-y:auto; overflow-x:hidden;">
-
             <div class="kanban-header animate-fade" style="flex-shrink:0;">
                 <div class="header-info">
                     <h1><i class="fas fa-users-cog kanban-header-icon" style="color:#0099FF;"></i> Gestion de Equipo y Usuarios</h1>
@@ -51,7 +50,7 @@ window.usuariosView = {
                             </div>
                         </div>
                         <div class="col-span-full" style="grid-column:1/-1; margin-top: 10px;">
-                            <button type="button" class="btn px-8 py-3 w-full justify-center" style="background:linear-gradient(135deg,#10b981,#059669); box-shadow:0 4px 12px rgba(16,185,129,0.3);" onclick="window.saveNewUser()">
+                            <button type="button" class="btn-primary w-full justify-center" onclick="window.saveNewUser()">
                                 <i class="fas fa-user-plus" style="margin-right:8px;"></i> Crear Usuario
                             </button>
                         </div>
@@ -77,24 +76,24 @@ window.usuariosView = {
         <!-- Modal para editar usuario -->
         <div id="edit-user-modal" class="modal-overlay" style="display: none; z-index: 99999;">
             <div class="modal-content" style="max-width: 440px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 1rem; margin-bottom: 1.5rem;">
-                    <h2 style="font-size: 1.25rem; font-weight: 600; color: var(--text-main); display: flex; align-items: center; gap: 8px;">
-                        <i class="fas fa-user-edit" style="color: #0099FF;"></i> Editar Usuario
-                    </h2>
-                    <button onclick="window.closeEditUserModal()" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.25rem;">&times;</button>
+                <div class="modal-header">
+                    <h2><i class="fas fa-user-edit modal-h3-icon"></i> Editar Usuario</h2>
+                    <button class="modal-close" onclick="window.closeEditUserModal()">&times;</button>
                 </div>
-                <input type="hidden" id="edit-user-id">
-                <div style="margin-bottom: 1.25rem;">
-                    <label style="display: block; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.5rem;">NUEVO NOMBRE DE USUARIO</label>
-                    <input type="text" id="edit-user-username" class="input-field" placeholder="Nombre de usuario">
+                <div class="modal-body">
+                    <input type="hidden" id="edit-user-id">
+                    <div style="margin-bottom: 1.25rem;">
+                        <label style="display: block; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.5rem;">NUEVO NOMBRE DE USUARIO</label>
+                        <input type="text" id="edit-user-username" class="input-field" placeholder="Nombre de usuario">
+                    </div>
+                    <div>
+                        <label style="display: block; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.5rem;">NUEVA CONTRASEÑA (Opcional)</label>
+                        <input type="password" id="edit-user-password" class="input-field" placeholder="Dejar en blanco para no cambiar">
+                    </div>
                 </div>
-                <div style="margin-bottom: 1.75rem;">
-                    <label style="display: block; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.5rem;">NUEVA CONTRASEÃ‘A (Opcional)</label>
-                    <input type="password" id="edit-user-password" class="input-field" placeholder="Dejar en blanco para no cambiar">
-                </div>
-                <div style="display: flex; justify-content: flex-end; gap: 1rem;">
-                    <button type="button" class="btn px-6 py-2.5" style="background: var(--bg-header); border: 1px solid var(--border); color: var(--text-main);" onclick="window.closeEditUserModal()">Cancelar</button>
-                    <button type="button" class="btn px-6 py-2.5" style="background: linear-gradient(135deg, #0099FF, #0077CC); box-shadow: 0 4px 12px rgba(0,153,255,0.3); color: white;" onclick="window.saveEditUser()">Guardar Cambios</button>
+                <div class="modal-footer">
+                    <button type="button" class="btn-cancel" onclick="window.closeEditUserModal()">Cancelar</button>
+                    <button type="button" class="btn-success" onclick="window.saveEditUser()">Guardar Cambios</button>
                 </div>
             </div>
         </div>

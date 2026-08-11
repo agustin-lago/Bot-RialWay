@@ -5,6 +5,7 @@ window.conexionView = {
     getHTML() {
         return `
         <main class="crm-main-container relative" style="z-index:10; padding:0;">
+            ${window.renderSectionTabs ? window.renderSectionTabs('messaging') : ''}
             <div class="kanban-header animate-fade">
                 <div class="header-info">
                     <h1><i class="fas fa-plug-circle-bolt kanban-header-icon"></i> Conexion del Bot</h1>
@@ -48,7 +49,7 @@ window.conexionView = {
                                 <!-- Opción 2: Código de Vinculación -->
                                 <div class="flex flex-col gap-2">
                                     <input type="text" id="pairing-phone-input" class="input text-center" placeholder="Ej: 5491122334455" style="background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); color:white; border-radius:12px; padding:10px;">
-                                    <button id="generate-pairing-btn" class="btn w-full" style="background: linear-gradient(135deg, #0099ff, #0066cc);">
+                                    <button id="generate-pairing-btn" class="btn-primary w-full">
                                         <i class="fas fa-key"></i> Vincular con Código
                                     </button>
                                 </div>
@@ -72,8 +73,7 @@ window.conexionView = {
                             class="text-sm font-heading font-semibold text-emerald-400 mt-3"></div>
                         <div id="whatsapp-link-container" style="display:none;" class="mt-5 flex justify-center">
                             <a id="whatsapp-link" href="#" target="_blank"
-                                class="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-heading font-semibold text-sm text-white transition-all duration-200 hover:brightness-110"
-                                style="background:#25D366; box-shadow:0 4px 12px rgba(37,211,102,0.3);">
+                                class="btn-primary">
                                 <i class="fab fa-whatsapp"></i> Abrir en WhatsApp
                             </a>
                         </div>
@@ -107,8 +107,7 @@ window.conexionView = {
                                 <div class="text-xs info-text">Aplica cambios de Meta o Google Sheets sin entrar a Railway. (Downtime: 30-45s)</div>
                             </div>
                             <button id="system-reload-btn"
-                                class="flex-shrink-0 self-end sm:self-center inline-flex items-center gap-2 px-4 py-2 rounded-xl font-heading font-semibold text-xs sm:text-sm text-white transition-all hover:brightness-110"
-                                style="background:linear-gradient(135deg,#10b981,#059669);">
+                                class="btn-primary flex-shrink-0 self-end sm:self-center">
                                 <i class="fas fa-sync-alt"></i> Reiniciar
                             </button>
                         </div>
@@ -125,13 +124,11 @@ window.conexionView = {
                     </p>
                     <div class="flex flex-col gap-3 items-center w-full">
                         <button id="go-reset"
-                            class="inline-flex items-center justify-center gap-2 w-full max-w-sm rounded-xl font-heading font-semibold text-white transition-all hover:brightness-110 px-3 py-2 text-xs sm:px-5 sm:py-2.5 sm:text-sm"
-                            style="background:linear-gradient(135deg,#ef4444,#dc2626);">
+                            class="btn-danger w-full max-w-sm">
                             <i class="fas fa-trash-alt"></i> Reiniciar Sesion Completamente
                         </button>
                         <button id="go-unlink-meta"
-                            class="inline-flex items-center justify-center gap-2 w-full max-w-sm rounded-xl font-heading font-semibold text-white transition-all hover:brightness-110 px-3 py-2 text-xs sm:px-5 sm:py-2.5 sm:text-sm"
-                            style="background:linear-gradient(135deg,#dc2626,#b91c1c);">
+                            class="btn-danger w-full max-w-sm">
                             <i class="fab fa-meta"></i> Desvincular Meta
                         </button>
                     </div>

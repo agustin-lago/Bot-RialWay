@@ -1,5 +1,5 @@
 /* global logout */
-let currentProjectId = 'default';
+let currentProjectId = window.railwayProjectId || 'default';
 let _conexionIntervals = [];
 
 async function fetchStatus() {
@@ -236,7 +236,8 @@ async function fetchBotStatus() {
     if (!botToggle) return;
     try {
         const token = localStorage.getItem('backoffice_token');
-        const res = await fetch(`/api/backoffice/get-setting?key=GLOBAL_BOT_ENABLED&projectId=${currentProjectId}&token=${token}`);
+        const serviceParam = window.railwayServiceId ? `&serviceId=${encodeURIComponent(window.railwayServiceId)}` : '';
+        const res = await fetch(`/api/backoffice/get-setting?key=GLOBAL_BOT_ENABLED&projectId=${currentProjectId}${serviceParam}&token=${token}`);
         const data = await res.json();
         if (data.success) botToggle.checked = data.value !== 'false';
     } catch (e) { console.error("Error fetching bot status", e); }
@@ -263,10 +264,11 @@ window.initConexionView = function () {
             const enabled = botToggle.checked;
             try {
                 const token = localStorage.getItem('backoffice_token');
+                const serviceId = window.railwayServiceId || undefined;
                 const res = await fetch(`/api/backoffice/save-setting?token=${token}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ key: 'GLOBAL_BOT_ENABLED', value: enabled ? 'true' : 'false', projectId: currentProjectId })
+                    body: JSON.stringify({ key: 'GLOBAL_BOT_ENABLED', value: enabled ? 'true' : 'false', projectId: currentProjectId, serviceId })
                 });
                 const data = await res.json();
                 if (!res.ok || !data.success) throw new Error(data.error || 'Server error');

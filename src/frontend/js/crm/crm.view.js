@@ -6,6 +6,7 @@ window.crmView = {
         const crmModals = _getCRMModals();
         return `
         <div class="crm-main-container kanban-wrapper relative" style="z-index:10;">
+            ${window.renderSectionTabs ? window.renderSectionTabs('integrations') : ''}
 
             <div class="kanban-header animate-fade">
                 <div class="header-info">
@@ -37,30 +38,30 @@ window.crmView = {
 
             <!-- Toolbar de Filtros CRM y Eliminación Masiva -->
             <div class="crm-filter-bar animate-fade">
-                <div class="crm-filter-group-wrap" style="display:flex; flex-wrap:wrap; align-items:center; gap:14px; flex:1;">
+                <div class="crm-filter-group-wrap">
                     <div class="crm-filter-group">
-                        <span class="crm-filter-label"><i class="fas fa-tag" style="color:#6366f1;"></i> Etiqueta:</span>
+                        <span class="crm-filter-label"><i class="fas fa-tag crm-filter-icon"></i> Etiqueta:</span>
                         <select id="crm-filter-tag" class="crm-filter-input" onchange="window.applyCRMFilters()">
                             <option value="">Todas las etiquetas</option>
                         </select>
                     </div>
                     <div class="crm-filter-group">
-                        <span class="crm-filter-label"><i class="fas fa-calendar-alt" style="color:#0099FF;"></i> Desde:</span>
+                        <span class="crm-filter-label"><i class="fas fa-calendar-alt crm-filter-icon"></i> Desde:</span>
                         <input type="date" id="crm-filter-date-from" class="crm-filter-input" onchange="window.applyCRMFilters()">
                     </div>
                     <div class="crm-filter-group">
-                        <span class="crm-filter-label"><i class="fas fa-calendar-alt" style="color:#0099FF;"></i> Hasta:</span>
+                        <span class="crm-filter-label"><i class="fas fa-calendar-alt crm-filter-icon"></i> Hasta:</span>
                         <input type="date" id="crm-filter-date-to" class="crm-filter-input" onchange="window.applyCRMFilters()">
                     </div>
-                    <button class="btn btn-secondary" onclick="window.clearCRMFilters()" title="Limpiar filtros" style="padding:5px 12px; font-size:0.8rem;">
+                    <button class="btn-secondary btn-sm" onclick="window.clearCRMFilters()" title="Limpiar filtros">
                         <i class="fas fa-undo"></i> Limpiar
                     </button>
                     <span id="crm-filtered-count-badge" class="crm-filtered-badge">
                         Mostrando todos los leads
                     </span>
                 </div>
-                <div class="crm-filter-actions" style="display:flex; align-items:center;">
-                    <button class="btn btn-danger" onclick="window.confirmBulkDeleteLeads()" style="padding:6px 14px; font-size:0.82rem; font-weight:600; display:flex; align-items:center; gap:6px;">
+                <div class="crm-filter-actions">
+                    <button class="btn-danger btn-sm crm-filter-danger" onclick="window.confirmBulkDeleteLeads()">
                         <i class="fas fa-trash-alt"></i> Eliminación Masiva
                     </button>
                 </div>
@@ -266,7 +267,7 @@ function _getCRMModals() {
                             <div id="available-tags-to-assign"></div>
                         </div>
                     </div>
-                    <button type="submit" class="btn btn-primary btn-save-lead">
+                    <button type="submit" class="btn btn-success btn-save-lead">
                         <i class="fas fa-save btn-save-icon"></i> Guardar y Sincronizar
                     </button>
                 </form>
@@ -289,7 +290,7 @@ function _getCRMModals() {
                     <button class="btn btn-danger btn-flex-1" onclick="deleteCurrentColumn()" id="btn-delete-col">
                         <i class="fas fa-trash-alt"></i> Eliminar
                     </button>
-                    <button class="btn btn-primary btn-flex-2" onclick="saveColumnName()">
+                    <button class="btn btn-success btn-flex-2" onclick="saveColumnName()">
                         <i class="fas fa-check"></i> Guardar
                     </button>
                 </div>
@@ -355,7 +356,7 @@ function _getCRMModals() {
                 </p>
                 <div id="crm-fields-list" class="sortable-list"></div>
                 <div class="modal-config-actions">
-                    <button class="btn btn-primary btn-flex-1" onclick="saveCRMConfig()">
+                    <button class="btn btn-success btn-flex-1" onclick="saveCRMConfig()">
                         <i class="fas fa-save"></i> Guardar Configuracion
                     </button>
                     <button class="btn btn-secondary" onclick="toggleCRMConfigModal()">Cancelar</button>

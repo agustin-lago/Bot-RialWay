@@ -179,27 +179,30 @@ export async function syncAssistantTools(assistantId: string, projectId: string 
     }
 }
 
-export const askWithFunctions = async (assistantId: string, message: string, state: any, userId: string = 'unknown', forceDb: boolean = false, projectId: string | null = null, directMode: boolean = true, agentName?: string): Promise<string> => {
-    const openai = await getOpenAI();
-    if (!openai) {
-        console.warn("⚠️ OPENAI_API_KEY no detectada. El asistente de IA está desactivado.");
-        return "";
-    }
-
+export const askWithFunctions = async (assistantId: string, message: string, state: any, userId: string = 'unknown', forceDb: boolean = false, projectId: string | null = null, directMode: boolean = true, agentName: string | undefined = undefined, serviceId: string | null = null): Promise<string> => {
     try {
         const { HistoryHandler } = await import("../../db/historyHandler");
+        const stateServiceId = (typeof state?.get === 'function') ? state.get('dynamicServiceId') : state?.dynamicServiceId;
+        const targetProjectId = projectId || HistoryHandler.PROJECT_IDENTIFIER;
+        const targetServiceId = serviceId || stateServiceId || HistoryHandler.SERVICE_IDENTIFIER;
+
+        const openai = await getOpenAI(targetProjectId, targetServiceId);
+        if (!openai) {
+            console.warn("⚠️ OPENAI_API_KEY no detectada. El asistente de IA está desactivado.");
+            return "";
+        }
 
         // 1. Cargar Historial (Contexto)
         // Si el mensaje es una petición de resumen, traemos mucho más contexto (50 mensajes)
         const isSummaryRequest = /GET_RESUMEN/i.test(message);
         const historyLimit = isSummaryRequest ? 50 : 15;
-        const history = await HistoryHandler.getMessages(userId, historyLimit, 0, projectId);
-        console.log(`[openaiHelper] 📜 Historial recuperado para ${userId}: ${history.length} mensajes (Limit: ${historyLimit}) | Project: ${projectId}`);
+        const history = await HistoryHandler.getMessages(userId, historyLimit, 0, targetProjectId, targetServiceId);
+        console.log(`[openaiHelper] 📜 Historial recuperado para ${userId}: ${history.length} mensajes (Limit: ${historyLimit}) | Project: ${targetProjectId} | Service: ${targetServiceId}`);
 
         // Cargar datos del chat para obtener el último resultado de BD y service_id
-        const chatData = await HistoryHandler.getChat(userId, projectId ?? undefined);
+        const chatData = await HistoryHandler.getChat(userId, targetProjectId, targetServiceId);
         const lastDbResult = chatData?.last_db_result;
-        const serviceId = chatData?.service_id || null;
+        const chatServiceId = chatData?.service_id || targetServiceId;
 
         // 2. Preparar el prompt del sistema
         // Intentar obtener un prompt específico para este asistente usando su nombre lógico (asistente1, asistente2...)
@@ -209,17 +212,17 @@ export const askWithFunctions = async (assistantId: string, message: string, sta
             promptKey = `ASSISTANT_PROMPT_${num}`;
         }
 
-        let systemPrompt = await HistoryHandler.getSetting(promptKey, projectId, serviceId);
+        let systemPrompt = await HistoryHandler.getSetting(promptKey, targetProjectId, chatServiceId);
 
         // Fallback: si no hay por nombre lógico, intentar por Assistant ID (legacy)
         if (!systemPrompt) {
-            systemPrompt = await HistoryHandler.getSetting(`ASSISTANT_PROMPT_${assistantId}`, projectId, serviceId);
+            systemPrompt = await HistoryHandler.getSetting(`ASSISTANT_PROMPT_${assistantId}`, targetProjectId, chatServiceId);
         }
 
         // Segundo Fallback: usar el genérico 'ASSISTANT_PROMPT'
         if (!systemPrompt) {
-            const dbPrompt = await HistoryHandler.getSetting('ASSISTANT_PROMPT', projectId, serviceId);
-            systemPrompt = dbPrompt || await HistoryHandler.getConfig('ASSISTANT_PROMPT', projectId, serviceId) || "Eres un asistente servicial.";
+            const dbPrompt = await HistoryHandler.getSetting('ASSISTANT_PROMPT', targetProjectId, chatServiceId);
+            systemPrompt = dbPrompt || await HistoryHandler.getConfig('ASSISTANT_PROMPT', targetProjectId, chatServiceId) || "Eres un asistente servicial.";
         }
         
         // Obtener CLIENT_SLUG para formatear contexto de cliente
@@ -510,7 +513,8 @@ export const safeToAsk = async (
     forceDb = false,
     projectId: string | null = null,
     directMode: boolean = true,
-    agentName?: string
+    agentName: string | undefined = undefined,
+    serviceId: string | null = null
 ) => {
     const SAFE_TIMEOUT = 120000;
 
@@ -519,7 +523,7 @@ export const safeToAsk = async (
             let attempt = 0;
             while (attempt < maxRetries) {
                 try {
-                    return await askWithFunctions(assistantId, message, state, userId, forceDb, projectId, directMode, agentName);
+                    return await askWithFunctions(assistantId, message, state, userId, forceDb, projectId, directMode, agentName, serviceId);
                 } catch (err: any) {
                     attempt++;
                     console.error(`[openaiHelper] Intento ${attempt} fallido:`, err.message);

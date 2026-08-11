@@ -374,6 +374,7 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
                     
                     const updateData: any = {
                         notes: summaryForNotes,
+                        ticket_description: newSummary,
                         is_lead: true // Marcamos explícitamente como Lead para que aparezca en el CRM
                     };
 

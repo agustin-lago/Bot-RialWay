@@ -289,8 +289,8 @@ const main = async () => {
                                 return res.end(JSON.stringify({ success: false, error: `Error de stream: ${err.message}` }));
                             }
                             if (isSend) {
-                                const { chatId, message } = req.body;
-                                return processSendMessage(req, res, chatId, message, (req as any).file);
+                                const { chatId, message, replyTo } = req.body;
+                                return processSendMessage(req, res, chatId, message, (req as any).file, replyTo);
                             } else if (isImport) {
                                 console.log("🚀 [MASTER-INTERCEPTOR] Ejecutando lógica de importación...");
                                 return processImportExcel(req, res);
@@ -302,8 +302,8 @@ const main = async () => {
                     } else {
                         return bodyParser.json()(req, res, () => {
                             if (isSend) {
-                                const { chatId, message } = req.body;
-                                return processSendMessage(req, res, chatId || '', message || '', null);
+                                const { chatId, message, replyTo } = req.body;
+                                return processSendMessage(req, res, chatId || '', message || '', null, replyTo);
                             } else if (isImport) {
                                 return next();
                             } else {

@@ -1,5 +1,6 @@
 import { google } from "googleapis";
 import { DefaultTransporter } from "google-auth-library";
+import type { GaxiosOptions, GaxiosPromise } from "gaxios";
 import "dotenv/config";
 
 // Obtener la URL del proxy de Google desde el entorno, o usar el predeterminado
@@ -10,9 +11,10 @@ const googleProxyUrl = envGoogleProxy === 'direct' ? null : (envGoogleProxy || "
 if (googleProxyUrl) {
     console.log(`🔌 [GoogleAuth] Configurando proxy global de Google a: ${googleProxyUrl}`);
     const originalRequest = DefaultTransporter.prototype.request;
-    (DefaultTransporter.prototype as any).request = function (opts: any) {
-        if (opts.url) {
-            const originalUrlStr = opts.url;
+    DefaultTransporter.prototype.request = function <T>(opts: GaxiosOptions): GaxiosPromise<T> {
+        const mutableOpts = opts as GaxiosOptions & { url?: string; headers?: Record<string, string> };
+        if (mutableOpts.url) {
+            const originalUrlStr = String(mutableOpts.url);
             let targetHost = "www.googleapis.com";
             
             try {
@@ -23,19 +25,19 @@ if (googleProxyUrl) {
             }
 
             // Reemplazar subdominios conocidos de Google por el proxy
-            opts.url = opts.url.replace("https://www.googleapis.com", googleProxyUrl);
-            opts.url = opts.url.replace("https://oauth2.googleapis.com", googleProxyUrl);
-            opts.url = opts.url.replace("https://sheets.googleapis.com", googleProxyUrl);
-            opts.url = opts.url.replace("https://calendar.googleapis.com", googleProxyUrl);
-            opts.url = opts.url.replace("https://drive.googleapis.com", googleProxyUrl);
+            mutableOpts.url = originalUrlStr.replace("https://www.googleapis.com", googleProxyUrl);
+            mutableOpts.url = mutableOpts.url.replace("https://oauth2.googleapis.com", googleProxyUrl);
+            mutableOpts.url = mutableOpts.url.replace("https://sheets.googleapis.com", googleProxyUrl);
+            mutableOpts.url = mutableOpts.url.replace("https://calendar.googleapis.com", googleProxyUrl);
+            mutableOpts.url = mutableOpts.url.replace("https://drive.googleapis.com", googleProxyUrl);
 
-            if (opts.url !== originalUrlStr) {
-                opts.headers = opts.headers || {};
-                opts.headers["x-target-host"] = targetHost;
-                console.log(`🌐 [Google Proxy] Interceptado: ${originalUrlStr} -> ${opts.url} (Destino: ${targetHost})`);
+            if (mutableOpts.url !== originalUrlStr) {
+                mutableOpts.headers = mutableOpts.headers || {};
+                mutableOpts.headers["x-target-host"] = targetHost;
+                console.log(`[Google Proxy] Interceptado: ${originalUrlStr} -> ${mutableOpts.url} (Destino: ${targetHost})`);
             }
         }
-        return originalRequest.call(this, opts);
+        return originalRequest.call(this, mutableOpts) as GaxiosPromise<T>;
     };
 }
 

@@ -154,7 +154,7 @@ export const registerStaticRoutes = (app: any, { __dirname }: { __dirname: strin
 
     // Rutas SPA: todas sirven shell.html; el router JS carga la view correspondiente.
     // agregar más rutas para que cuando se haga "refresh" no tire errores.
-    serveHtmlPage("/backoffice", "shell.html");
+    serveHtmlPage("/conversaciones", "shell.html");
     serveHtmlPage("/dashboard", "shell.html");
     serveHtmlPage("/conexion", "shell.html");
     serveHtmlPage("/webchat", "shell.html");
@@ -172,6 +172,7 @@ export const registerStaticRoutes = (app: any, { __dirname }: { __dirname: strin
     serveHtmlPage("/reportes", "shell.html");
     serveHtmlPage("/tickets", "shell.html");
     serveHtmlPage("/usuarios", "shell.html");
+    serveHtmlPage("/epc-cbu-cvu", "shell.html");
 
     // Favicon directo (browsers lo piden en / automáticamente) — busca en src/assets primero, luego en assets/
     app.get("/favicon.ico", (_req: any, res: any) => {

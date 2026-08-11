@@ -12,6 +12,7 @@ window.reportesView = (() => {
     function getHTML() {
         return `
         <main class="crm-main-container" style="z-index:10; padding:0;">
+            ${window.renderSectionTabs ? window.renderSectionTabs('messaging') : ''}
             <div class="kanban-header animate-fade">
                 <div class="header-info">
                     <h1>
@@ -115,7 +116,7 @@ window.reportesView = (() => {
                         <div id="waba-groups-panel" style="display:none; border-top: 1px solid rgba(255,255,255,0.06); padding-top:15px; margin-top:10px;">
                             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                                 <span style="font-size:0.82rem; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:1px;">Mis Grupos Virtuales</span>
-                                <button onclick="reportesView._openGroupModal()" class="btn-primary" style="padding: 6px 12px; font-size: 0.8rem; border-radius: 8px; cursor:pointer;">
+                                <button onclick="reportesView._openGroupModal()" class="btn-primary btn-sm">
                                     <i class="fas fa-plus" style="margin-right:4px;"></i> Crear Grupo
                                 </button>
                             </div>
@@ -160,12 +161,12 @@ window.reportesView = (() => {
         <!-- Modal para Crear/Editar Grupo Virtual -->
         <div id="waba-group-modal" class="modal-overlay">
             <div class="modal-content modal-content-md animate-pop-in">
-                <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; border-bottom:1px solid rgba(255,255,255,0.06); padding-bottom:12px;">
-                    <h3 id="waba-group-modal-title" style="margin:0; font-size:1.15rem; font-weight:700; color:var(--text-main); display:flex; align-items:center; gap:8px;">
-                        <i class="fas fa-users" style="color:#0099FF;"></i>
+                <div class="modal-header">
+                    <h3 id="waba-group-modal-title">
+                        <i class="fas fa-users modal-h3-icon"></i>
                         Nuevo Grupo Virtual
                     </h3>
-                    <button class="btn-close-modal" onclick="reportesView._closeGroupModal()" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:1.1rem;">
+                    <button class="modal-close" onclick="reportesView._closeGroupModal()">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
@@ -190,15 +191,11 @@ window.reportesView = (() => {
                         </div>
                     </div>
                 </div>
-                <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px; border-top:1px solid rgba(255,255,255,0.06); padding-top:15px;">
-                    <button onclick="reportesView._closeGroupModal()" style="padding: 8px 16px; border-radius: 8px; font-size: 0.85rem; background:transparent; border:1px solid var(--border); color:var(--text-muted); cursor:pointer; transition:all 0.15s;"
-                        onmouseenter="this.style.borderColor='var(--text-main)'; this.style.color='var(--text-main)'"
-                        onmouseleave="this.style.borderColor='var(--border)'; this.style.color='var(--text-muted)'">
+                <div class="modal-footer">
+                    <button class="btn-cancel" onclick="reportesView._closeGroupModal()">
                         Cancelar
                     </button>
-                    <button onclick="reportesView._saveGroup()" id="waba-group-save-btn" style="padding: 8px 16px; border-radius: 8px; font-size: 0.85rem; background:#0099FF; color:white; border:none; cursor:pointer; font-weight:600; transition:all 0.15s;"
-                        onmouseenter="this.style.background='#0078D4'"
-                        onmouseleave="this.style.background='#0099FF'">
+                    <button class="btn-success" onclick="reportesView._saveGroup()" id="waba-group-save-btn">
                         Guardar Grupo
                     </button>
                 </div>
@@ -703,7 +700,7 @@ window.reportesView = (() => {
         const tipo = r.tipo || 'Sin tipo';
         const tipoColor = _tipoColor(tipo);
         const date = _formatDate(r.created_at);
-        const desc = _escHtml(r.descripcion || '-');
+        const desc = _renderDescription(r.descripcion || '-', r.chat_id || '');
         const initial = (displayName[0] || '?').toUpperCase();
         const isLast = i === total - 1;
 
@@ -724,6 +721,24 @@ window.reportesView = (() => {
                 </div>
             </div>
         </div>`;
+    }
+
+    function _renderDescription(text, chatId) {
+        const safeText = _escHtml(text || '-');
+        return safeText.replace(/https:\/\/wa\.me\/([0-9]+)/g, (url, phone) => {
+            const targetChatId = chatId || phone;
+            return `<a href="#" onclick="event.preventDefault(); reportesView._openChat('${_escAttr(targetChatId)}')" style="color:#0099FF; font-weight:700; text-decoration:none;">${_escHtml(url)}</a>`;
+        });
+    }
+
+    function _openChat(chatId) {
+        if (!chatId) return;
+        localStorage.setItem('activeChat', chatId);
+        if (typeof window.navigate === 'function') {
+            window.navigate('/conversaciones');
+        } else {
+            window.location.href = '/conversaciones';
+        }
     }
 
     function _tipoColor(tipo) {
@@ -774,6 +789,7 @@ window.reportesView = (() => {
         _onWabaToggle,
         _openGroupModal,
         _closeGroupModal,
+        _openChat,
         _addGroupContactRow,
         _updateAddContactButtonState,
         _saveGroup,

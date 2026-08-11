@@ -307,6 +307,8 @@ export class SupabaseBaileysProvider extends BaileysProvider {
                 printQRInTerminal: false,
                 generateHighQualityLinkPreview: true,
                 syncFullHistory: false,
+                shouldSyncHistoryMessage: () => false,
+                fireInitQueries: false,
                 markOnlineOnConnect: false,
                 linkPreviewImageThumbnailWidth: 192
             }) as any;
@@ -515,6 +517,8 @@ export class SupabaseBaileysProvider extends BaileysProvider {
                                 from,
                                 isManualIntervention: true,
                                 id: msg.key.id,
+                                type: 'text',
+                                payload: msg,
                                 platform: 'whatsapp'
                             });
                         }

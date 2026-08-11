@@ -2,6 +2,7 @@ window.mercadoLibreView = (() => {
     function getHTML() {
         return `
         <main class="crm-main-container" style="z-index:10; padding:0;">
+            ${window.renderSectionTabs ? window.renderSectionTabs('integrations') : ''}
             <div class="kanban-header animate-fade">
                 <div class="header-info">
                     <h1><i class="fas fa-handshake kanban-header-icon" style="color:#FFE600;"></i> Mercado Libre</h1>

@@ -58,6 +58,10 @@ export const initSocketIO = (serverInstance: any, { processUserMessage }: any) =
             }
         });
 
+        historyEvents.on('chat_updated', (payload) => {
+            io.emit('chat_updated', payload);
+        });
+
         historyEvents.on('ticket_updated', (payload) => {
             const ticket = payload.ticket || payload;
             const projId = ticket.project_id || ticket.projectId || payload.projectId;

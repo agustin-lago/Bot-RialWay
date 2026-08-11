@@ -8,6 +8,11 @@ CLAUDE.md
 mejoras.md
 context.md
 aquavita-multi.md
+uploads
+.agents
+.codex
+.github
+.vscode
 
 *_sessions
 .wwebjs*
@@ -25,6 +30,8 @@ src/scratch/
 *_failure.png
 users_search_result.png
 scripts/meta-tools/
+briefing_unificacion_servicios.md
+manual_migracion_multiproyecto.md
 
 API_EXTERNAL_DOCUMENTATION.md
 *.cjs
@@ -34,6 +41,9 @@ docs/CLOUDFLARE_WORKER_GOOGLE.md
 
 # Directorios de desarrollo y temporales
 scripts/
+!scripts/
+scripts/*
+!scripts/compose-tailwind-input.mjs
 sessions/
 src/scratch/
 temp/

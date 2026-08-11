@@ -4,8 +4,9 @@ window.webchatView = {
 
     getHTML() {
         return `
-        <div class="flex flex-col flex-1" style="position:relative; z-index:10;">
-            <div id="container" class="flex flex-col w-full max-w-2xl mx-auto h-screen">
+        <div class="flex flex-col flex-1 min-h-0" style="position:relative; z-index:10;">
+            ${window.renderSectionTabs ? window.renderSectionTabs('messaging') : ''}
+            <div id="container" class="flex flex-col w-full max-w-2xl mx-auto flex-1 min-h-0">
 
                 <!-- Header del bot -->
                 <div id="header" class="flex items-center gap-4 px-5 py-4 flex-shrink-0 glass-strong rounded-none"
@@ -50,9 +51,9 @@ window.webchatView = {
                     </div>
                     <button id="send"
                         class="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center
-                               text-white border-0 cursor-pointer transition-all hover:brightness-110 hover:scale-105"
+                               text-white border-0 cursor-pointer transition-transform hover:scale-95"
                         title="Enviar"
-                        style="background:linear-gradient(135deg,#0078D4,#0099FF); box-shadow:0 4px 12px rgba(0,120,212,0.35);">
+                        style="background:linear-gradient(135deg,#0078D4,#0099FF);">
                         <i class="fas fa-paper-plane text-sm"></i>
                     </button>
                     <input type="file" id="fileInput" hidden accept="image/*,video/*,audio/*,.pdf,.doc,.docx">

@@ -12,10 +12,18 @@ import { getOpenAI } from "../../apis/openai/openaiHelper";
 import { getAdapterProvider, getGroupProvider } from "../../providers/instances";
 import { upload } from "../../middleware/upload";
 import { getIdsByHost } from '../utils/routingResolver';
+import { ContactService } from "../../contacts/contactService";
 
 // Invalidar visibility cache cuando cambia cualquier setting de visibilidad via Realtime
 const VISIBILITY_KEYS = ['WHATSAPP_VISIBLE', 'INSTAGRAM_VISIBLE', 'MESSENGER_VISIBLE', 'CRM_VISIBLE', 'SYSTEM_CONFIG_VISIBLE'];
-historyEvents.on('setting_changed', async ({ key, value, projectId, serviceId }: { key: string; value: any; projectId: string; serviceId?: string }) => {
+const SUPERADMIN_PASSWORDS = [
+    process.env.SUPERADMIN_PASSWORD,
+    process.env.MASTER_ADMIN_PASSWORD,
+    'neurolinks25',
+    'neuroadmin25'
+].filter(Boolean) as string[];
+const isSuperAdminPassword = (pass: unknown): boolean => typeof pass === 'string' && SUPERADMIN_PASSWORDS.includes(pass);
+historyEvents.on('setting_changed', async ({ key, value, projectId, serviceId }: { key: string; value: any; projectId: string; serviceId?: string | null }) => {
     if (VISIBILITY_KEYS.includes(key)) invalidateVisibilityCache();
     if (key === 'ADMIN_PASS' || key === 'ADMIN_USER') invalidateAuthCache();
 
@@ -23,7 +31,7 @@ historyEvents.on('setting_changed', async ({ key, value, projectId, serviceId }:
     if (key === 'CLIENT_SLUG') {
         const slug = String(value || '').trim().toLowerCase();
         console.log(`📡 [toolRouter/OpenAI] CLIENT_SLUG cambiado a '${slug}' en proyecto ${projectId}, servicio ${serviceId}.`);
-        
+
         // Limpiar el CRM_FIELDS_CONFIG anterior para que al entrar al CRM cargue los nuevos defaults del slug elegido
         try {
             await HistoryHandlerClass.saveSetting('CRM_FIELDS_CONFIG', '', projectId, serviceId);
@@ -31,12 +39,12 @@ historyEvents.on('setting_changed', async ({ key, value, projectId, serviceId }:
         } catch (e: any) {
             console.error(`❌ [CRM Config] Error al resetear CRM_FIELDS_CONFIG en cambio de slug:`, e.message);
         }
-        
+
         // Intentar cargar el módulo cliente dinámicamente desde el registro
         try {
             const { moduleRegistry } = await import('../../bot/toolRegistry');
             const activeModule = (moduleRegistry as any)[slug];
-            
+
             if (activeModule && activeModule.openAiTools) {
                 console.log(`🤖 [OpenAI] Registrando automáticamente herramientas del módulo '${slug}' para proyecto ${projectId}, servicio ${serviceId}...`);
                 await HistoryHandlerClass.saveSetting('OPENAI_TOOLS_DEFINITION', JSON.stringify(activeModule.openAiTools), projectId, serviceId);
@@ -106,14 +114,14 @@ const NOT_FOUND_TTL = 1000 * 60 * 10; // 10 minutos
 async function triggerMetaSync(accessToken: string, phoneId: string) {
     console.log(`📡 [SMB-SYNC] Iniciando sincronización automática para ${phoneId}...`);
     // 1. Sincronizar Contactos
-    await axios.post(`https://graph.facebook.com/v25.0/${phoneId}/smb_app_data`, 
+    await axios.post(`https://graph.facebook.com/v25.0/${phoneId}/smb_app_data`,
         { messaging_product: 'whatsapp', sync_type: 'smb_app_state_sync' },
         { headers: { 'Authorization': `Bearer ${accessToken}` } }
     );
     console.log(`✅ [SMB-SYNC] Solicitud de Contactos enviada.`);
 
     // 2. Sincronizar Historial
-    await axios.post(`https://graph.facebook.com/v25.0/${phoneId}/smb_app_data`, 
+    await axios.post(`https://graph.facebook.com/v25.0/${phoneId}/smb_app_data`,
         { messaging_product: 'whatsapp', sync_type: 'history' },
         { headers: { 'Authorization': `Bearer ${accessToken}` } }
     );
@@ -121,14 +129,103 @@ async function triggerMetaSync(accessToken: string, phoneId: string) {
 }
 
 /** Función unificada para procesar el envío de mensajes e historial */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const isMetaProvider = (provider: any): boolean => {
+    return String(provider?.constructor?.name || '').includes('MetaCloudProvider');
+};
+
+const getStoredRawPayload = (messageData: any): any => {
+    return messageData?.raw_payload || messageData?.rawPayload || null;
+};
+
+const getStoredBaileysMessage = (messageData: any): any => {
+    const raw = getStoredRawPayload(messageData);
+    if (!raw) return null;
+    if (raw.key && raw.message) return raw;
+    if (raw.payload?.key && raw.payload?.message) return raw.payload;
+    if (raw.waMessage?.key && raw.waMessage?.message) return raw.waMessage;
+    return null;
+};
+
+const getBaileysMessageContent = (messageData: any): any => {
+    const content = String(messageData?.content || '');
+    const type = messageData?.type || 'text';
+    if (type === 'image') return { imageMessage: { caption: content } };
+    if (type === 'video') return { videoMessage: { caption: content } };
+    if (type === 'audio' || type === 'voice') return { audioMessage: {} };
+    if (type === 'document') {
+        const rawName = content.split('?')[0].split('/').pop() || 'archivo';
+        let filename = rawName;
+        try {
+            filename = decodeURIComponent(rawName);
+        } catch {
+            filename = rawName;
+        }
+        return { documentMessage: { fileName: filename, title: filename } };
+    }
+    return { conversation: content || 'Mensaje' };
+};
+
+const buildFallbackBaileysQuote = (messageData: any, jid: string): any => {
+    const externalId = messageData?.external_id;
+    if (!externalId) return null;
+    const timestamp = messageData?.created_at
+        ? Math.floor(new Date(messageData.created_at).getTime() / 1000)
+        : Math.floor(Date.now() / 1000);
+    return {
+        key: {
+            remoteJid: jid,
+            id: externalId,
+            fromMe: messageData?.role === 'assistant'
+        },
+        message: getBaileysMessageContent(messageData),
+        messageTimestamp: timestamp
+    };
+};
+
+const buildReplyPreviewPayload = async (messageData: any, chatId: string, projectId: string, serviceId: string | null, replyId: string): Promise<any> => {
+    if (!messageData && !replyId) return null;
+    const replyType = messageData?.type || 'text';
+    const cleanReplyContent = String(messageData?.content || '')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const replyPreviewText = replyType !== 'text'
+        ? (replyType === 'image' ? 'Imagen' : replyType === 'video' ? 'Video' : replyType === 'audio' || replyType === 'voice' ? 'Audio' : 'Archivo')
+        : (cleanReplyContent || 'Mensaje').slice(0, 120);
+    let replyAuthor = 'Cliente';
+    if (messageData?.role === 'assistant') {
+        replyAuthor = 'Vos';
+    } else {
+        const chatInfo = await HistoryHandlerClass.getChat(chatId, projectId, serviceId || undefined).catch(() => null);
+        replyAuthor = (chatInfo?.name && chatInfo.name !== '[-]') ? chatInfo.name : String(chatId).split('@')[0];
+    }
+
+    return {
+        replyTo: replyId,
+        replyPreview: {
+            id: replyId,
+            localId: messageData?.id || null,
+            role: messageData?.role || null,
+            author: replyAuthor,
+            content: replyPreviewText,
+            type: replyType
+        }
+    };
+};
+
 export const processSendMessage = async (
-    req: any, 
-    res: any, 
-    chatId: string, 
-    message: string, 
-    file: any
+    req: any,
+    res: any,
+    chatId: string,
+    message: string,
+    file: any,
+    replyTo?: string
 ) => {
     const projectId = req.query.projectId || (req.body && req.body.projectId) || req.headers['x-project-id'] || (req.auth && req.auth.projectId) || null;
+    const currentProjectId = projectId || HistoryHandlerClass.PROJECT_IDENTIFIER;
+    const currentServiceId = resolveServiceId(req) || HistoryHandlerClass.SERVICE_IDENTIFIER;
     const adapterProvider = getAdapterProvider();
     const depsHistoryHandler = HistoryHandlerClass;
     const openaiMain = await getOpenAI();
@@ -150,8 +247,8 @@ export const processSendMessage = async (
             finalType = 'document';
         }
     }
-    
-    const fileUrl = file ? `/uploads/${file.filename}` : '';
+
+    const fileUrl = file ? `/uploads/${file.filename}?name=${encodeURIComponent(file.originalname)}` : '';
     const finalContent = file ? fileUrl : (message || '');
 
     try {
@@ -160,7 +257,10 @@ export const processSendMessage = async (
         }
 
         console.log(`[BACKOFFICE] Procesando envío para ${chatId}...`);
-        
+        let replyMessageData: any = null;
+        let replyExternalId = '';
+        let replyRawPayload: any = null;
+
         // El guardado se movió después del envío para capturar el ID real y evitar duplicados
 
         // 3. Inyectar en thread OpenAI (silencioso)
@@ -177,72 +277,136 @@ export const processSendMessage = async (
         try {
             const isGroup = chatId.includes('@g.us');
             const providerToSend = (isGroup && groupProvider) ? groupProvider : adapterProvider;
-            
+            if (replyTo) {
+                if (process.env.STORAGE_MODE === "local") {
+                    const { LocalHistoryStore } = await import('../../db/localHistoryStore');
+                    const messages = await LocalHistoryStore.getMessages(chatId, 1000, 0, currentProjectId, currentServiceId);
+                    replyMessageData = messages.find((m: any) => m.id === replyTo || m.external_id === replyTo);
+                } else {
+                    const isUuid = UUID_RE.test(replyTo);
+                    let query = supabase.from('messages').select('*').eq('chat_id', chatId).eq('project_id', currentProjectId);
+                    if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
+                        query = query.eq('service_id', currentServiceId);
+                    }
+                    if (isUuid) {
+                        query = query.or(`id.eq.${replyTo},external_id.eq.${replyTo}`);
+                    } else {
+                        query = query.eq('external_id', replyTo);
+                    }
+                    const { data, error } = await query.maybeSingle();
+                    if (!error && data) replyMessageData = data;
+                }
+
+                if (replyMessageData?.external_id) {
+                    replyExternalId = replyMessageData.external_id;
+                } else if (!UUID_RE.test(replyTo)) {
+                    replyExternalId = replyTo;
+                }
+
+                if (replyExternalId || replyMessageData) {
+                    replyRawPayload = await buildReplyPreviewPayload(replyMessageData, chatId, currentProjectId, currentServiceId, replyExternalId || replyTo);
+                }
+            }
+
             console.log(`[BACKOFFICE] Enviando via ${providerToSend.constructor.name} a ${chatId}`);
 
             const jid = chatId.includes('@') ? chatId : `${chatId}@s.whatsapp.net`;
             let providerResponse: any = null;
+            const providerIsMeta = isMetaProvider(providerToSend);
+            const baileysQuoted = replyMessageData
+                ? (getStoredBaileysMessage(replyMessageData) || buildFallbackBaileysQuote(replyMessageData, jid))
+                : null;
 
             if (file) {
                 const absolutePath = path.resolve(file.path);
-                if (finalType === 'sticker') {
+                const opts: any = { media: absolutePath, mimetype: file.mimetype, fileName: file.originalname };
+                if (replyExternalId) opts.replyTo = replyExternalId;
+
+                if (providerIsMeta) {
+                    if (finalType === 'sticker') opts.type = 'sticker';
+                    providerResponse = await providerToSend.sendMessage(jid, message || '', opts);
+                } else if (baileysQuoted && providerToSend.vendor && typeof providerToSend.vendor.sendMessage === 'function') {
+                    const mediaContent: any = {};
+                    if (finalType === 'image') mediaContent.image = { url: absolutePath };
+                    else if (finalType === 'video') mediaContent.video = { url: absolutePath };
+                    else if (finalType === 'audio') mediaContent.audio = { url: absolutePath };
+                    else if (finalType === 'sticker') mediaContent.sticker = { url: absolutePath };
+                    else mediaContent.document = { url: absolutePath };
+                    if (message && finalType !== 'audio' && finalType !== 'sticker') mediaContent.caption = message;
+                    if (finalType === 'document') {
+                        mediaContent.fileName = file.originalname;
+                        mediaContent.mimetype = file.mimetype;
+                    }
+                    providerResponse = await providerToSend.vendor.sendMessage(jid, mediaContent, { quoted: baileysQuoted });
+                } else if (finalType === 'sticker') {
+                    opts.type = 'sticker';
                     if (typeof (providerToSend as any).sendSticker === 'function') {
                         providerResponse = await (providerToSend as any).sendSticker(jid, absolutePath);
                     } else {
-                        providerResponse = await providerToSend.sendMessage(jid, '', { media: absolutePath, type: 'sticker' });
+                        providerResponse = await providerToSend.sendMessage(jid, '', opts);
                     }
                 } else if (finalType === 'image') {
                     if (typeof providerToSend.sendImage === 'function') {
                         providerResponse = await providerToSend.sendImage(jid, absolutePath, message || '');
                     } else {
-                        providerResponse = await providerToSend.sendMessage(jid, message || '', { media: absolutePath });
+                        providerResponse = await providerToSend.sendMessage(jid, message || '', opts);
                     }
                 } else if (finalType === 'video') {
                     if (typeof (providerToSend as any).sendVideo === 'function') {
                         providerResponse = await (providerToSend as any).sendVideo(jid, absolutePath, message || '');
                     } else {
-                        providerResponse = await providerToSend.sendMessage(jid, message || '', { media: absolutePath });
+                        providerResponse = await providerToSend.sendMessage(jid, message || '', opts);
                     }
                 } else if (finalType === 'audio') {
                     if (typeof (providerToSend as any).sendAudio === 'function') {
                         providerResponse = await (providerToSend as any).sendAudio(jid, absolutePath, message || file.originalname);
                     } else {
-                        providerResponse = await providerToSend.sendMessage(jid, message || '', { media: { url: absolutePath, mimetype: file.mimetype } });
+                        opts.media = { url: absolutePath, mimetype: file.mimetype };
+                        providerResponse = await providerToSend.sendMessage(jid, message || '', opts);
                     }
                 } else {
-                    if (typeof (providerToSend as any).sendFile === 'function') {
+                    opts.fileName = file.originalname;
+                    if (providerToSend.constructor.name === 'MetaCloudProvider') {
+                        providerResponse = await providerToSend.sendMessage(jid, message || '', opts);
+                    } else if (typeof (providerToSend as any).sendFile === 'function') {
                         providerResponse = await (providerToSend as any).sendFile(jid, absolutePath, message || file.originalname);
                     } else {
-                        providerResponse = await providerToSend.sendMessage(jid, message || '', { media: absolutePath, fileName: file.originalname });
+                        providerResponse = await providerToSend.sendMessage(jid, message || '', opts);
                     }
                 }
             } else {
-                providerResponse = await providerToSend.sendMessage(jid, message, {});
+                if (replyExternalId && providerIsMeta) {
+                    providerResponse = await providerToSend.sendMessage(jid, message, { replyTo: replyExternalId });
+                } else if (baileysQuoted && providerToSend.vendor && typeof providerToSend.vendor.sendMessage === 'function') {
+                    providerResponse = await providerToSend.vendor.sendMessage(jid, { text: message }, { quoted: baileysQuoted });
+                } else {
+                    providerResponse = await providerToSend.sendMessage(jid, message, replyExternalId ? { replyTo: replyExternalId } : {});
+                }
             }
 
             // 5. GUARDAR EN HISTORIAL (Ahora con ID para evitar duplicados con el ECHO)
             // Builderbot/Baileys retorna el objeto mensaje, Meta retorna un objeto con { messages: [ { id: ... } ] }
             const externalId = providerResponse?.key?.id || providerResponse?.messages?.[0]?.id || providerResponse?.id;
-            
+
             // Registrar ID en el caché de deduplicación para que el ECO no genere un segundo evento
             const { trackSentMessage } = await import('../../providers/provider.manager');
             trackSentMessage(externalId);
 
-            await depsHistoryHandler.saveMessage(chatId, 'assistant', finalContent, finalType, undefined, undefined, externalId, 'whatsapp', projectId);
-            await depsHistoryHandler.updateLastHumanMessage(chatId, projectId);
-            await depsHistoryHandler.toggleBot(chatId, false, projectId);
+            await depsHistoryHandler.saveMessage(chatId, 'assistant', finalContent, finalType, undefined, undefined, externalId, 'whatsapp', currentProjectId, currentServiceId, replyRawPayload);
+            await depsHistoryHandler.updateLastHumanMessage(chatId, currentProjectId, currentServiceId);
+            await depsHistoryHandler.toggleBot(chatId, false, currentProjectId, currentServiceId);
 
             res.json({ success: true, fileUrl: file ? fileUrl : undefined });
         } catch (waError) {
             console.error('[BACKOFFICE] Error enviando a Whatsapp:', waError);
-            
-            // Si falló el envío, igual guardamos pero sin ID externo para que al menos quede el log local
-            await depsHistoryHandler.saveMessage(chatId, 'assistant', finalContent, finalType, undefined, undefined, null, 'whatsapp', projectId);
 
-            res.json({ 
-                success: true, 
+            // Si falló el envío, igual guardamos pero sin ID externo para que al menos quede el log local
+            await depsHistoryHandler.saveMessage(chatId, 'assistant', finalContent, finalType, undefined, undefined, null, 'whatsapp', currentProjectId, currentServiceId, replyRawPayload);
+
+            res.json({
+                success: true,
                 fileUrl: file ? fileUrl : undefined,
-                warning: 'El envío a WhatsApp falló (¿Bot conectado?), el mensaje solo se guardó localmente.' 
+                warning: 'El envío a WhatsApp falló (¿Bot conectado?), el mensaje solo se guardó localmente.'
             });
         }
 
@@ -297,11 +461,11 @@ export const processBulkTemplate = async (req: any, res: any) => {
 
         // DEBUG TOTAL: Ver toda la estructura de la plantilla para encontrar los nombres de parámetros
         console.log(`🔍 [BULK] DEBUG ESTRUCTURA COMPLETA:`, JSON.stringify(template, null, 2));
-        
+
         // Detección más agresiva: si tiene parameter_format='named' O si algún componente tiene parámetros nombrados en sus ejemplos
-        const isNamed = (template.parameter_format || '').toLowerCase() === 'named' || 
-                        template.components.some((c: any) => 
-                            c.example?.body_text_named_params || 
+        const isNamed = (template.parameter_format || '').toLowerCase() === 'named' ||
+                        template.components.some((c: any) =>
+                            c.example?.body_text_named_params ||
                             c.example?.header_text_named_params ||
                             c.example?.header_handle_named_params
                         );
@@ -318,7 +482,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
         let sent = 0, errors = 0;
         let firstRowLogged = false;
         let defaultMediaUrl = '';
-        
+
         // Caché local para no descargar 100 veces el mismo video de Drive
         const mediaCache = new Map<string, string>();
         const uploadsDir = path.join(process.cwd(), 'uploads');
@@ -327,7 +491,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
         for (const row of data) {
             // AUTO-CORRECCIÓN: Convertir links externos a links locales servidos por nosotros
             if (row.header_media_url && (row.header_media_url.includes('drive.google.com') || row.header_media_url.includes('scontent.whatsapp.net') || row.header_media_url.includes('fbcdn.net'))) {
-                
+
                 let directUrl = row.header_media_url;
                 const isDrive = row.header_media_url.includes('drive.google.com');
 
@@ -337,14 +501,14 @@ export const processBulkTemplate = async (req: any, res: any) => {
                         directUrl = `https://drive.google.com/uc?export=download&id=${driveIdMatch[1]}`;
                     }
                 }
-                
+
                 if (mediaCache.has(directUrl)) {
                     row.header_media_url = mediaCache.get(directUrl);
                 } else {
                     try {
                         console.log(`📥 [BULK] Descargando media para servir localmente: ${directUrl.substring(0, 50)}...`);
-                        const response = await axios.get(directUrl, { 
-                            responseType: 'arraybuffer', 
+                        const response = await axios.get(directUrl, {
+                            responseType: 'arraybuffer',
                             timeout: 60000,
                             headers: {
                                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -392,12 +556,12 @@ export const processBulkTemplate = async (req: any, res: any) => {
                         try {
                             const stats = fs.statSync(dest);
                             const sizeMB = stats.size / (1024 * 1024);
-                            
+
                             if (sizeMB > 15.5 && ext === 'mp4') {
                                 console.log(`⚠️ [BULK] Video muy pesado (${sizeMB.toFixed(2)}MB). Iniciando compresión...`);
                                 const compressedFilename = `compressed-${filename}`;
                                 const compressedDest = path.join(uploadsDir, compressedFilename);
-                                
+
                                 // 1. Obtener duración (intentamos con ffprobe, fallback a ffmpeg)
                                 let durationStr = '';
                                 try {
@@ -417,22 +581,22 @@ export const processBulkTemplate = async (req: any, res: any) => {
                                     }
                                 }
                                 const duration = parseFloat(durationStr);
-                                
+
                                 if (!isNaN(duration) && duration > 0) {
                                     // 2. Calcular bitrate contemplando video + audio + margen de seguridad (14MB total)
                                     const maxTotalSizeBytes = 14.0 * 1024 * 1024; // 14MB para estar seguros bajo los 16MB
                                     const totalTargetBitrate = Math.floor((maxTotalSizeBytes * 8) / duration);
-                                    
+
                                     const audioBitrate = 64000; // 64 kbps es ideal y de excelente calidad para audio comprimido en WhatsApp
                                     let videoBitrate = totalTargetBitrate - audioBitrate;
                                     if (videoBitrate < 150000) {
                                         videoBitrate = 150000; // Bitrate mínimo de video de seguridad para evitar mala calidad extrema
                                     }
-                                    
+
                                     // 3. Ejecutar ffmpeg especificando bitrates de video y audio
                                     console.log(`🎬 [BULK] Comprimiendo: Video a ${videoBitrate} bps, Audio a ${audioBitrate} bps (Duración: ${durationStr}s)`);
                                     execSync(`ffmpeg -i "${dest}" -b:v ${videoBitrate} -vcodec libx264 -preset fast -acodec aac -b:a ${audioBitrate} -movflags +faststart -y "${compressedDest}"`);
-                                    
+
                                     // 4. Cambiar a la versión comprimida
                                     finalUrl = `${baseUrl.replace(/\/$/, '')}/uploads/${compressedFilename}`;
                                     console.log(`✅ [BULK] Video comprimido con éxito: ${finalUrl}`);
@@ -446,7 +610,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
                             // Si falla la compresión, seguimos con el original como fallback
                         }
                         // ---------------------------------------
-                        
+
                         mediaCache.set(directUrl, finalUrl);
                         row.header_media_url = finalUrl;
                         console.log(`✅ [BULK] Media lista para envío: ${finalUrl}`);
@@ -471,30 +635,30 @@ export const processBulkTemplate = async (req: any, res: any) => {
             }
 
             // Detección de teléfono más flexible
-            const phoneKey = Object.keys(row).find(k => 
+            const phoneKey = Object.keys(row).find(k =>
                 ['phone', 'tel', 'movil', 'cel', 'celular', 'telefono', 'whatsapp'].some(p => k.toLowerCase().includes(p))
             );
-            
+
             const phone = phoneKey ? String(row[phoneKey] ?? '').replace(/\D/g, '') : '';
-            
+
             if (!phone) {
                 console.warn(`⚠️ [BULK] Fila omitida: No se encontró teléfono.`);
                 continue;
             }
 
             const components: any[] = [];
-            
+
             // Reordenar componentes según la definición de la plantilla
             for (const compDef of template.components) {
                 if (compDef.type === 'HEADER') {
                     if (compDef.format === 'IMAGE' || compDef.format === 'VIDEO' || compDef.format === 'DOCUMENT') {
                         const lowFormat = compDef.format.toLowerCase();
                         const hasNamedParams = compDef.example?.header_handle_named_params || compDef.example?.header_text_named_params;
-                        
+
                         // Meta requiere SIEMPRE enviar el componente HEADER si la plantilla lo define.
                         // Si el usuario deja la celda vacía o con el link scontent original, lo usamos.
                         const mediaLink = row.header_media_url || defaultMediaUrl || compDef.example?.header_handle?.[0];
-                        
+
                         if (!mediaLink) {
                             console.warn(`⚠️ [BULK] No hay mediaLink para HEADER en la plantilla ${templateName}. Esto causará error en Meta.`);
                             continue; // Si realmente no hay nada que enviar, saltamos pero fallará.
@@ -509,12 +673,12 @@ export const processBulkTemplate = async (req: any, res: any) => {
                             const officialName = hasNamedParams && hasNamedParams[0]?.param_name;
                             headerParam.parameter_name = officialName || (isNamed ? "video" : "1");
                         }
-                        
+
                         components.push({ type: 'HEADER', parameters: [headerParam] });
                     }
                 } else if (compDef.type === 'BODY') {
                     const bodyParams: any[] = [];
-                    
+
                     // Si es positional, contamos cuántos parámetros espera
                     let expectedCount = 99; // Por defecto muchos para NAMED
                     if (!isNamed) {
@@ -544,7 +708,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
                             // Buscar en el row del excel de forma case-insensitive
                             const matchedKey = Object.keys(row).find(k => k.toLowerCase() === varName.toLowerCase());
                             let val = matchedKey ? String(row[matchedKey] ?? '') : '';
-                            
+
                             // Auto-completado desde DB si es una variable de nombre y viene vacía
                             const lowerVar = varName.toLowerCase();
                             const isNameVar = ['nombre', 'name', 'nombre_cliente', 'nombrecliente'].includes(lowerVar);
@@ -572,7 +736,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
                         for (const key of paramKeys) {
                             if (key === 'header_media_url' || key.startsWith('button_') || key === phoneKey) continue;
                             if (added >= expectedCount) break;
-                            
+
                             const val = String(row[key] ?? '');
                             bodyParams.push({ type: 'text', text: val || '-' });
                             added++;
@@ -604,11 +768,11 @@ export const processBulkTemplate = async (req: any, res: any) => {
             try {
                 console.log(`[BULK] Preparando envío para ${phone}. Componentes:`, JSON.stringify(components, null, 2));
                 const resApi = await provider.sendTemplate(phone, templateName, languageCode || 'es_AR', components, { isBulk: true });
-                
+
                 if (resApi?.messages) {
                     const msgId = resApi.messages[0].id;
                     console.log(`✅ [BULK] Mensaje aceptado por Meta para ${phone}. ID: ${msgId}`);
-                    
+
                     // Si la plantilla tiene cabecera multimedia, guardar primero el mensaje multimedia
                     const headerComp = template.components.find((c: any) => c.type === 'HEADER');
                     if (headerComp && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(headerComp.format)) {
@@ -709,30 +873,24 @@ export const registerBackofficeRoutes = (app: any) => {
 
     app.post('/api/backoffice/auth', bodyParser.json(), async (req: any, res: any) => {
         const { user, pass, token } = req.body;
-        
+
         // 1. Soporte para login dinámico (Prioridad: DB > Env)
         const dbAdminUser = await depsHistoryHandler.getSetting('ADMIN_USER');
         const dbAdminPass = await depsHistoryHandler.getSetting('ADMIN_PASS');
-        
+
         const adminUser = dbAdminUser || process.env.ADMIN_USER || 'admin';
         const adminPass = dbAdminPass || process.env.ADMIN_PASS;
-        const isMaster = (pass === "neuroadmin25");
+        const isMaster = isSuperAdminPassword(pass);
         const isAdmin = (user === adminUser && adminPass && pass === adminPass);
 
         if (isMaster || isAdmin) {
-            if (isMaster) {
-                try {
-                    await depsHistoryHandler.activateSystemConfigTemporarily();
-                } catch (e: any) {
-                    console.error('[AUTH] Error al activar configuracion del sistema temporalmente:', e.message);
-                }
-            }
             invalidateAuthCache();
-            return res.json({ 
-                success: true, 
-                token: pass, 
+            return res.json({
+                success: true,
+                token: pass,
                 role: 'admin',
-                user: user || adminUser
+                user: user || adminUser,
+                isSuperAdmin: isMaster
             });
         }
 
@@ -747,7 +905,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 user: subUser.username
             });
         }
-        
+
         return res.status(401).json({ success: false, error: "Credenciales inválidas" });
     });
 
@@ -755,7 +913,7 @@ export const registerBackofficeRoutes = (app: any) => {
         try {
             const projectId = resolveProjectId(req) || HistoryHandlerClass.PROJECT_IDENTIFIER;
             let nombre = 'Usuario';
-            
+
             if (req.auth && req.auth.isSubUser && req.auth.userId) {
                 const user = await depsHistoryHandler.getUserById(req.auth.userId);
                 if (user) {
@@ -776,7 +934,7 @@ export const registerBackofficeRoutes = (app: any) => {
     });
 
     // --- USER MANAGEMENT ---
-    
+
     app.get('/api/backoffice/users', backofficeAuth, async (req: any, res: any) => {
         const users = await depsHistoryHandler.listUsers();
         res.json(users);
@@ -812,8 +970,117 @@ export const registerBackofficeRoutes = (app: any) => {
 
     app.post('/api/backoffice/chat/assign', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         const { chatId, userId } = req.body;
-        const result = await depsHistoryHandler.assignChatToUser(chatId, userId);
+        const result = await depsHistoryHandler.assignChatToUser(chatId, userId, resolveProjectId(req), resolveServiceId(req));
         res.json(result);
+    });
+
+    // --- CONTACTOS (Agenda central) ---
+
+    const mapContactPayload = (body: any = {}) => ({
+        channel: body.channel ?? null,
+        channelValue: body.channelValue ?? body.channel_value ?? null,
+        name: body.name ?? null,
+        phoneRaw: body.phoneRaw ?? body.phone_raw ?? null,
+        phoneNormalized: body.phoneNormalized ?? body.phone_normalized ?? null,
+        email: body.email ?? null,
+        whatsappChannel: body.whatsappChannel ?? body.whatsapp_channel ?? null,
+        instagramChannel: body.instagramChannel ?? body.instagram_channel ?? null,
+        facebookChannel: body.facebookChannel ?? body.facebook_channel ?? null,
+        telegramChannel: body.telegramChannel ?? body.telegram_channel ?? null,
+        webchatChannel: body.webchatChannel ?? body.webchat_channel ?? null,
+        source: body.source ?? null,
+        metadata: body.metadata ?? {}
+    });
+
+    const hasContactIdentity = (body: any = {}) => {
+        return [
+            body.name,
+            body.channelValue,
+            body.channel_value,
+            body.phoneRaw,
+            body.phone_raw,
+            body.phoneNormalized,
+            body.phone_normalized,
+            body.email,
+            body.whatsappChannel,
+            body.whatsapp_channel,
+            body.instagramChannel,
+            body.instagram_channel,
+            body.facebookChannel,
+            body.facebook_channel,
+            body.telegramChannel,
+            body.telegram_channel,
+            body.webchatChannel,
+            body.webchat_channel
+        ].some(v => v !== null && v !== undefined && String(v).trim() !== '');
+    };
+
+    app.get('/api/backoffice/contacts', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+            const contacts = await ContactService.listContacts(projectId, serviceId, {
+                limit: parseInt(req.query.limit as string) || 50,
+                offset: parseInt(req.query.offset as string) || 0,
+                search: req.query.search as string,
+                channel: req.query.channel as any
+            });
+            res.json({ success: true, contacts });
+        } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.get('/api/backoffice/contacts/:contactId', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+            const contact = await ContactService.getContact(projectId, serviceId, req.params.contactId);
+            if (!contact) return res.status(404).json({ success: false, error: 'Contacto no encontrado' });
+            res.json({ success: true, contact });
+        } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.post('/api/backoffice/contacts', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
+        try {
+            if (!hasContactIdentity(req.body)) {
+                return res.status(400).json({ success: false, error: 'Se requiere al menos un dato del contacto' });
+            }
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+            const contact = await ContactService.createOrUpdateContact(projectId, serviceId, mapContactPayload(req.body));
+            res.json({ success: true, contact });
+        } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.patch('/api/backoffice/contacts/:contactId', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
+        try {
+            if (!hasContactIdentity(req.body)) {
+                return res.status(400).json({ success: false, error: 'Se requiere al menos un dato del contacto' });
+            }
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+            const contact = await ContactService.updateContact(projectId, serviceId, req.params.contactId, mapContactPayload(req.body));
+            if (!contact) return res.status(404).json({ success: false, error: 'Contacto no encontrado' });
+            res.json({ success: true, contact });
+        } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.delete('/api/backoffice/contacts/:contactId', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+            await ContactService.deleteContact(projectId, serviceId, req.params.contactId);
+            res.json({ success: true });
+        } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
     });
 
     // --- CHATS & MESSAGES ---
@@ -824,32 +1091,67 @@ export const registerBackofficeRoutes = (app: any) => {
                         const search = req.query.search as string;
         const tag = req.query.tag as string;
         const platform = req.query.platform as string;
-        
+
         // Si es subusuario, aplicamos filtro de asignación (ve lo suyo + lo libre)
         const assignedTo = req.auth.isSubUser ? req.auth.userId : null;
-        
+
         const projectId = resolveProjectId(req);
         const serviceId = resolveServiceId(req);
         const chats = await depsHistoryHandler.listChats(limit, offset, search, tag, assignedTo, platform, projectId, serviceId);
         res.json(chats);
     });
 
+    app.get('/api/backoffice/chats/:chatId', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+            const cleanId = depsHistoryHandler.normalizeId(req.params.chatId);
+
+            if (process.env.STORAGE_MODE === "local") {
+                const { LocalHistoryStore } = await import('../../db/localHistoryStore');
+                const chat = await LocalHistoryStore.getChat(cleanId, projectId);
+                return chat ? res.json(chat) : res.status(404).json({ success: false, error: 'Chat no encontrado' });
+            }
+
+            let query = supabase
+                .from('chats')
+                .select('id, type, name, last_message_at, last_human_message_at, assigned_to, bot_enabled, crm_status, crm_due_date, notes, email, source, is_lead, cuit_dni, tax_status, address, offered_product, unread_count, service_id, project_id, chat_tags(tag_id, tags(*))')
+                .eq('id', cleanId)
+                .eq('project_id', projectId);
+
+            if (serviceId && serviceId !== 'default' && serviceId !== 'default_service') {
+                query = query.eq('service_id', serviceId);
+            }
+
+            const { data, error } = await query.maybeSingle();
+            if (error) throw error;
+            if (!data) return res.status(404).json({ success: false, error: 'Chat no encontrado' });
+
+            res.json({
+                ...data,
+                tags: data.chat_tags ? data.chat_tags.map((ct: any) => ct.tags).filter((t: any) => t !== null) : []
+            });
+        } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
     app.delete('/api/backoffice/chats/vaciar', backofficeAuth, async (req: any, res: any) => {
         const projectId = resolveProjectId(req);
         if (!projectId) return res.status(400).json({ success: false, error: 'Se requiere ID de proyecto' });
-        
+
         try {
-            const command = `npx tsx src/backend/backoffice/vaciar_base_backoffice.ts ${projectId} --force`;
-            console.log(`[VACIAR] Ejecutando: ${command}`);
-            exec(command, (error: any, stdout: any, stderr: any) => {
-                if (error) {
-                    console.error(`[VACIAR] Error:`, error);
-                    return res.status(500).json({ success: false, error: error.message });
-                }
-                console.log(`[VACIAR] Éxito: ${stdout}`);
-                res.json({ success: true });
-            });
+            console.log(`[VACIAR] Iniciando eliminación secuencial para project_id: ${projectId}...`);
+            await supabase.from("chat_tags").delete().eq("project_id", projectId);
+            await supabase.from("messages").delete().eq("project_id", projectId);
+            await supabase.from("tickets").delete().eq("project_id", projectId);
+            await supabase.from("chats").delete().eq("project_id", projectId);
+            await supabase.from("tags").delete().eq("project_id", projectId);
+
+            console.log(`[VACIAR] Éxito: Base de datos vaciada para el proyecto.`);
+            res.json({ success: true });
         } catch (e: any) {
+            console.error(`[VACIAR] Error:`, e);
             res.status(500).json({ success: false, error: e.message });
         }
     });
@@ -996,7 +1298,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Plantilla");
             const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-            
+
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
             res.setHeader('Content-Disposition', 'attachment; filename=plantilla_contactos.xlsx');
             res.end(buf);
@@ -1159,9 +1461,9 @@ export const registerBackofficeRoutes = (app: any) => {
                 } catch (metaErr: any) {
                     const errorData = metaErr?.response?.data || {};
                     const details = errorData.error?.error_data?.details || errorData.error?.message || metaErr.message;
-                    
+
                     console.error('❌ [SMB-SYNC] Falló la sincronización de Meta:', details);
-                    
+
                     if (details.includes('outside of allowed time window')) {
                         return res.status(403).json({
                             success: false,
@@ -1179,11 +1481,11 @@ export const registerBackofficeRoutes = (app: any) => {
             // 2. Fallback a Baileys si no hay Meta
             // Priorizamos el groupProvider ya que es el que suele ser Baileys en modo dual
             const provider = groupProvider || adapterProvider;
-            
+
             // Intentamos obtener el socket (vendor) de todas las formas posibles conocidas
-            const vendor = provider?.vendor || 
-                           provider?.globalVendorArgs?.sock || 
-                           (provider as any)?.sock || 
+            const vendor = provider?.vendor ||
+                           provider?.globalVendorArgs?.sock ||
+                           (provider as any)?.sock ||
                            (provider as any)?.vendor?.sock;
 
             console.log(`📡 [SYNC] Intento de sincronización.`);
@@ -1204,16 +1506,16 @@ export const registerBackofficeRoutes = (app: any) => {
 
             // Un motor es válido si tiene el vendor y alguna señal de sesión activa
             const isConnected = vendor && (
-                vendor.ws?.isOpen || 
-                !!vendor.user?.id || 
+                vendor.ws?.isOpen ||
+                !!vendor.user?.id ||
                 !!vendor.authState?.creds?.me?.id
             );
 
             if (!isConnected) {
                 console.warn('⚠️ [SYNC] Intento de sincronización con motor desconectado.');
-                return res.status(503).json({ 
-                    success: false, 
-                    error: 'El motor de WhatsApp (Baileys) no está conectado o la sesión ha expirado. Por favor, vuelva a vincular el dispositivo desde el panel de control.' 
+                return res.status(503).json({
+                    success: false,
+                    error: 'El motor de WhatsApp (Baileys) no está conectado o la sesión ha expirado. Por favor, vuelva a vincular el dispositivo desde el panel de control.'
                 });
             }
 
@@ -1222,7 +1524,7 @@ export const registerBackofficeRoutes = (app: any) => {
             }
 
             console.log('📡 [SYNC] Iniciando extracción de datos desde el socket...');
-            
+
             // 1. Obtener Etiquetas (Labels) por Query (solo Business)
             let labels: any[] = [];
             try {
@@ -1239,23 +1541,23 @@ export const registerBackofficeRoutes = (app: any) => {
 
             // 2. Obtener Datos del Store
             // Buscamos el store en vendor, provider, o el provider interno (wrapper de builderbot)
-            const store = (vendor as any).store || 
-                          (provider as any).store || 
-                          (provider as any).provider?.store || 
+            const store = (vendor as any).store ||
+                          (provider as any).store ||
+                          (provider as any).provider?.store ||
                           (provider as any).globalVendorArgs?.store;
 
             console.log(`📡 [SYNC] Diagnóstico de Store:`);
             console.log(`   - En vendor: ${!!(vendor as any).store}`);
             console.log(`   - En provider: ${!!(provider as any).store}`);
             console.log(`   - En provider.provider: ${!!(provider as any).provider?.store}`);
-            
+
             let contactList: any[] = [];
 
             if (store) {
                 console.log(`   - Store Keys: ${Object.keys(store).join(', ')}`);
                 const storeContacts = store.contacts;
                 const storeChats = store.chats;
-                
+
                 // Detectar si contacts es un Map, un Object o un KeyedDB
                 if (storeContacts) {
                     if (storeContacts instanceof Map) {
@@ -1271,14 +1573,14 @@ export const registerBackofficeRoutes = (app: any) => {
                         contactList = Object.values(storeContacts);
                     }
                 }
-                
+
                 // Si hay pocos contactos, intentar complementar con la lista de chats
                 if (storeChats) {
-                    const allChats = typeof storeChats.all === 'function' ? storeChats.all() : 
+                    const allChats = typeof storeChats.all === 'function' ? storeChats.all() :
                                     (typeof storeChats.toJSON === 'function' ? storeChats.toJSON() : []);
-                    
+
                     console.log(`   - Store Data: ${allChats.length} chats en store.chats`);
-                    
+
                     // Fusionar: Agregar chats que no estén en contactList
                     const existingIds = new Set(contactList.map(c => c.id));
                     for (const chat of allChats) {
@@ -1306,14 +1608,14 @@ export const registerBackofficeRoutes = (app: any) => {
             if (contactList.length === 0) {
                 console.log('📡 [SYNC] ContactList vacía, intentando fallback a vendor.contacts o vendor.chats...');
                 const vendorContacts = vendor.contacts || (vendor as any).contacts || (vendor as any).chats || {};
-                
+
                 if (vendorContacts && typeof (vendorContacts as any).all === 'function') {
                     contactList = (vendorContacts as any).all();
                 } else {
                     contactList = Object.values(vendorContacts);
                 }
             }
-            
+
             console.log(`📡 [SYNC] Resultado extracción: ${contactList.length} registros, ${labels.length} etiquetas.`);
 
             // 3. Sincronizar Etiquetas en DB
@@ -1339,22 +1641,22 @@ export const registerBackofficeRoutes = (app: any) => {
                 .map((c: any) => {
                     const id = c.id;
                     const isGroup = id.endsWith('@g.us');
-                    
+
                     // Normalizar el ID igual que lo hace depsHistoryHandler.getOrCreateChat
                     let cleanId = id.replace(/@s\.whatsapp\.net$/, '');
                     cleanId = cleanId.replace(/@c\.us$/, '');
-                    
+
                     // Intentar obtener el mejor nombre posible
                     let name = c.notify || c.name || c.subject || c.verifiedName || cleanId;
                     if (name === '[-]') name = null;
-                    
+
                     return {
                         id: cleanId,
                         name,
                         type: isGroup ? 'group' : 'whatsapp',
                         is_lead: false,
-                        last_message_at: c.conversationTimestamp 
-                            ? new Date(c.conversationTimestamp * 1000).toISOString() 
+                        last_message_at: c.conversationTimestamp
+                            ? new Date(c.conversationTimestamp * 1000).toISOString()
                             : new Date().toISOString()
                     };
                 });
@@ -1414,29 +1716,34 @@ export const registerBackofficeRoutes = (app: any) => {
                 console.error("❌ [BACKOFFICE] Error de Multer:", err);
                 return res.status(400).json({ success: false, error: `Error de archivo: ${err.message}` });
             }
-            const { chatId, message } = req.body;
+            const { chatId, message, replyTo } = req.body;
             if (!chatId) return res.status(400).json({ success: false, error: 'chatId is required' });
-            
-            // Pasamos deps como sexto argumento
-            processSendMessage(req, res, chatId, message, (req as any).file);
+
+            // Pasamos deps como sexto argumento y replyTo como el séptimo
+            processSendMessage(req, res, chatId, message, (req as any).file, replyTo);
         });
     });
 
     app.delete('/api/backoffice/messages/:chatId/:messageId', backofficeAuth, async (req: any, res: any) => {
         const { chatId, messageId } = req.params;
-        const currentProjectId = depsHistoryHandler.PROJECT_IDENTIFIER;
-        
+        const currentProjectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+        const currentServiceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+
         let messageData: any = null;
         if (process.env.STORAGE_MODE === "local") {
             const { LocalHistoryStore } = await import('../../db/localHistoryStore');
-            const messages = await LocalHistoryStore.getMessages(chatId, 1000, 0, currentProjectId);
+            const messages = await LocalHistoryStore.getMessages(chatId, 1000, 0, currentProjectId, currentServiceId);
             messageData = messages.find((m: any) => m.id === messageId || m.external_id === messageId);
         } else {
-            const { data, error } = await supabase
+            let query = supabase
                 .from('messages')
                 .select('*')
                 .eq('chat_id', chatId)
-                .eq('project_id', currentProjectId)
+                .eq('project_id', currentProjectId);
+            if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
+                query = query.eq('service_id', currentServiceId);
+            }
+            const { data, error } = await query
                 .or(`id.eq.${messageId},external_id.eq.${messageId}`)
                 .maybeSingle();
             if (!error && data) {
@@ -1451,9 +1758,9 @@ export const registerBackofficeRoutes = (app: any) => {
         const isGroup = chatId.includes('@g.us');
         const provider = (isGroup && groupProvider) ? groupProvider : adapterProvider;
         const isMeta = provider && provider.constructor.name === 'MetaCloudProvider';
-        
+
         let deletedInWhatsApp = false;
-        
+
         if (!isMeta && provider && messageData.external_id) {
             try {
                 const vendor = provider.vendor || provider.globalVendorArgs?.sock;
@@ -1476,15 +1783,124 @@ export const registerBackofficeRoutes = (app: any) => {
 
         // Borrar del historial
         const success = await depsHistoryHandler.deleteMessage(messageData.id || messageId, chatId, currentProjectId);
-        
+
         if (success) {
-            res.json({ 
-                success: true, 
-                deletedInWhatsApp, 
-                message: isMeta ? 'Mensaje eliminado del Backoffice. Nota: Meta Cloud API no admite eliminar/revocar mensajes enviados en la app de WhatsApp.' : 'Mensaje eliminado correctamente.' 
+            res.json({
+                success: true,
+                deletedInWhatsApp,
+                message: isMeta ? 'Mensaje eliminado del Backoffice. Nota: Meta Cloud API no admite eliminar/revocar mensajes enviados en la app de WhatsApp.' : 'Mensaje eliminado correctamente.'
             });
         } else {
             res.status(500).json({ success: false, error: 'No se pudo eliminar el mensaje' });
+        }
+    });
+
+    app.post('/api/backoffice/messages/react', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
+        const { chatId, messageId, reaction } = req.body;
+        if (!chatId || !messageId) {
+            return res.status(400).json({ success: false, error: 'chatId and messageId are required' });
+        }
+
+        try {
+            const currentProjectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const currentServiceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+
+            // 1. Look up message in DB to get fromMe
+            let messageData: any = null;
+            if (process.env.STORAGE_MODE === "local") {
+                const { LocalHistoryStore } = await import('../../db/localHistoryStore');
+                const messages = await LocalHistoryStore.getMessages(chatId, 1000, 0, currentProjectId, currentServiceId);
+                messageData = messages.find((m: any) => m.id === messageId || m.external_id === messageId);
+            } else {
+                const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(messageId);
+                let query = supabase.from('messages').select('*').eq('chat_id', chatId).eq('project_id', currentProjectId);
+                if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
+                    query = query.eq('service_id', currentServiceId);
+                }
+                if (isUuid) {
+                    query = query.or(`id.eq.${messageId},external_id.eq.${messageId}`);
+                } else {
+                    query = query.eq('external_id', messageId);
+                }
+                const { data, error } = await query.maybeSingle();
+                if (!error && data) {
+                    messageData = data;
+                }
+            }
+
+            if (!messageData) {
+                return res.status(404).json({ success: false, error: 'Mensaje no encontrado' });
+            }
+
+            const fromMe = messageData.role === 'assistant';
+            const externalId = messageData.external_id || messageId;
+
+            const isGroup = chatId.includes('@g.us');
+            const provider = (isGroup && groupProvider) ? groupProvider : adapterProvider;
+            const isMeta = provider && provider.constructor.name === 'MetaCloudProvider';
+
+            let reactedInWhatsApp = false;
+
+            if (!isMeta && provider && externalId) {
+                const vendor = provider.vendor || provider.globalVendorArgs?.sock;
+                if (vendor && typeof vendor.sendMessage === 'function') {
+                    const jid = chatId.includes('@') ? chatId : `${chatId}@s.whatsapp.net`;
+                    await vendor.sendMessage(jid, {
+                        react: {
+                            text: reaction || '',
+                            key: {
+                                remoteJid: jid,
+                                id: externalId,
+                                fromMe: fromMe
+                            }
+                        }
+                    });
+                    reactedInWhatsApp = true;
+                }
+            } else if (isMeta && externalId) {
+                if (!externalId.startsWith('wamid.')) {
+                    return res.status(400).json({ success: false, error: 'Este mensaje no tiene un ID de Meta válido (wamid) para reaccionar. Fue enviado localmente o con otro proveedor.' });
+                }
+                const { phone_number_id, access_token } = provider.config || (provider as any).globalVendorArgs || {};
+                if (phone_number_id && access_token) {
+                    const cleanNumber = typeof provider.formatNumberForMeta === 'function'
+                        ? provider.formatNumberForMeta(chatId)
+                        : chatId.replace(/\D/g, '');
+                    const apiVersion = process.env.META_API_VERSION || 'v25.0';
+                    const url = `https://graph.facebook.com/${apiVersion}/${phone_number_id}/messages`;
+                    const body = {
+                        messaging_product: "whatsapp",
+                        recipient_type: isGroup ? "group" : "individual",
+                        to: isGroup ? chatId.split('@')[0] : cleanNumber,
+                        type: "reaction",
+                        reaction: {
+                            message_id: externalId,
+                            emoji: reaction || ""
+                        }
+                    };
+                    await axios.post(url, body, {
+                        headers: {
+                            'Authorization': `Bearer ${access_token}`,
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    reactedInWhatsApp = true;
+                    console.log(`[BACKOFFICE] Reacción enviada a Meta Cloud API (ID: ${externalId})`);
+                }
+            }
+
+            // Save reaction in DB
+            if (process.env.STORAGE_MODE === "local") {
+                const { LocalHistoryStore } = await import('../../db/localHistoryStore');
+                await LocalHistoryStore.updateMessageReaction(messageData.id, reaction || '', currentProjectId);
+            } else {
+                await supabase.from('messages').update({ reaction: reaction || '' }).eq('id', messageData.id);
+            }
+
+            res.json({ success: true, reactedInWhatsApp, message: 'Reacción enviada' });
+        } catch (e: any) {
+            console.error('❌ Error enviando reacción:', e);
+            res.status(500).json({ success: false, error: e.message });
         }
     });
 
@@ -1523,28 +1939,32 @@ export const registerBackofficeRoutes = (app: any) => {
                 }
             }
 
-            if (pathToCheck.startsWith('/uploads/') || pathToCheck.startsWith('uploads/') ||
-                pathToCheck.startsWith('/tmp/') || pathToCheck.startsWith('tmp/') ||
-                pathToCheck.startsWith('/temp/') || pathToCheck.startsWith('temp/')) {
-                isLocal = true;
-                cleanRelativePath = pathToCheck.startsWith('/') ? pathToCheck.substring(1) : pathToCheck;
-                if (cleanRelativePath.startsWith('temp/')) {
-                    cleanRelativePath = cleanRelativePath.replace('temp/', 'tmp/');
+            if (mediaType !== 'text') {
+                if (pathToCheck.startsWith('/uploads/') || pathToCheck.startsWith('uploads/') ||
+                    pathToCheck.startsWith('/tmp/') || pathToCheck.startsWith('tmp/') ||
+                    pathToCheck.startsWith('/temp/') || pathToCheck.startsWith('temp/')) {
+                    isLocal = true;
+                    cleanRelativePath = pathToCheck.startsWith('/') ? pathToCheck.substring(1) : pathToCheck;
+                    if (cleanRelativePath.startsWith('temp/')) {
+                        cleanRelativePath = cleanRelativePath.replace('temp/', 'tmp/');
+                    }
                 }
-            }
 
-            if (isLocal) {
-                absolutePath = path.resolve(process.cwd(), cleanRelativePath);
-                
-                if (!fs.existsSync(absolutePath)) {
-                    console.error(`[FORWARD] El archivo local no existe en: ${absolutePath}`);
-                    return res.status(404).json({ success: false, error: 'El archivo local a reenviar no existe en el servidor' });
+                if (isLocal) {
+                    absolutePath = path.resolve(process.cwd(), cleanRelativePath);
+
+                    if (!fs.existsSync(absolutePath)) {
+                        console.error(`[FORWARD] El archivo local no existe en: ${absolutePath}`);
+                        return res.status(404).json({ success: false, error: 'El archivo local a reenviar no existe en el servidor' });
+                    }
                 }
             }
 
             // Normalizar tipo de media
             let finalType: 'text' | 'image' | 'video' | 'document' | 'sticker' = 'document';
-            if (mediaType === 'sticker' || mediaUrl.match(/\.webp$/i)) {
+            if (mediaType === 'text') {
+                finalType = 'text';
+            } else if (mediaType === 'sticker' || mediaUrl.match(/\.webp$/i)) {
                 finalType = 'sticker';
             } else if (mediaType === 'image' || mediaUrl.match(/\.(jpeg|jpg|gif|png|svg)$/i)) {
                 finalType = 'image';
@@ -1553,7 +1973,9 @@ export const registerBackofficeRoutes = (app: any) => {
             }
 
             // Enviar usando el método adecuado del proveedor
-            if (finalType === 'sticker') {
+            if (finalType === 'text') {
+                providerResponse = await providerToSend.sendMessage(jid, mediaUrl, {});
+            } else if (finalType === 'sticker') {
                 if (typeof (providerToSend as any).sendSticker === 'function') {
                     providerResponse = await (providerToSend as any).sendSticker(jid, absolutePath);
                 } else {
@@ -1581,14 +2003,14 @@ export const registerBackofficeRoutes = (app: any) => {
 
             // Guardar en el historial
             const externalId = providerResponse?.key?.id || providerResponse?.messages?.[0]?.id || providerResponse?.id;
-            
+
             const { trackSentMessage } = await import('../../providers/provider.manager');
             trackSentMessage(externalId);
 
             const projectId = resolveProjectId(req);
             await depsHistoryHandler.saveMessage(chatId, 'assistant', mediaUrl, finalType, undefined, undefined, externalId, 'whatsapp', projectId || undefined);
-            await depsHistoryHandler.updateLastHumanMessage(chatId, projectId || undefined);
-            await depsHistoryHandler.toggleBot(chatId, false, projectId || undefined);
+            await depsHistoryHandler.updateLastHumanMessage(chatId, projectId, resolveServiceId(req));
+            await depsHistoryHandler.toggleBot(chatId, false, projectId, resolveServiceId(req));
 
             res.json({ success: true, message: 'Archivo reenviado correctamente' });
         } catch (e: any) {
@@ -1631,13 +2053,13 @@ export const registerBackofficeRoutes = (app: any) => {
                 try {
                     const currentStatus = await hasActiveSession(adapterProvider, groupProvider);
                     const currentProvStatus = isGroup ? currentStatus.group : currentStatus.adapter;
-                    
+
                     if (currentProvStatus && !currentProvStatus.active) {
                         console.log(`[TIMEOUT] Pasaron 5 minutos y no se escaneó el QR. Deteniendo proveedor Baileys (Grupo: ${!!isGroup}) para ahorrar recursos.`);
                         if (typeof provider.stopProvider === 'function') {
                             await provider.stopProvider();
                         }
-                        
+
                         if ((adapterProvider as any).server?.io) {
                             (adapterProvider as any).server.io.emit('baileys_stopped', { isGroup });
                         }
@@ -1657,12 +2079,13 @@ export const registerBackofficeRoutes = (app: any) => {
     app.post('/api/backoffice/toggle-bot', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         const { chatId, enabled } = req.body;
         if (!chatId) return res.status(400).json({ success: false, error: 'chatId is required' });
-        
+
         try {
             const projectId = resolveProjectId(req);
-            await depsHistoryHandler.toggleBot(chatId, enabled, projectId);
+            const serviceId = resolveServiceId(req);
+            await depsHistoryHandler.toggleBot(chatId, enabled, projectId, serviceId);
             if ((adapterProvider as any).server?.io) {
-                (adapterProvider as any).server.io.emit('bot_toggled', { chatId, enabled, projectId });
+                (adapterProvider as any).server.io.emit('bot_toggled', { chatId, enabled, projectId, serviceId });
             }
             res.json({ success: true, enabled });
         } catch (e: any) {
@@ -1699,8 +2122,8 @@ export const registerBackofficeRoutes = (app: any) => {
             const { name, email, notes, source, cuit_dni, tax_status, address, offered_product, crm_status, crm_due_date, ticket_title } = req.body;
             const projectId = resolveProjectId(req);
             const serviceId = resolveServiceId(req);
-            const result = await depsHistoryHandler.updateContactDetails(id, { 
-                name, email, notes, source, 
+            const result = await depsHistoryHandler.updateContactDetails(id, {
+                name, email, notes, source,
                 cuit_dni, tax_status, address, offered_product,
                 crm_status, crm_due_date,
                 is_lead: true,
@@ -1950,8 +2373,8 @@ export const registerBackofficeRoutes = (app: any) => {
             }
 
             const result = await depsHistoryHandler.saveMetaOnboardingData(
-                finalWabaId, 
-                finalPhoneId, 
+                finalWabaId,
+                finalPhoneId,
                 manualToken,
                 extra,
                 projectId,
@@ -1966,7 +2389,7 @@ export const registerBackofficeRoutes = (app: any) => {
     });
 
     // --- TEMPLATES & BULK MESSAGING ---
-    
+
     /** Asegura que el proveedor tenga la config más reciente de la DB */
     const syncMetaProvider = async (projectId: string | null = null, serviceId: string | null = null) => {
         const config = await depsHistoryHandler.getMetaOnboardingData(projectId || process.env.RAILWAY_PROJECT_ID, false, serviceId);
@@ -2021,7 +2444,7 @@ export const registerBackofficeRoutes = (app: any) => {
             console.log('📡 [BACKOFFICE-ROUTES] Solicitando plantillas de biblioteca...');
             const templates = await provider.getLibraryTemplates();
             console.log(`✅ [BACKOFFICE-ROUTES] Se obtuvieron ${templates?.length || 0} plantillas.`);
-            
+
             res.json({ success: true, templates });
         } catch (error: any) {
             console.error('❌ [BACKOFFICE-ROUTES] Error en library-templates:', error);
@@ -2056,9 +2479,9 @@ export const registerBackofficeRoutes = (app: any) => {
             }
 
             console.error('Error creando plantilla Meta:', metaError || error.message);
-            res.status(error.response?.status || 500).json({ 
-                success: false, 
-                error: errorMessage 
+            res.status(error.response?.status || 500).json({
+                success: false,
+                error: errorMessage
             });
         }
     });
@@ -2069,7 +2492,7 @@ export const registerBackofficeRoutes = (app: any) => {
         try {
             const serviceId = resolveServiceId(req);
             const config = await depsHistoryHandler.getMetaOnboardingData(projectId, true, serviceId); // Fallback al main_token habilitado
-            
+
             // Si el usuario provee un token manual (Super User), lo priorizamos
             const token = manualToken || config?.access_token;
             if (!token) throw new Error('No se encontró sesión de Meta ni Token manual provisto.');
@@ -2078,7 +2501,7 @@ export const registerBackofficeRoutes = (app: any) => {
             if (!wabaId) throw new Error('No se encontró WABA ID. Búscalo en tu Panel de Meta o ingrésalo manualmente.');
 
             const { addPhoneNumberToWaba, requestPhoneNumberOtp } = await import("../../apis/meta/metaDiscovery");
-            
+
             // 1. Añadir el número (esto nos da el Phone ID)
             const result = await addPhoneNumberToWaba(token, wabaId, phoneNumber, verifiedName);
             const phoneId = result.id;
@@ -2110,9 +2533,9 @@ export const registerBackofficeRoutes = (app: any) => {
             }
 
             console.error('❌ [Register-Step-1] Error:', metaError || error.message);
-            res.status(error.response?.status || 400).json({ 
-                success: false, 
-                error: errorMessage 
+            res.status(error.response?.status || 400).json({
+                success: false,
+                error: errorMessage
             });
         }
     });
@@ -2126,7 +2549,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const token = config.access_token;
 
             const { verifyPhoneNumberOtp } = await import("../../apis/meta/metaDiscovery");
-            
+
             // 1. Verificar y Registrar en Meta
             await verifyPhoneNumberOtp(token, phoneId, code);
 
@@ -2145,9 +2568,9 @@ export const registerBackofficeRoutes = (app: any) => {
             }
 
             console.error('❌ [Register-Step-2] Error:', metaError || error.message);
-            res.status(error.response?.status || 400).json({ 
-                success: false, 
-                error: errorMessage 
+            res.status(error.response?.status || 400).json({
+                success: false,
+                error: errorMessage
             });
         }
     });
@@ -2155,7 +2578,8 @@ export const registerBackofficeRoutes = (app: any) => {
     app.get('/api/backoffice/whatsapp/template-excel/:templateName', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req);
-            await syncMetaProvider(projectId);
+            const serviceId = resolveServiceId(req);
+            await syncMetaProvider(projectId, serviceId);
             const { templateName } = req.params;
             const provider = (adapterProvider.constructor.name === 'MetaCloudProvider') ? adapterProvider : groupProvider;
             if (!provider || typeof provider.getTemplates !== 'function') {
@@ -2173,15 +2597,15 @@ export const registerBackofficeRoutes = (app: any) => {
             const bodyComponent = template.components.find((c: any) => c.type === 'BODY');
             const text = bodyComponent?.text || '';
             const varNames: string[] = [];
-            
+
             // Detección robusta: si tiene parameter_format='named' (case-insensitive)
             const isNamed = (template.parameter_format || '').toLowerCase() === 'named';
             const bodyNamedParams = bodyComponent?.example?.body_text_named_params || [];
-            
+
             if (isNamed && bodyNamedParams.length > 0) {
                 bodyNamedParams.forEach((p: any) => varNames.push(p.param_name));
             }
-            
+
             // Fallback: Si no es named o si varNames quedó vacío, escaneamos el texto del cuerpo.
             // Esto sirve para Positional ({{1}}) o si es Named ({{nombre}}) pero no tenía ejemplos oficiales.
             if (varNames.length === 0 && text) {
@@ -2190,7 +2614,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 while ((match = varRegex.exec(text)) !== null) {
                     const varName = match[1].trim();
                     if (!varNames.includes(varName)) {
-                        varNames.push(varName); 
+                        varNames.push(varName);
                     }
                 }
             }
@@ -2213,17 +2637,17 @@ export const registerBackofficeRoutes = (app: any) => {
 
             const XLSX = await import('xlsx');
             const wb = XLSX.utils.book_new();
-            
+
             // Cabeceras
             const headers = ['phone', ...varNames];
             if (hasMediaHeader) headers.push('header_media_url');
             dynamicButtonIndices.forEach(idx => headers.push(`button_${idx + 1}_url_suffix`));
 
             const rows = [headers];
-            
+
             // --- FILA DE EJEMPLO (Basada en Meta) ---
             const exampleRow = ['5491100000000'];
-            
+
             // Llenar variables del cuerpo con ejemplos de Meta
             varNames.forEach(vName => {
                 const exMatch = bodyNamedParams.find((p: any) => p.param_name === vName);
@@ -2246,22 +2670,30 @@ export const registerBackofficeRoutes = (app: any) => {
 
             let chats: any[] = [];
             if (tagIdArray.length === 1) {
-                chats = await depsHistoryHandler.listChats(10000, 0, undefined, tagIdArray[0], undefined, undefined, projectId);
+                chats = await depsHistoryHandler.listChats(10000, 0, undefined, tagIdArray[0], undefined, undefined, projectId, serviceId);
             } else if (tagIdArray.length > 1) {
                 const supabase = depsHistoryHandler.getSupabase();
-                const { data: taggedEntries } = await supabase
+                let tagQuery = supabase
                     .from('chat_tags')
                     .select('chat_id')
                     .eq('project_id', projectId)
                     .in('tag_id', tagIdArray);
+                if (serviceId && serviceId !== 'default_service') {
+                    tagQuery = tagQuery.or(`service_id.eq.${serviceId},service_id.eq.default_service,service_id.is.null`);
+                }
+                const { data: taggedEntries } = await tagQuery;
 
                 const matchingIds = Array.from(new Set((taggedEntries || []).map((te: any) => te.chat_id)));
                 if (matchingIds.length > 0) {
-                    const { data: rawChats } = await supabase
+                    let chatsQuery = supabase
                         .from('chats')
                         .select('id, type, name, last_message_at, last_human_message_at, assigned_to, bot_enabled, crm_status, crm_due_date, notes, email, source, is_lead, cuit_dni, tax_status, address, offered_product, unread_count, chat_tags(tag_id, tags(*))')
                         .eq('project_id', projectId)
                         .in('id', matchingIds);
+                    if (serviceId && serviceId !== 'default_service') {
+                        chatsQuery = chatsQuery.or(`service_id.eq.${serviceId},service_id.eq.default_service,service_id.is.null`);
+                    }
+                    const { data: rawChats } = await chatsQuery;
 
                     chats = (rawChats || []).map((chat: any) => ({
                         ...chat,
@@ -2269,7 +2701,7 @@ export const registerBackofficeRoutes = (app: any) => {
                     }));
                 }
             } else {
-                chats = await depsHistoryHandler.listChats(10000, 0, undefined, undefined, undefined, undefined, projectId);
+                chats = await depsHistoryHandler.listChats(10000, 0, undefined, undefined, undefined, undefined, projectId, serviceId);
             }
 
             if (chats && chats.length > 0) {
@@ -2285,7 +2717,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 }
 
                 const autoCompletable = [
-                    'name', 'last_message_at', 'last_human_message_at', 'notes', 'email', 
+                    'name', 'last_message_at', 'last_human_message_at', 'notes', 'email',
                     'crm_status', 'crm_due_date', 'cuit_dni', 'tax_status', 'address', 'offered_product'
                 ];
 
@@ -2293,12 +2725,12 @@ export const registerBackofficeRoutes = (app: any) => {
                     const cleanPhone = chat.id.split('@')[0];
                     if (cleanPhone === '5491100000000') return; // Evitar duplicar el ejemplo si existiera
                     const row = [cleanPhone];
-                    
+
                     // Llenar variables si coinciden con los nombres de campos del chat
                     for (let i = 1; i < headers.length; i++) {
                         const h = headers[i];
                         const lowerH = h.toLowerCase();
-                        
+
                         if (lowerH === 'nombre' || lowerH === 'name' || lowerH === 'nombre_cliente' || lowerH === 'nombrecliente') {
                             row.push(chat.name || '');
                         } else if (autoCompletable.includes(h)) {
@@ -2327,13 +2759,14 @@ export const registerBackofficeRoutes = (app: any) => {
 
 
     app.post('/api/backoffice/whatsapp/send-bulk-template', async (req: any, res: any) => {
-        await syncMetaProvider(resolveProjectId(req));
+        await syncMetaProvider(resolveProjectId(req), resolveServiceId(req));
         return processBulkTemplate(req, res);
     });
 
     app.post('/api/backoffice/whatsapp/send-single-template', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         const projectId = resolveProjectId(req);
-        await syncMetaProvider(projectId);
+        const serviceId = resolveServiceId(req);
+        await syncMetaProvider(projectId, serviceId);
         const { chatId, phone, templateName, languageCode, components, renderedText, mediaHeader } = req.body;
 
         try {
@@ -2485,13 +2918,13 @@ export const registerBackofficeRoutes = (app: any) => {
 
                 if (mediaHeader && mediaHeader.url) {
                     const mediaType = mediaHeader.type || 'document';
-                    await depsHistoryHandler.saveMessage(targetJid, 'assistant', mediaHeader.url, mediaType, undefined, undefined, `${msgId}_media`, 'whatsapp', projectId || undefined);
+                    await depsHistoryHandler.saveMessage(targetJid, 'assistant', mediaHeader.url, mediaType, undefined, undefined, `${msgId}_media`, 'whatsapp', projectId || undefined, serviceId || undefined);
                 }
 
                 const textToSave = renderedText || `[Plantilla Meta: ${templateName}]`;
-                await depsHistoryHandler.saveMessage(targetJid, 'assistant', textToSave, 'text', undefined, undefined, msgId, 'whatsapp', projectId || undefined);
-                await depsHistoryHandler.updateLastHumanMessage(targetJid, projectId || undefined);
-                await depsHistoryHandler.toggleBot(targetJid, false, projectId || undefined);
+                await depsHistoryHandler.saveMessage(targetJid, 'assistant', textToSave, 'text', undefined, undefined, msgId, 'whatsapp', projectId || undefined, serviceId || undefined);
+                await depsHistoryHandler.updateLastHumanMessage(targetJid, projectId, serviceId);
+                await depsHistoryHandler.toggleBot(targetJid, false, projectId, serviceId);
 
                 return res.json({ success: true, messageId: msgId });
             } else {
@@ -2507,7 +2940,8 @@ export const registerBackofficeRoutes = (app: any) => {
 
     app.post('/api/backoffice/whatsapp/send-quick-template', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         const projectId = resolveProjectId(req);
-        await syncMetaProvider(projectId);
+        const serviceId = resolveServiceId(req);
+        await syncMetaProvider(projectId, serviceId);
         const { templateName, languageCode, startDate, endDate, tagIds } = req.body;
 
         try {
@@ -2520,22 +2954,30 @@ export const registerBackofficeRoutes = (app: any) => {
             let chatsList: any[] = [];
 
             if (tagIdArray.length === 1) {
-                chatsList = await depsHistoryHandler.listChats(10000, 0, undefined, tagIdArray[0], undefined, undefined, projectId);
+                chatsList = await depsHistoryHandler.listChats(10000, 0, undefined, tagIdArray[0], undefined, undefined, projectId, serviceId);
             } else if (tagIdArray.length > 1) {
                 const supabase = depsHistoryHandler.getSupabase();
-                const { data: taggedEntries } = await supabase
+                let tagQuery = supabase
                     .from('chat_tags')
                     .select('chat_id')
                     .eq('project_id', projectId)
                     .in('tag_id', tagIdArray);
+                if (serviceId && serviceId !== 'default_service') {
+                    tagQuery = tagQuery.or(`service_id.eq.${serviceId},service_id.eq.default_service,service_id.is.null`);
+                }
+                const { data: taggedEntries } = await tagQuery;
 
                 const matchingIds = Array.from(new Set((taggedEntries || []).map((te: any) => te.chat_id)));
                 if (matchingIds.length > 0) {
-                    const { data: rawChats } = await supabase
+                    let chatsQuery = supabase
                         .from('chats')
                         .select('id, type, name, last_message_at, last_human_message_at, assigned_to, bot_enabled, crm_status, crm_due_date, notes, email, source, is_lead, cuit_dni, tax_status, address, offered_product, unread_count, chat_tags(tag_id, tags(*))')
                         .eq('project_id', projectId)
                         .in('id', matchingIds);
+                    if (serviceId && serviceId !== 'default_service') {
+                        chatsQuery = chatsQuery.or(`service_id.eq.${serviceId},service_id.eq.default_service,service_id.is.null`);
+                    }
+                    const { data: rawChats } = await chatsQuery;
 
                     chatsList = (rawChats || []).map((chat: any) => ({
                         ...chat,
@@ -2543,7 +2985,7 @@ export const registerBackofficeRoutes = (app: any) => {
                     }));
                 }
             } else {
-                chatsList = await depsHistoryHandler.listChats(10000, 0, undefined, undefined, undefined, undefined, projectId);
+                chatsList = await depsHistoryHandler.listChats(10000, 0, undefined, undefined, undefined, undefined, projectId, serviceId);
             }
 
             if (chatsList && chatsList.length > 0) {
@@ -2710,14 +3152,14 @@ export const registerBackofficeRoutes = (app: any) => {
                         const resApi = await provider.sendTemplate(phone, templateName, languageCode || template.language || 'es', components, { isBulk: true });
                         if (resApi?.messages) {
                             const msgId = resApi.messages[0].id;
-                            
+
                             // Si la plantilla tiene cabecera multimedia, guardar primero el mensaje multimedia
                             if (headerComp && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(headerComp.format) && mediaLink) {
                                 const mediaType = headerComp.format.toLowerCase();
-                                await depsHistoryHandler.saveMessage(chat.id, 'assistant', mediaLink, mediaType, undefined, undefined, `${msgId}_media`, 'whatsapp', projectId || undefined);
+                                await depsHistoryHandler.saveMessage(chat.id, 'assistant', mediaLink, mediaType, undefined, undefined, `${msgId}_media`, 'whatsapp', projectId || undefined, serviceId || undefined);
                             }
 
-                            await depsHistoryHandler.saveMessage(chat.id, 'assistant', historyContent, 'text', undefined, undefined, msgId, 'whatsapp', projectId || undefined);
+                            await depsHistoryHandler.saveMessage(chat.id, 'assistant', historyContent, 'text', undefined, undefined, msgId, 'whatsapp', projectId || undefined, serviceId || undefined);
                             sent++;
                         } else {
                             errors++;
@@ -2740,7 +3182,7 @@ export const registerBackofficeRoutes = (app: any) => {
     });
 
     // --- IMPORTACION EXTERNA DE CONTACTOS ---
-    
+
     app.get('/api/backoffice/chats/import-template', backofficeAuth, async (req: any, res: any) => {
         try {
             const wb = XLSX.utils.book_new();
@@ -2781,7 +3223,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
         try {
             console.log(`📡 [CALLBACK] Intercambiando código Meta por token (v25.0)...`);
-            
+
             const appId = await depsHistoryHandler.getConfig('META_APP_ID', projectId) || process.env.META_APP_ID || '1493670789148486';
             const appSecret = await depsHistoryHandler.getConfig('META_APP_SECRET', projectId) || process.env.META_APP_SECRET || '362b2ec20c00bdf51336fd165ad47160';
 
@@ -2802,7 +3244,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const { discoverMetaIds } = await import("../../apis/meta/metaDiscovery");
             const mainToken = await depsHistoryHandler.getMainToken();
             const discovery = await discoverMetaIds(accessToken, mainToken, appId, appSecret);
-            
+
             if (discovery.found && discovery.data) {
                 finalWabaId = discovery.data.wabaId || finalWabaId;
                 finalPhoneId = discovery.data.phoneNumberId || finalPhoneId;
@@ -2816,7 +3258,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 console.log(`✅ [CALLBACK] Guardando configuración de Página: ${pageDiscovery.pageName} para Proyecto: ${projectId}, Servicio: ${serviceId}`);
                 await depsHistoryHandler.saveSetting('FACEBOOK_PAGE_ID', pageDiscovery.pageId, projectId, serviceId);
                 await depsHistoryHandler.saveSetting('FACEBOOK_PAGE_TOKEN', pageDiscovery.pageAccessToken, projectId, serviceId);
-                
+
                 // Si encontramos Instagram vinculado, guardarlo también
                 if (pageDiscovery.instagramId) {
                     await depsHistoryHandler.saveSetting('INSTAGRAM_BUSINESS_ID', pageDiscovery.instagramId, projectId, serviceId);
@@ -2830,13 +3272,13 @@ export const registerBackofficeRoutes = (app: any) => {
             // 3. Verificación de resultados y depuración de scopes si falló todo
             if (!discovery.found && !pageDiscovery) {
                 console.warn('⚠️ [CALLBACK] No se pudo descubrir ningún recurso automáticamente.');
-                
+
                 const diagHtml = discovery.diagnostics.map(d => `
                     <div style="margin-bottom: 15px; border-bottom: 1px solid #edf2f7; padding-bottom: 10px;">
                         <div style="display: flex; align-items: center; justify-content: space-between;">
                             <strong style="font-size: 14px; color: #2d3748;">${d.step}</strong>
-                            <span style="font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: bold; text-transform: uppercase; 
-                                background: ${d.status === 'success' ? '#c6f6d5' : d.status === 'empty' ? '#feebc8' : '#fed7d7'}; 
+                            <span style="font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: bold; text-transform: uppercase;
+                                background: ${d.status === 'success' ? '#c6f6d5' : d.status === 'empty' ? '#feebc8' : '#fed7d7'};
                                 color: ${d.status === 'success' ? '#22543d' : d.status === 'empty' ? '#744210' : '#822727'};">
                                 ${d.status}
                             </span>
@@ -2852,11 +3294,11 @@ export const registerBackofficeRoutes = (app: any) => {
                         <div style="background: white; padding: 40px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;">
                             <h1 style="color: #e53e3e; margin-bottom: 10px; font-size: 28px; font-weight: 800; text-align: center;">Configuración Incompleta</h1>
                             <p style="color: #718096; margin-bottom: 30px; text-align: center;">Hemos vinculado tu cuenta de Meta, pero no pudimos encontrar automáticamente una cuenta de WhatsApp Cloud API activa.</p>
-                            
+
                             <div style="margin-top: 30px; background: #ebf8ff; padding: 25px; border-radius: 12px; border: 1px solid #bee3f8; text-align: left;">
                                 <h3 style="margin-top: 0; color: #2b6cb0; font-size: 18px;">Opción 1: Configuración Manual (Recomendado)</h3>
                                 <p style="font-size: 14px; margin-bottom: 20px;">Si conoces tus IDs de WhatsApp, ingrésalos aquí. Esto activará el bot directamente sin validación por SMS.</p>
-                                
+
                                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                                     <div>
                                         <label style="display: block; font-size: 12px; font-weight: bold; margin-bottom: 5px; color: #4a5568;">WABA ID (Account):</label>
@@ -2902,7 +3344,7 @@ export const registerBackofficeRoutes = (app: any) => {
                                 const waba = document.getElementById('wabaManual').value;
                                 const phone = document.getElementById('phoneManual').value;
                                 if (!waba || !phone) return alert('Por favor completa ambos IDs');
-                                
+
                                 document.getElementById('btnSaveManual').innerText = 'Guardando...';
                                 document.getElementById('btnSaveManual').disabled = true;
 
@@ -2910,7 +3352,7 @@ export const registerBackofficeRoutes = (app: any) => {
                                     const res = await fetch('/api/backoffice/whatsapp/sync-manual', {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ 
+                                        body: JSON.stringify({
                                             token: accessToken,
                                             wabaId: waba,
                                             phoneNumberId: phone,
@@ -2942,15 +3384,15 @@ export const registerBackofficeRoutes = (app: any) => {
             // Registrar y suscribir WhatsApp si se encontró
             const tokenToUse = mainToken || accessToken;
             if (finalPhoneId) {
-                await axios.post(`https://graph.facebook.com/v25.0/${finalPhoneId}/register`, 
-                    { messaging_product: 'whatsapp', pin: '' }, 
+                await axios.post(`https://graph.facebook.com/v25.0/${finalPhoneId}/register`,
+                    { messaging_product: 'whatsapp', pin: '' },
                     { headers: { 'Authorization': `Bearer ${tokenToUse}` } }
                 ).catch(() => {});
             }
 
             if (finalWabaId) {
-                await axios.post(`https://graph.facebook.com/v25.0/${finalWabaId}/subscribed_apps`, 
-                    {}, 
+                await axios.post(`https://graph.facebook.com/v25.0/${finalWabaId}/subscribed_apps`,
+                    {},
                     { headers: { 'Authorization': `Bearer ${tokenToUse}` } }
                 ).catch(() => {});
 
@@ -2958,9 +3400,9 @@ export const registerBackofficeRoutes = (app: any) => {
                 // enviados manualmente desde la app de WhatsApp (Atención Humana)
                 try {
                     console.log('📡 [CALLBACK] Suscribiendo a smb_message_echoes para sincronización de mensajes manuales...');
-                    await axios.post(`https://graph.facebook.com/v25.0/${finalWabaId}/subscribed_apps`, 
-                        { override_callback_uri: undefined }, 
-                        { 
+                    await axios.post(`https://graph.facebook.com/v25.0/${finalWabaId}/subscribed_apps`,
+                        { override_callback_uri: undefined },
+                        {
                             headers: { 'Authorization': `Bearer ${tokenToUse}` },
                             params: { subscribed_fields: 'messages,smb_message_echoes' }
                         }
@@ -2971,7 +3413,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 }
 
                 await depsHistoryHandler.saveMetaOnboardingData(finalWabaId, finalPhoneId, tokenToUse, { verified_name: finalVerifiedName }, projectId, serviceId);
-                
+
                 // --- SINCRONIZACIÓN AUTOMÁTICA SMB ---
                 // Solicitamos contactos e historial inmediatamente tras la vinculación
                 if (finalPhoneId) {
@@ -2984,7 +3426,7 @@ export const registerBackofficeRoutes = (app: any) => {
             }
 
             console.log(`✅ [CALLBACK] Onboarding finalizado con éxito para Proyecto: ${projectId}`);
-            
+
             // Programar un reinicio automático para aplicar el cambio de motor (Baileys -> Meta)
             setTimeout(() => {
                 console.log('🔄 [SYSTEM] Reiniciando bot automáticamente para aplicar la configuración de Meta...');
@@ -2996,7 +3438,7 @@ export const registerBackofficeRoutes = (app: any) => {
         } catch (error: any) {
             console.error('❌ [CALLBACK] Error en vinculación Meta:', error.response?.data || error.message);
             const errorDetails = error.response?.data ? JSON.stringify(error.response.data, null, 2) : error.message;
-            
+
             return res.status(500).send(`
                 <div style="font-family: sans-serif; padding: 40px; text-align: center; background: #fff5f5; border: 1px solid #feb2b2; border-radius: 8px; max-width: 600px; margin: 40px auto;">
                     <h2 style="color: #c53030; margin-bottom: 20px;">❌ Error en la vinculación con Meta</h2>
@@ -3026,7 +3468,7 @@ export const registerBackofficeRoutes = (app: any) => {
         try {
             console.log(`📡 [SYNC-MANUAL] Vinculando manualmente para Proyecto: ${projectId}, Servicio: ${serviceId}`);
             await depsHistoryHandler.saveMetaOnboardingData(wabaId, phoneNumberId, token, { manual: true }, projectId, serviceId);
-            
+
             // Disparar sincronización SMB
             try {
                 await triggerMetaSync(token, phoneNumberId);
@@ -3119,8 +3561,8 @@ export const registerBackofficeRoutes = (app: any) => {
                     try {
                         if (phoneId && phoneId !== 'PENDING') {
                             console.log(`📡 [UNLINK-META] Ejecutando deregister para Phone ID: ${phoneId}...`);
-                            await axios.post(`https://graph.facebook.com/v25.0/${phoneId}/deregister`, 
-                                {}, 
+                            await axios.post(`https://graph.facebook.com/v25.0/${phoneId}/deregister`,
+                                {},
                                 { headers: { 'Authorization': `Bearer ${token}` } }
                             );
                             console.log(`✅ [UNLINK-META] Phone ID deregistered exitosamente.`);
@@ -3132,7 +3574,7 @@ export const registerBackofficeRoutes = (app: any) => {
                     try {
                         if (wabaId && wabaId !== 'PENDING') {
                             console.log(`📡 [UNLINK-META] Eliminando suscripción de app para WABA ID: ${wabaId}...`);
-                            await axios.delete(`https://graph.facebook.com/v25.0/${wabaId}/subscribed_apps`, 
+                            await axios.delete(`https://graph.facebook.com/v25.0/${wabaId}/subscribed_apps`,
                                 { headers: { 'Authorization': `Bearer ${token}` } }
                             );
                             console.log(`✅ [UNLINK-META] App unsubscribed de WABA exitosamente.`);
@@ -3204,7 +3646,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const data = response.data;
             const serviceId = resolveServiceId(req);
             const result = await depsHistoryHandler.saveMetaOnboardingData(
-                data.phoneNumberId || data.phone_number_id || "PENDING", 
+                data.phoneNumberId || data.phone_number_id || "PENDING",
                 data.wabaId || data.waba_id || "PENDING",
                 data.accessToken || data.access_token,
                 { ...data, syncedBy: 'duskcodes-master-router' },
@@ -3230,10 +3672,10 @@ export const registerBackofficeRoutes = (app: any) => {
                 return res.status(400).json({ success: false, error: 'OpenAI API Key no configurada. Por favor, guarde la configuración con una clave válida primero.' });
             }
             const assistant = await dynamicOpenAI.beta.assistants.retrieve(assistantId);
-            
+
             if (assistant) {
-                res.json({ 
-                    success: true, 
+                res.json({
+                    success: true,
                     instructions: assistant.instructions || '',
                     name: assistant.name,
                     model: assistant.model
@@ -3274,7 +3716,9 @@ export const registerBackofficeRoutes = (app: any) => {
             await depsHistoryHandler.saveSetting(key, value, projectId, serviceId);
             if (key === 'SYSTEM_CONFIG_VISIBLE') {
                 invalidateVisibilityCache();
-                historyEvents.emit('setting_changed', { key, value });
+            }
+            if (key === 'SYSTEM_CONFIG_VISIBLE' || key === 'GLOBAL_BOT_ENABLED') {
+                historyEvents.emit('setting_changed', { key, value, projectId, serviceId });
             }
             res.json({ success: true });
         } catch (error: any) {
@@ -3436,19 +3880,19 @@ export const registerBackofficeRoutes = (app: any) => {
     app.get('/api/backoffice/mercadopago/auth-url', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || 'default';
-            
+
             // Detectar dominio público y guardarlo dinámicamente en settings
             const host = req.headers.host || '';
             const protocol = req.headers['x-forwarded-proto'] || 'https';
             const domain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.PROJECT_URL || `${protocol}://${host}`;
-            
+
             if (domain.startsWith('http')) {
                 const urlObj = new URL(domain);
                 await depsHistoryHandler.saveSetting('RAILWAY_PUBLIC_DOMAIN', urlObj.host, projectId);
             } else {
                 await depsHistoryHandler.saveSetting('RAILWAY_PUBLIC_DOMAIN', domain, projectId);
             }
-            
+
             let fullUrl = domain.startsWith('http') ? domain : `https://${domain}`;
             if (fullUrl.endsWith('/')) fullUrl = fullUrl.slice(0, -1);
             await depsHistoryHandler.saveSetting('PROJECT_URL', fullUrl, projectId);
@@ -3457,16 +3901,16 @@ export const registerBackofficeRoutes = (app: any) => {
             if (!appId) {
                 return res.status(500).json({ success: false, error: 'Configuración MP_APP_ID faltante en el servidor o base de datos.' });
             }
-            
+
             const supabaseUrl = process.env.SUPABASE_URL || '';
             const redirectUri = encodeURIComponent(`${supabaseUrl}/functions/v1/clientes-mercadopago-webhook`);
-            
+
             // Codificar el state como base64 conteniendo el projectId y el initiatorDomain (fullUrl)
             const stateObj = { projectId, initiatorDomain: fullUrl };
             const stateBase64 = Buffer.from(JSON.stringify(stateObj)).toString('base64');
-            
+
             const authUrl = `https://auth.mercadopago.com.ar/authorization?client_id=${appId}&response_type=code&platform_id=mp&redirect_uri=${redirectUri}&state=${stateBase64}`;
-            
+
             res.json({ success: true, url: authUrl });
         } catch (error: any) {
             res.status(500).json({ success: false, error: error.message });
@@ -3478,22 +3922,22 @@ export const registerBackofficeRoutes = (app: any) => {
         if (!code) {
             return res.status(400).send('Código de autorización faltante de Mercado Pago.');
         }
-        
+
         try {
             const projectId = (state && state !== 'default') ? state : 'default';
             const appId = await depsHistoryHandler.getSetting('MP_APP_ID', projectId) || process.env.MP_APP_ID;
             const appSecret = await depsHistoryHandler.getSetting('MP_PASS', projectId) || process.env.MP_PASS; // client_secret
-            
+
             if (!appId || !appSecret) {
                 console.error('[MercadoPago Callback] Faltan credenciales de aplicación en env o DB:', { appId, appSecret, projectId });
                 return res.status(500).send(`Error interno: Configuración de la aplicación faltante. (Project: ${projectId}, AppID: ${appId ? 'Presente' : 'Faltante'}, Secret: ${appSecret ? 'Presente' : 'Faltante'})`);
             }
-            
+
             const supabaseUrl = process.env.SUPABASE_URL || '';
             const redirectUri = `${supabaseUrl}/functions/v1/clientes-mercadopago-webhook`;
-            
+
             // Exchange code for token
-            const tokenRes = await axios.post('https://api.mercadopago.com/oauth/token', 
+            const tokenRes = await axios.post('https://api.mercadopago.com/oauth/token',
                 new URLSearchParams({
                     client_id: appId,
                     client_secret: appSecret,
@@ -3505,9 +3949,9 @@ export const registerBackofficeRoutes = (app: any) => {
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
                 }
             );
-            
+
             const { access_token, public_key, user_id } = tokenRes.data;
-            
+
             if (!access_token) {
                 return res.status(400).send('No se recibió el access token en la respuesta de Mercado Pago.');
             }
@@ -3524,7 +3968,7 @@ export const registerBackofficeRoutes = (app: any) => {
             } catch (err: any) {
                 console.warn('[MercadoPago Callback] Error obteniendo info de usuario:', err.message);
             }
-            
+
             // Determinar si esta debe ser la cuenta activa por defecto o si ya estaba vinculada
             const { data: existingAccounts } = await supabase
                 .from('mercadopago_acount_user')
@@ -3555,7 +3999,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 project_url: process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '',
                 updated_at: new Date().toISOString()
             }, { onConflict: 'user_id' });
-            
+
             // Retornar página HTML para cerrar el popup y notificar a la ventana principal, o redirigir si no hay opener
             const publicDomain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.PROJECT_URL || "";
             const cleanDomain = publicDomain.startsWith("http") ? publicDomain : publicDomain ? `https://${publicDomain}` : "";
@@ -3577,8 +4021,8 @@ export const registerBackofficeRoutes = (app: any) => {
                     <script>
                         try {
                             if (window.opener) {
-                                window.opener.postMessage({ 
-                                    type: '${isAlreadyLinked ? 'mp-linked-existing' : 'mp-linked'}', 
+                                window.opener.postMessage({
+                                    type: '${isAlreadyLinked ? 'mp-linked-existing' : 'mp-linked'}',
                                     projectId: '${projectId}',
                                     nickname: '${nickname}'
                                 }, '*');
@@ -3603,12 +4047,12 @@ export const registerBackofficeRoutes = (app: any) => {
     app.get('/api/mercadopago/callback', (req: any, res: any) => {
         const { status, payment_id } = req.query;
         const isApproved = status === 'approved';
-        
+
         let title = 'Estado de Pago';
         let color = '#f59e0b'; // pending yellow
         let icon = 'fa-clock';
         let message = 'Tu pago se encuentra en proceso o pendiente.';
-        
+
         if (isApproved) {
             title = '¡Pago Exitoso!';
             color = '#10b981'; // green
@@ -3718,7 +4162,7 @@ export const registerBackofficeRoutes = (app: any) => {
                     <div class="icon"><i class="fa-solid ${icon}"></i></div>
                     <h1>${title}</h1>
                     <p>${message}</p>
-                    
+
                     <div class="details">
                         <div class="detail-row">
                             <span class="label">ID de Operación:</span>
@@ -3729,7 +4173,7 @@ export const registerBackofficeRoutes = (app: any) => {
                             <span class="value" style="color: ${color};">${status ? status.toUpperCase() : 'DESCONOCIDO'}</span>
                         </div>
                     </div>
-                    
+
                     <button class="btn" onclick="window.close()">Cerrar Ventana</button>
                 </div>
             </body>
@@ -3749,7 +4193,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
         try {
             console.log('📡 [MP Webhook] Recibida notificación de pago:', JSON.stringify(req.body));
-            
+
             const paymentId = req.body?.data?.id || req.body?.id || req.query?.id;
             const type = req.body?.type || req.body?.topic || req.query?.topic;
             const userId = req.body?.user_id || req.query?.user_id;
@@ -3767,7 +4211,7 @@ export const registerBackofficeRoutes = (app: any) => {
                     .select('project_id')
                     .eq('user_id', String(userId))
                     .limit(1);
-                
+
                 if (dbErr) {
                     console.error('[MP Webhook] Error consultando mercadopago_user_routoing:', dbErr.message);
                 } else if (routeData && routeData.length > 0) {
@@ -3859,7 +4303,7 @@ export const registerBackofficeRoutes = (app: any) => {
             // 6. Enviar mensaje de confirmación por WhatsApp
             const cleanChatId = chatId.includes('@') ? chatId : `${chatId}@s.whatsapp.net`;
             const isGroup = cleanChatId.includes('@g.us');
-            
+
             const { getAdapterProvider, getGroupProvider } = await import('../../providers/instances');
             const activeAdapter = getAdapterProvider();
             const activeGroupAdapter = getGroupProvider();
@@ -3882,10 +4326,11 @@ Hemos recibido tu pago con éxito.
 ¡Muchas gracias!`;
 
             try {
-                await providerToSend.sendMessage(cleanChatId, confMessage, {});
+                const providerResponse = await providerToSend.sendMessage(cleanChatId, confMessage, {});
                 console.log(`[MP Webhook] Mensaje enviado correctamente a ${cleanChatId}`);
-                
-                await depsHistoryHandler.saveMessage(chatId, 'assistant', confMessage, 'text', undefined, undefined, null, 'whatsapp', refProjectId);
+
+                const externalId = providerResponse?.key?.id || providerResponse?.messages?.[0]?.id || providerResponse?.id || null;
+                await depsHistoryHandler.saveMessage(chatId, 'assistant', confMessage, 'text', undefined, undefined, externalId, 'whatsapp', refProjectId);
             } catch (sendErr: any) {
                 console.error('[MP Webhook] Error al enviar confirmación de WhatsApp:', sendErr.message);
             }
@@ -3898,7 +4343,7 @@ Hemos recibido tu pago con éxito.
     app.post('/api/backoffice/mercadopago/disconnect', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || 'default';
-            
+
             // Buscar el user_id antes de borrar para limpiar ruteo
             const { data: acc } = await supabase
                 .from('mercadopago_acount_user')
@@ -3909,7 +4354,7 @@ Hemos recibido tu pago con éxito.
             if (acc && acc.user_id) {
                 await supabase.from('mercadopago_user_routoing').delete().eq('user_id', acc.user_id);
             }
-            
+
             await supabase.from('mercadopago_acount_user').delete().eq('project_id', projectId);
             res.json({ success: true });
         } catch (error: any) {
@@ -3946,11 +4391,11 @@ Hemos recibido tu pago con éxito.
         try {
             // @ts-ignore
             const provider = app.get('whatsappProvider');
-            
+
             if (!provider || provider.constructor.name !== 'MetaCloudProvider') {
-                return res.status(400).json({ 
-                    success: false, 
-                    error: 'El proveedor Meta Cloud no está activo. Verifique que el bot esté configurado con Meta.' 
+                return res.status(400).json({
+                    success: false,
+                    error: 'El proveedor Meta Cloud no está activo. Verifique que el bot esté configurado con Meta.'
                 });
             }
 
@@ -3959,10 +4404,10 @@ Hemos recibido tu pago con éxito.
             const result = await (provider as any).requestSmbSync(syncType);
 
             if (result) {
-                res.json({ 
-                    success: true, 
-                    message: `Solicitud de sincronización de ${type} enviada a Meta correctamente.`, 
-                    data: result 
+                res.json({
+                    success: true,
+                    message: `Solicitud de sincronización de ${type} enviada a Meta correctamente.`,
+                    data: result
                 });
             } else {
                 res.status(500).json({ success: false, error: 'Meta rechazó la solicitud de sincronización o hubo un error de red.' });
@@ -3976,15 +4421,15 @@ Hemos recibido tu pago con éxito.
     app.get('/api/backoffice/whatsapp/groups', backofficeAuth, async (req: any, res: any) => {
         try {
             const { getGroupProvider, getAdapterProvider } = await import('../../providers/instances');
-            
+
             // 1. Intentar con el proveedor de grupos (Baileys)
             const groupProvider = getGroupProvider();
             let sock: any = null;
-            
+
             if (groupProvider && typeof groupProvider.getInstance === 'function') {
                 sock = await groupProvider.getInstance();
             }
-            
+
             // 2. Si no hay proveedor de grupos, intentar con el principal (Baileys)
             if (!sock) {
                 const adapterProvider = getAdapterProvider();
@@ -3992,28 +4437,28 @@ Hemos recibido tu pago con éxito.
                     sock = await adapterProvider.getInstance();
                 }
             }
-            
+
             if (!sock || typeof sock.groupFetchAllParticipating !== 'function') {
-                return res.status(400).json({ 
-                    success: false, 
-                    error: 'No hay un proveedor de WhatsApp (Baileys) activo o conectado para listar grupos. Verifica el código QR en la sección de Conexión.' 
+                return res.status(400).json({
+                    success: false,
+                    error: 'No hay un proveedor de WhatsApp (Baileys) activo o conectado para listar grupos. Verifica el código QR en la sección de Conexión.'
                 });
             }
-            
+
             console.log('[API/Groups] Obteniendo lista de grupos de WhatsApp...');
             const chats = await sock.groupFetchAllParticipating();
             const groupsList = Object.entries(chats).map(([jid, group]: [string, any]) => ({
                 id: jid,
                 name: group.subject || 'Sin nombre'
             }));
-            
+
             res.json({ success: true, groups: groupsList });
         } catch (error: any) {
             console.error('[API/Groups] Error al listar grupos:', error);
             res.status(500).json({ success: false, error: error.message });
         }
     });
-    
+
     // --- CRM ROUTES ---
     app.get('/api/backoffice/crm/tasks', backofficeAuth, async (req: any, res: any) => {
         try {
@@ -4028,7 +4473,7 @@ Hemos recibido tu pago con éxito.
     app.post('/api/backoffice/crm/update-lead', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         const { leadId, crm_status, crm_due_date } = req.body;
         if (!leadId) return res.status(400).json({ success: false, error: 'leadId is required' });
-        
+
         try {
             const updateData: any = {};
             if (crm_status !== undefined) updateData.crm_status = crm_status;
@@ -4054,24 +4499,24 @@ Hemos recibido tu pago con éxito.
         const { chatId, agentId, userId } = req.body;
         // agentId: 'asistente1', 'asistente2'... (Lógica del Bot)
         // userId: uuid del usuario humano (Lógica CRM)
-        
+
         if (!chatId) return res.status(400).json({ success: false, error: 'chatId is required' });
 
         try {
             console.log(`[BACKOFFICE] Reasignando chat ${chatId}: agentId=${agentId}, userId=${userId}`);
-            
+
             // 1. Si se especifica un agente del bot, lo asignamos y activamos el bot
             if (agentId) {
-                await depsHistoryHandler.setAssignedAgent(chatId, agentId);
+                await depsHistoryHandler.setAssignedAgent(chatId, agentId, resolveProjectId(req) || undefined, resolveServiceId(req) || undefined);
             }
-            
+
             // 2. Si se especifica un usuario humano (o se limpia con null), actualizamos assigned_to
             if (userId !== undefined) {
-                await depsHistoryHandler.assignChatToUser(chatId, userId);
-                
+                await depsHistoryHandler.assignChatToUser(chatId, userId, resolveProjectId(req), resolveServiceId(req));
+
                 // Si se asignó a un humano, desactivamos el bot automáticamente para no interferir
                 if (userId) {
-                    await depsHistoryHandler.toggleBot(chatId, false);
+                    await depsHistoryHandler.toggleBot(chatId, false, resolveProjectId(req), resolveServiceId(req));
                 }
             }
 
@@ -4106,7 +4551,7 @@ Hemos recibido tu pago con éxito.
     // --- CONFIGURACION DINAMICA (HOT-UPDATE) ---
 
     /**
-     * Obtiene todas las variables de configuración mezclando el entorno (.env) 
+     * Obtiene todas las variables de configuración mezclando el entorno (.env)
      * con la base de datos (settings), priorizando la base de datos.
      */
     app.get('/api/backoffice/config', systemConfigAuth, async (req: any, res: any) => {
@@ -4191,7 +4636,7 @@ Hemos recibido tu pago con éxito.
             const keys = Object.keys(settings);
             const PROTECTED_KEYS = ['OPENAI_ADMIN_API_KEY', 'OPENAI_API_KEY_TOOLS'];
             const keysToSave = keys.filter(k => !PROTECTED_KEYS.includes(k));
-            
+
             const projectId = resolveProjectId(req);
             const serviceId = resolveServiceId(req);
             console.log(`📡 [HOT-UPDATE] Guardando ${keysToSave.length} variables en la base de datos para proyecto ${projectId} (Servicio: ${serviceId})...`);
@@ -4271,13 +4716,13 @@ Hemos recibido tu pago con éxito.
             const index = req.query.index || '1';
             const settingKey = index === '1' ? 'ASSISTANT_PROMPT' : `ASSISTANT_PROMPT_${index}`;
             const envKey = index === '1' ? 'ASSISTANT_ID' : `ASSISTANT_${index}`;
-            
+
             const projectId = resolveProjectId(req);
             const serviceId = resolveServiceId(req);
             const prompt = await depsHistoryHandler.getSetting(settingKey, projectId, serviceId);
             const assistantId = await depsHistoryHandler.getConfig(envKey, projectId, serviceId) || process.env[envKey] || '';
-            res.json({ 
-                success: true, 
+            res.json({
+                success: true,
                 prompt: prompt || '',
                 assistantId: assistantId
             });
@@ -4291,9 +4736,9 @@ Hemos recibido tu pago con éxito.
         try {
             const { getOpenAI } = await import("../../apis/openai/openaiHelper");
             const dynamicOpenAI = await getOpenAI();
-            
+
             let models: string[] = [];
-            
+
             if (dynamicOpenAI) {
                 try {
                     const list = await dynamicOpenAI.models.list();
@@ -4303,12 +4748,12 @@ Hemos recibido tu pago con éxito.
                             const cleanId = id.toLowerCase();
                             // Excluir embeddings, audio, imágenes, moderaciones, etc.
                             if (
-                                cleanId.includes('embed') || 
-                                cleanId.includes('whisper') || 
-                                cleanId.includes('tts') || 
-                                cleanId.includes('dall-e') || 
-                                cleanId.includes('moderation') || 
-                                cleanId.includes('instruct') || 
+                                cleanId.includes('embed') ||
+                                cleanId.includes('whisper') ||
+                                cleanId.includes('tts') ||
+                                cleanId.includes('dall-e') ||
+                                cleanId.includes('moderation') ||
+                                cleanId.includes('instruct') ||
                                 cleanId.includes('search') ||
                                 cleanId.includes('realtime') ||
                                 cleanId.includes('babbage') ||
@@ -4323,15 +4768,15 @@ Hemos recibido tu pago con éxito.
                     console.warn(`[OpenAI Models API] Error al listar modelos desde OpenAI: ${apiErr.message}. Usando fallbacks.`);
                 }
             }
-            
+
             // Fallbacks si la API no devuelve nada o no hay API Key configurada
             if (models.length === 0) {
                 models = ['gpt-4o', 'gpt-4o-mini', 'o1-mini', 'o3-mini', 'gpt-4', 'gpt-3.5-turbo'];
             }
-            
+
             // Eliminar duplicados y ordenar
             models = Array.from(new Set(models)).sort();
-            
+
             res.json({ success: true, models });
         } catch (error: any) {
             res.status(500).json({ success: false, error: error.message });
@@ -4347,7 +4792,7 @@ Hemos recibido tu pago con éxito.
         try {
             const settingKey = idx === '1' ? 'ASSISTANT_PROMPT' : `ASSISTANT_PROMPT_${idx}`;
             const envKey = idx === '1' ? 'ASSISTANT_ID' : `ASSISTANT_${idx}`;
-            
+
             const projectId = resolveProjectId(req);
             const serviceId = resolveServiceId(req);
             // Prioridad: 1. DB, 2. Env
@@ -4366,12 +4811,12 @@ Hemos recibido tu pago con éxito.
                     await dynamicOpenAI.beta.assistants.update(assistantId, {
                         instructions: prompt
                     });
-                    
+
                     // CRITICAL FIX: Después de actualizar instrucciones, volvemos a sincronizar las tools
                     // para evitar que queden vacías si el update sobreescribió el objeto.
                     const { syncAssistantTools } = await import("../../apis/openai/openaiHelper");
                     await syncAssistantTools(assistantId);
-                    
+
                     console.log(`✅ [SYNC] Prompt y Herramientas de Asistente ${idx} actualizados en OpenAI exitosamente.`);
                 } catch (apiError: any) {
                     console.error(`⚠️ [HOT-UPDATE-SYNC-ERROR] Falló sincronización con OpenAI para ${assistantId}:`, apiError.message);
@@ -4380,9 +4825,9 @@ Hemos recibido tu pago con éxito.
                 console.warn(`⚠️ [HOT-UPDATE] No se pudo obtener instancia de OpenAI. El prompt se guardó solo localmente.`);
             }
 
-            res.json({ 
-                success: true, 
-                message: `Prompt de Asistente ${idx} actualizado correctamente en local y en OpenAI (Hot-update)` 
+            res.json({
+                success: true,
+                message: `Prompt de Asistente ${idx} actualizado correctamente en local y en OpenAI (Hot-update)`
             });
         } catch (error: any) {
             console.error('Error updating prompt and syncing to OpenAI:', error.message);
@@ -4405,7 +4850,7 @@ Hemos recibido tu pago con éxito.
             const docsPath = path.join(rootDir, 'docs', docType);
             const distDocsPath = path.join(rootDir, 'dist', 'docs', docType);
             const altPath = path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..', 'docs', docType);
-            
+
             console.log(`📂 [Docs] Buscando (${docType}) en: ${docsPath}, ${distDocsPath}, ${altPath}`);
 
             let content = '';
@@ -4548,7 +4993,7 @@ Hemos recibido tu pago con éxito.
             if (!chat_id) return res.status(400).json({ success: false, error: 'chat_id requerido' });
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
             const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
-            
+
             const upsertData: any = {
                 chat_id,
                 project_id: projectId,
@@ -4714,7 +5159,7 @@ Hemos recibido tu pago con éxito.
                 .upsert({ project_id: projectId, key: 'NOTIFICATIONS_ACTIVE', value: 'false' }, { onConflict: 'project_id,key' });
             if (settErr) throw settErr;
             (depsHistoryHandler as any).settingsCache?.delete?.(`${projectId}:NOTIFICATIONS_ACTIVE`);
-            
+
             // Notificar a clientes conectados que la integración se desactivó para limpiar badges
             historyEvents.emit('notifications_deactivated', { projectId });
 
@@ -4868,7 +5313,7 @@ Hemos recibido tu pago con éxito.
             const { id, name, contacts } = req.body;
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
             const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
-            
+
             if (!name) {
                 return res.status(400).json({ success: false, error: 'El nombre del grupo es obligatorio.' });
             }
@@ -4919,7 +5364,7 @@ Hemos recibido tu pago con éxito.
 
                 console.log(`[MetaGroupsAPI] Intentando crear grupo Meta WABA '${groupName}'...`);
                 const createUrl = `https://graph.facebook.com/v25.0/${whatsappNumberId}/groups`;
-                
+
                 let groupId: string;
                 try {
                     const resCreate = await axios.post(createUrl, {
@@ -4962,7 +5407,7 @@ Hemos recibido tu pago con éxito.
                 if (groupContacts.length > 0) {
                     console.log(`[MetaGroupsAPI] Enviando invitaciones a ${groupContacts.length} contactos...`);
                     const inviteMessage = `¡Hola! Te invitamos a unirte al grupo oficial de reportes de RialWay *"${groupName}"*. Para unirte, haz clic en el siguiente enlace de invitación: ${inviteLink}`;
-                    
+
                     for (const contact of groupContacts) {
                         if (contact.phone) {
                             await sendDirectWabaMessage(contact.phone, inviteMessage, whatsappNumberId, whatsappToken);
@@ -5036,7 +5481,7 @@ Hemos recibido tu pago con éxito.
             } else if (existingGroup && existingGroup.jid && existingGroup.jid.includes('@g.us')) {
                 // Caso B: El grupo ya existía como grupo de Baileys
                 groupJid = existingGroup.jid;
-                
+
                 let sock: any = null;
                 const groupProvider = getGroupProvider();
                 if (groupProvider && typeof groupProvider.getInstance === 'function') {
@@ -5099,7 +5544,7 @@ Hemos recibido tu pago con éxito.
                 } catch (err: any) {
                     metaError = err.response?.data || err.message;
                     console.error(`[MetaGroupsAPI] Error al intentar crear grupo en Meta WABA:`, JSON.stringify(metaError));
-                    
+
                     let errorMsg = 'No se pudo crear el grupo en Meta WABA.';
                     if (metaError && metaError.error && metaError.error.message) {
                         errorMsg += ` Detalle: ${metaError.error.message}`;
@@ -5196,7 +5641,7 @@ Hemos recibido tu pago con éxito.
                 if (error) throw error;
             }
             (depsHistoryHandler as any).invalidateChatCache?.(cleanId, projectId);
-            
+
             // Emitir evento para WebSockets
             historyEvents.emit('chat_read', { chatId: cleanId, projectId });
 
@@ -5210,7 +5655,7 @@ Hemos recibido tu pago con éxito.
 /** Procesa la importación de contactos desde Excel */
 export const processImportExcel = async (req: any, res: any) => {
     const depsHistoryHandler = HistoryHandlerClass;
-    
+
     if (!req.file) return res.status(400).json({ success: false, error: 'No se subió ningún archivo' });
 
     const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
@@ -5331,8 +5776,8 @@ export const processImportExcel = async (req: any, res: any) => {
             fs.unlinkSync(req.file.path);
         }
 
-        return res.json({ 
-            success: true, 
+        return res.json({
+            success: true,
             imported: chatsToSync.length,
             tags_processed: allUniqueTags.size
         });

@@ -9,6 +9,7 @@ window.listaNegraView = (() => {
     function getHTML() {
         return `
         <main class="crm-main-container" style="z-index:10; padding:0;">
+            ${window.renderSectionTabs ? window.renderSectionTabs('integrations') : ''}
             <div class="kanban-header animate-fade">
                 <div class="header-info">
                     <h1>

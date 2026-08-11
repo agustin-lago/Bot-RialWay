@@ -20,6 +20,7 @@ window.mercadoPagoView = (() => {
     function getHTML() {
         return `
         <main class="crm-main-container animate-fade" style="z-index:10; padding:0;">
+            ${window.renderSectionTabs ? window.renderSectionTabs('integrations') : ''}
             <div class="kanban-header">
                 <div class="header-info">
                     <h1><i class="fas fa-wallet kanban-header-icon" style="color:#009ee3;"></i> Mercado Pago</h1>
@@ -57,7 +58,7 @@ window.mercadoPagoView = (() => {
                                 Serás redirigido de forma segura a Mercado Pago para iniciar sesión con tus credenciales de usuario y autorizar la vinculación.
                             </p>
                         </div>
-                        <button id="mp-connect-btn" class="btn-primary" style="width:100%; padding:13px 20px; display:flex; align-items:center; justify-content:center; gap:10px; font-size:0.95rem; font-weight:600; border-radius:12px; background: #009ee3; color: white; border: none; cursor: pointer; transition: all 0.2s;">
+                        <button id="mp-connect-btn" class="btn-primary w-full">
                             <i class="fas fa-plug"></i> Vincular con Mercado Pago
                         </button>
                     </div>
@@ -76,7 +77,7 @@ window.mercadoPagoView = (() => {
                             <!-- Se renderizará dinámicamente -->
                         </div>
 
-                        <button id="mp-add-account-btn" class="btn-primary" style="width:100%; padding:11px; display:flex; align-items:center; justify-content:center; gap:8px; font-size:0.88rem; font-weight:600; border-radius:10px; background: #009ee3; color: white; border: none; cursor: pointer;">
+                        <button id="mp-add-account-btn" class="btn-primary w-full">
                             <i class="fas fa-plus"></i> Vincular otra cuenta
                         </button>
                     </div>
@@ -99,7 +100,7 @@ window.mercadoPagoView = (() => {
                         </div>
                     </div>
                     
-                    <button id="mp-generate-btn" class="btn-primary" style="width:100%; padding:12px; display:flex; align-items:center; justify-content:center; gap:8px; font-size:0.9rem; font-weight:600; border-radius:10px; background: #009ee3; color: white; border: none; cursor: pointer;">
+                    <button id="mp-generate-btn" class="btn-primary w-full">
                         <i class="fas fa-magic"></i> Crear Link de Pago
                     </button>
 

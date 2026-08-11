@@ -5,14 +5,16 @@ window.backofficeView = {
     getHTML() {
         return `
         <!-- Contenido principal del backoffice -->
-        <div class="flex flex-1 h-full overflow-hidden" style="position:relative;">
+        <div class="flex flex-col flex-1 h-full min-h-0 overflow-hidden" style="position:relative;">
+            ${window.renderSectionTabs ? window.renderSectionTabs('messaging') : ''}
+            <div class="flex flex-1 min-h-0 overflow-hidden" style="position:relative;">
 
             <!-- Sidebar chats -->
             <div id="sidebar">
                 <div class="sidebar-header">
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <h2 class="sidebar-title">Chats</h2>
-                        <span id="unread-total-badge" style="display:none; background:#ef4444; color:white; font-size:0.75rem; font-weight:700; font-family:'Montserrat',sans-serif; padding:2px 8px; border-radius:12px;">0</span>
+                    <div class="search-wrapper sidebar-search-wrapper">
+                        <i class="fas fa-search search-icon"></i>
+                        <input type="text" id="search-input" class="search-input" placeholder="Buscar conversaci&oacute;n..." oninput="handleSearch()">
                     </div>
                     <div class="sidebar-header-actions">
                         <button class="btn-icon-wa" title="Vaciar Contactos" onclick="confirmClearContacts()" id="btn-clear-contacts">
@@ -27,50 +29,25 @@ window.backofficeView = {
                     </div>
                 </div>
 
-                <div class="platform-tabs" id="platform-tabs">
-                    <div class="platform-tab active" id="tab-whatsapp" onclick="switchPlatform('whatsapp')" title="WhatsApp">
-                        <i class="fab fa-whatsapp"></i>
-                    </div>
-                    <div class="platform-tab" id="tab-instagram" onclick="switchPlatform('instagram')" title="Instagram" style="display:none;">
-                        <i class="fab fa-instagram"></i>
-                    </div>
-                    <div class="platform-tab" id="tab-messenger" onclick="switchPlatform('messenger')" title="Messenger" style="display:none;">
-                        <i class="fab fa-facebook-messenger"></i>
-                    </div>
-                    <div class="platform-tab" id="tab-all" onclick="switchPlatform('all')" title="Todos" style="display:none;">
-                        <i class="fas fa-list-ul"></i>
-                    </div>
-                </div>
-
-                <!-- Unread filter container -->
-                <div id="unread-filter-container" style="display:none; align-items:center; justify-content:space-between; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--bg-header);">
-                    <span style="font-size:0.82rem; font-weight:600; color:var(--text-muted); font-family:'Montserrat',sans-serif; display:flex; align-items:center; gap:6px;">
-                        <i class="fas fa-envelope" style="color:#0099FF;"></i> Filtrar no leídos
-                    </span>
-                    <label style="width: 36px; height: 20px; position: relative; display: inline-block; cursor: pointer;">
-                        <input type="checkbox" id="unread-filter-checkbox" onchange="toggleUnreadFilter(this.checked)" style="opacity: 0; width: 0; height: 0; position: absolute;">
-                        <span style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: #cbd5e1; transition: .3s; border-radius: 34px;" id="unread-slider-bg"></span>
-                        <span style="position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%;" id="unread-slider-knob"></span>
-                    </label>
-                </div>
-
                 <div class="search-container">
-                    <div class="search-wrapper">
-                        <i class="fas fa-search search-icon"></i>
-                        <input type="text" id="search-input" class="search-input" placeholder="Buscar chat..." oninput="handleSearch()">
-                    </div>
-                    <div class="filter-wrapper">
-                        <select id="filter-tag" style="display:none;"><option value="">Todas las etiquetas</option></select>
-                        <div class="tag-filter-split">
-                            <button class="tag-filter-main" onclick="_toggleTagFilter(event)">
-                                <i class="fas fa-tags"></i>
-                                <span id="tag-filter-label">Todas las etiquetas</span>
-                            </button>
-                            <button class="tag-filter-chevron" onclick="_toggleTagFilter(event)">
-                                <i class="fas fa-chevron-down" id="tag-filter-chevron-icon"></i>
-                            </button>
+                    <div class="chat-filter-row">
+                        <div id="unread-filter-container" class="unread-filter-compact" style="display:none;">
+                            <button type="button" id="unread-filter-all" class="unread-filter-btn active" onclick="toggleUnreadFilter(false)">Todos</button>
+                            <button type="button" id="unread-filter-unread" class="unread-filter-btn" onclick="toggleUnreadFilter(true)">No le&iacute;dos</button>
                         </div>
-                        <ul class="tag-filter-dropdown" id="tag-filter-dropdown"></ul>
+                        <div class="filter-wrapper">
+                            <select id="filter-tag" style="display:none;"><option value="">Todas las etiquetas</option></select>
+                            <div class="tag-filter-split">
+                                <button class="tag-filter-main" onclick="_toggleTagFilter(event)">
+                                    <i class="fas fa-tags"></i>
+                                    <span id="tag-filter-label">Todas las etiquetas</span>
+                                </button>
+                                <button class="tag-filter-chevron" onclick="_toggleTagFilter(event)">
+                                    <i class="fas fa-chevron-down" id="tag-filter-chevron-icon"></i>
+                                </button>
+                            </div>
+                            <ul class="tag-filter-dropdown" id="tag-filter-dropdown"></ul>
+                        </div>
                     </div>
                 </div>
 
@@ -94,8 +71,8 @@ window.backofficeView = {
                     <div class="header-user">
                         <div class="chat-avatar" id="active-chat-avatar"></div>
                         <div>
-                            <div class="chat-header-phone" id="active-chat-phone">Selecciona un chat</div>
-                            <div class="chat-header-name" id="active-chat-name"></div>
+                            <div class="chat-header-name" id="active-chat-name" style="font-size: 1rem; margin-bottom: -2px;">Selecciona un chat</div>
+                            <div class="chat-header-phone" id="active-chat-phone"></div>
                             <div id="active-chat-tags"></div>
                         </div>
                     </div>
@@ -131,31 +108,23 @@ window.backofficeView = {
                                 </div>
                                 <ul class="crm-jump-dropdown-menu" id="crm-jump-dropdown"></ul>
                             </div>
-                            <!-- Menu 3 puntitos: solo visible en mobile/tablet -->
+                            <!-- Menu 3 puntitos -->
                             <div class="mobile-header-menu" id="mobile-header-menu-wrap">
                                 <button class="btn-icon" id="mobile-header-menu-btn" onclick="_toggleMobileHeaderMenu(event)" title="Mas opciones">
                                     <i class="fas fa-ellipsis-vertical"></i>
                                 </button>
                                 <ul class="mobile-header-dropdown" id="mobile-header-dropdown">
-                                    <li onclick="toggleTagsPanel(); _closeMobileHeaderMenu()">
+                                    <li onclick="_headerMenuAction('tags')">
                                         <i class="fas fa-tags"></i> Gestionar Etiquetas
                                     </li>
-                                    <li onclick="toggleCRMPanel(); _closeMobileHeaderMenu()">
+                                    <li onclick="_headerMenuAction('crm')">
                                         <i class="fas fa-user-pen"></i> Ficha del Cliente
                                     </li>
-                                    <li id="mobile-blacklist-li" style="display:none;" onclick="toggleBlacklist(); _closeMobileHeaderMenu()">
-                                        <i class="fas fa-ban"></i> <span id="mobile-blacklist-label">Lista BOT/CRM Desactivado</span>
+                                    <li id="mobile-blacklist-li" style="display:none;" onclick="_headerMenuAction('blacklist')">
+                                        <i class="fas fa-ban"></i> <span id="mobile-blacklist-label">Lista negra</span>
                                     </li>
-                                    <li class="mobile-bot-toggle-row" onclick="_mobileToggleBotClick()">
-                                        <i class="fas fa-robot"></i>
-                                        <span id="mobile-bot-label">Bot: off</span>
-                                        <label class="switch" onclick="event.stopPropagation()" style="margin-left:auto;">
-                                            <input type="checkbox" id="mobile-bot-toggle" onchange="toggleBot(this.checked); const r=document.getElementById('bot-toggle'); if(r) r.checked=this.checked;">
-                                            <span class="slider round">
-                                                <i class="fas fa-user"></i>
-                                                <i class="fas fa-robot"></i>
-                                            </span>
-                                        </label>
+                                    <li class="mobile-menu-danger" onclick="_headerMenuAction('delete')">
+                                        <i class="fas fa-trash-alt"></i> Eliminar Chat
                                     </li>
                                 </ul>
                             </div>
@@ -186,7 +155,7 @@ window.backofficeView = {
                 <div id="quick-messages-popover" class="quick-messages-popover" style="display: none;">
                     <div class="qm-header">
                         <h4>Mensajes Rápidos</h4>
-                        <button class="qm-close-btn" onclick="window.toggleQuickMessages(event)"><i class="fas fa-times"></i></button>
+                        <button class="qm-close-btn" onclick="window.closeCommandPopover('quick', event)"><i class="fas fa-times"></i></button>
                     </div>
                     <div class="qm-form">
                         <input type="text" id="qm-title-input" placeholder="Título para identificarlo..." />
@@ -204,36 +173,36 @@ window.backofficeView = {
                 <!-- Popover de Plantillas de Meta -->
                 <div id="meta-templates-popover" class="quick-messages-popover meta-templates-popover" style="display: none;">
                     <div class="qm-header">
-                        <h4><i class="fab fa-whatsapp" style="color: #25d366; margin-right: 6px;"></i> Plantillas de Meta</h4>
-                        <button class="qm-close-btn" onclick="window.toggleMetaTemplatesPopover(event)"><i class="fas fa-times"></i></button>
+                        <h4><i class="fab fa-whatsapp"></i> Plantillas de Meta</h4>
+                        <button class="qm-close-btn" onclick="window.closeCommandPopover('meta', event)" title="Cerrar"><i class="fas fa-times"></i></button>
                     </div>
                     
                     <!-- Paso 1: Lista y buscador -->
                     <div id="mt-step-list" class="mt-step-container">
-                        <div class="mt-search-box" style="padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.08);">
-                            <input type="text" id="mt-search-input" placeholder="Buscar plantilla..." oninput="window.filterMetaTemplates(this.value)" style="width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:6px; padding:6px 10px; font-size:0.78rem; color:inherit; outline:none;" />
+                        <div class="mt-search-box">
+                            <input type="text" id="mt-search-input" placeholder="Buscar plantilla..." oninput="window.filterMetaTemplates(this.value)" />
                         </div>
-                        <div id="mt-list" class="qm-list-container" style="max-height: 300px; padding: 8px 10px;">
+                        <div id="mt-list" class="qm-list-container mt-list">
                             <div class="qm-empty">Cargando plantillas de Meta...</div>
                         </div>
                     </div>
 
                     <!-- Paso 2: Vista previa y autocompletado de variables -->
-                    <div id="mt-step-configure" class="mt-step-container" style="display: none; flex-direction: column;">
-                        <div class="mt-config-header" style="display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.08);">
-                            <button class="qm-close-btn" onclick="window.backToMetaTemplatesList()" title="Volver a la lista" style="font-size: 0.75rem; padding: 3px 8px;">
+                    <div id="mt-step-configure" class="mt-step-container mt-step-configure" style="display: none;">
+                        <div class="mt-config-header">
+                            <button class="btn-secondary btn-sm" onclick="window.backToMetaTemplatesList()" title="Volver a la lista">
                                 <i class="fas fa-arrow-left"></i> Volver
                             </button>
-                            <span id="mt-selected-name" style="font-weight: 700; font-size: 0.8rem; color: var(--text-main); text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 200px;"></span>
+                            <span id="mt-selected-name"></span>
                         </div>
-                        <div class="mt-scroll-body" style="padding: 10px; overflow-y: auto; max-height: 320px; display: flex; flex-direction: column; gap: 10px;">
+                        <div class="mt-scroll-body">
                             <div class="mt-preview-box" id="mt-template-preview"></div>
                             <div class="mt-form-box" id="mt-variables-form"></div>
                         </div>
-                        <div class="mt-actions-footer" style="padding: 8px 10px; border-top: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: flex-end; gap: 8px;">
-                            <button class="qm-close-btn" onclick="window.backToMetaTemplatesList()" style="padding: 4px 10px;">Cancelar</button>
-                            <button class="qm-save-btn" id="mt-send-btn" onclick="window.sendMetaTemplateToActiveChat()">
-                                <i class="fas fa-paper-plane" style="margin-right: 4px;"></i> Enviar Plantilla
+                        <div class="mt-actions-footer">
+                            <button class="btn-cancel" onclick="window.backToMetaTemplatesList()">Cancelar</button>
+                            <button class="btn-primary" id="mt-send-btn" onclick="window.sendMetaTemplateToActiveChat()">
+                                <i class="fas fa-paper-plane icon-mr"></i> Enviar Plantilla
                             </button>
                         </div>
                     </div>
@@ -257,13 +226,34 @@ window.backofficeView = {
                 </div>
 
                 <div id="input-area" style="display: none;">
-                    <button class="btn-icon input-action-btn" id="attach-btn" title="Adjuntar archivo" disabled onclick="document.getElementById('file-input').click()">
-                        <i class="fas fa-plus"></i>
-                    </button>
+                    <div id="reply-preview-container" style="display:none;">
+                        <div class="reply-preview-title"><i class="fas fa-reply"></i> Respondiendo a</div>
+                        <div id="reply-preview-text"></div>
+                        <button class="reply-preview-close" onclick="window.cancelReply()" title="Cancelar respuesta"><i class="fas fa-times"></i></button>
+                    </div>
+                    <div class="input-plus-menu">
+                        <button class="btn-icon input-action-btn" id="attach-btn" title="Mas opciones" disabled onclick="_toggleInputPlusMenu(event)">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                        <ul class="input-plus-dropdown" id="input-plus-dropdown">
+                            <li id="input-plus-file-action" onclick="_inputPlusMenuAction('file', event)">
+                                <i class="fas fa-file-arrow-up"></i> Enviar archivo
+                            </li>
+                            <li onclick="_inputPlusMenuAction('quick', event)">
+                                <i class="fas fa-bolt"></i> Mensajes r&aacute;pidos
+                            </li>
+                            <li onclick="_inputPlusMenuAction('meta', event)">
+                                <i class="fab fa-whatsapp"></i> Plantillas express
+                            </li>
+                        </ul>
+                    </div>
                     <input type="file" id="file-input" style="display:none;" onchange="handleFileSelect(this)">
                     <div class="input-wrapper" style="position: relative;">
                         <button class="btn-icon input-action-btn" id="emoji-btn" title="Emojis" disabled onclick="toggleEmojiPicker(event)">
                             <i class="far fa-face-smile"></i>
+                        </button>
+                        <button class="btn-icon input-action-btn chatbot-toggle-btn" id="chatbot-toggle-btn" title="Chatbot" disabled onclick="window.toggleChatbotForActiveChat()">
+                            <i class="fas fa-robot"></i>
                         </button>
                         <button class="btn-icon input-action-btn" id="quick-msg-btn" title="Mensajes Rápidos" disabled onclick="window.toggleQuickMessages(event)">
                             <i class="fas fa-bolt"></i>
@@ -276,8 +266,8 @@ window.backofficeView = {
                         <textarea id="message-input" placeholder="Escribe un mensaje" disabled
                             rows="1"
                             onkeydown="window.handleChatTextareaKey(event, window.sendMessage)"
-                            oninput="window.autoResizeChatTextarea(this)"
-                            style="flex:1;background:transparent;border:0;outline:none;color:var(--text-main);font-size:16px;padding:8px 0;min-width:0;resize:none;overflow-y:auto;max-height:120px;font-family:inherit;line-height:1.4;display:block;"></textarea>
+                            oninput="window.handleMessageInputChange(this)"
+                            style="flex:1;background:transparent;border:0;outline:none;color:var(--text-main);font-size:16px;padding:2px 0;min-width:0;resize:none;overflow-y:auto;max-height:120px;font-family:inherit;line-height:20px;display:block;"></textarea>
                     </div>
                     <button class="btn-icon input-action-btn" id="mic-btn" title="Grabar audio" disabled onclick="toggleRecording()">
                         <i class="fas fa-microphone"></i>
@@ -416,7 +406,7 @@ window.backofficeView = {
                             <div class="csd-menu"></div>
                         </div>
                     </div>
-                    <button class="btn-primary crm-save-btn" onclick="saveCRMDetails()">
+                    <button class="btn-success crm-save-btn" onclick="saveCRMDetails()">
                         <i class="fas fa-save icon-mr"></i> Guardar Ficha de Cliente
                     </button>
                 </div>
@@ -494,7 +484,7 @@ window.backofficeView = {
                         <i class="sync-success-icon fas fa-check-circle"></i>
                         <h4 class="sync-success-heading text-lg font-heading font-bold text-primary-content mb-2">Sincronizacion Completada!</h4>
                         <p id="sync-summary" class="text-sm text-secondary-content mb-5"></p>
-                        <button class="btn-primary btn-sync-close" onclick="closeSyncModal()">Entendido</button>
+                        <button class="btn-success btn-sync-close" onclick="closeSyncModal()">Entendido</button>
                     </div>
                 </div>
             </div>
@@ -507,9 +497,9 @@ window.backofficeView = {
                     <h3><i class="fas fa-file-excel icon-excel mr-2"></i> Importar Contactos</h3>
                     <button class="btn-close-modal" onclick="toggleImportModal()"><i class="fas fa-times"></i></button>
                 </div>
-                <div class="modal-body" style="padding:25px;">
+                <div class="modal-body">
                     <div style="margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.08);">
-                        <button class="btn-primary w-full justify-center" onclick="window.openIndividualContactModal()" style="background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);">
+                        <button class="btn-primary w-full justify-center" onclick="window.openIndividualContactModal()">
                             <i class="fas fa-user-plus mr-2"></i> Agregar Contacto Individual
                         </button>
                     </div>
@@ -545,7 +535,7 @@ window.backofficeView = {
                     <h3><i class="fas fa-user-plus text-indigo-400 mr-2"></i> Agregar Contacto Individual</h3>
                     <button class="btn-close-modal" onclick="window.closeIndividualContactModal()"><i class="fas fa-times"></i></button>
                 </div>
-                <div class="modal-body" style="padding:22px; display:flex; flex-direction:column; gap:14px;">
+                <div class="modal-body" style="display:flex; flex-direction:column; gap:14px;">
                     <div>
                         <label class="text-xs font-semibold text-secondary-content mb-1 block">
                             <i class="fas fa-phone mr-1"></i> Número de Teléfono (con o sin prefijo):
@@ -567,12 +557,12 @@ window.backofficeView = {
                             <span style="font-size:0.75rem; color:var(--text-muted);">Cargando etiquetas...</span>
                         </div>
                     </div>
-                    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
-                        <button class="btn-secondary" onclick="window.closeIndividualContactModal()" style="padding:8px 16px;">Cancelar</button>
-                        <button class="btn-primary" id="btn-save-ind-contact" onclick="window.saveIndividualContact()" style="padding:8px 18px; background:linear-gradient(135deg, #10b981 0%, #059669 100%);">
-                            <i class="fas fa-save mr-1"></i> Guardar Contacto
-                        </button>
-                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-cancel" onclick="window.closeIndividualContactModal()">Cancelar</button>
+                    <button class="btn-success" id="btn-save-ind-contact" onclick="window.saveIndividualContact()">
+                        <i class="fas fa-save mr-1"></i> Guardar Contacto
+                    </button>
                 </div>
             </div>
         </div>
@@ -594,22 +584,23 @@ window.backofficeView = {
         <div id="forward-modal" class="modal-overlay">
             <div class="modal-content animate-pop-in" style="max-width:450px;">
                 <div class="modal-header">
-                    <h3><i class="fas fa-share modal-h3-icon"></i> Reenviar archivo</h3>
+                    <h3><i class="fas fa-share modal-h3-icon"></i> Enviar mensaje a</h3>
                     <button class="btn-close-modal" onclick="closeForwardModal()"><i class="fas fa-times"></i></button>
                 </div>
-                <div class="modal-body" style="padding-top:10px;">
+                <div class="modal-body">
                     <div class="search-container mb-4" style="padding:0;">
                         <div class="search-wrapper">
                             <i class="fas fa-search search-icon"></i>
                             <input type="text" id="forward-search-input" class="search-input" placeholder="Buscar contacto..." oninput="handleForwardSearch()">
                         </div>
                     </div>
-                    <div id="forward-chats-list" style="max-height:300px; overflow-y:auto; border-radius:8px; margin-bottom:15px;"></div>
-                    <div class="flex justify-end">
-                        <button class="btn-outline px-5 py-2.5 text-sm" onclick="closeForwardModal()">Cancelar</button>
-                    </div>
+                    <div id="forward-chats-list" style="max-height:300px; overflow-y:auto; border-radius:8px;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-cancel" onclick="closeForwardModal()">Cancelar</button>
                 </div>
             </div>
+        </div>
         </div>`;
     },
 
@@ -651,17 +642,8 @@ window.backofficeView = {
         }
 
         window.toggleUnreadFilter = function(enabled) {
-            const bg = document.getElementById('unread-slider-bg');
-            const knob = document.getElementById('unread-slider-knob');
-            if (bg && knob) {
-                if (enabled) {
-                    bg.style.backgroundColor = '#0099FF';
-                    knob.style.transform = 'translateX(16px)';
-                } else {
-                    bg.style.backgroundColor = '#cbd5e1';
-                    knob.style.transform = 'translateX(0px)';
-                }
-            }
+            document.getElementById('unread-filter-all')?.classList.toggle('active', !enabled);
+            document.getElementById('unread-filter-unread')?.classList.toggle('active', !!enabled);
             if (typeof window.executeUnreadFilter === 'function') {
                 window.executeUnreadFilter(enabled);
             }
@@ -682,6 +664,96 @@ window.backofficeView = {
         window._closeMobileHeaderMenu = function() {
             const d = document.getElementById('mobile-header-dropdown');
             if (d) d.classList.remove('open');
+        };
+        window._toggleInputPlusMenu = function(e) {
+            e.stopPropagation();
+            const d = document.getElementById('input-plus-dropdown');
+            if (!d) return;
+            const isOpen = d.classList.toggle('open');
+            if (isOpen) document.addEventListener('click', window._closeInputPlusMenu, { once: true });
+        };
+        window._closeInputPlusMenu = function() {
+            const d = document.getElementById('input-plus-dropdown');
+            if (d) d.classList.remove('open');
+        };
+        window._inputPlusMenuAction = function(action, event) {
+            event?.stopPropagation?.();
+            const fileAction = document.getElementById('input-plus-file-action');
+            if (action === 'file') {
+                if (fileAction?.classList.contains('disabled')) return;
+                document.getElementById('file-input')?.click();
+            } else if (action === 'quick') {
+                window._openQuickMessagesPopover();
+            } else if (action === 'meta') {
+                window._openMetaTemplatesPopover();
+            }
+            window._closeInputPlusMenu();
+        };
+        window._openQuickMessagesPopover = function() {
+            const popover = document.getElementById('quick-messages-popover');
+            const metaPopover = document.getElementById('meta-templates-popover');
+            if (metaPopover) metaPopover.style.display = 'none';
+            if (!popover || popover.style.display !== 'none') return;
+            popover.style.display = 'flex';
+            window.loadQuickMessages?.();
+        };
+        window._openMetaTemplatesPopover = function() {
+            const popover = document.getElementById('meta-templates-popover');
+            const quickPopover = document.getElementById('quick-messages-popover');
+            if (quickPopover) quickPopover.style.display = 'none';
+            if (!popover || popover.style.display !== 'none') return;
+            popover.style.display = 'flex';
+            window.backToMetaTemplatesList?.();
+            window.loadMetaTemplates?.();
+        };
+        window.handleMessageInputChange = function(input) {
+            window.autoResizeChatTextarea?.(input);
+            const value = input?.value || '';
+            const command = value.startsWith('./') ? 'quick' : (value.startsWith('/') ? 'meta' : '');
+            if (!command) {
+                window._lastInputCommand = '';
+                const quickPopover = document.getElementById('quick-messages-popover');
+                const metaPopover = document.getElementById('meta-templates-popover');
+                if (quickPopover) quickPopover.style.display = 'none';
+                if (metaPopover) metaPopover.style.display = 'none';
+                return;
+            }
+            if (window._lastInputCommand === command) return;
+            window._lastInputCommand = command;
+            if (command === 'quick') window._openQuickMessagesPopover();
+            if (command === 'meta') window._openMetaTemplatesPopover();
+        };
+        window.closeCommandPopover = function(type, event) {
+            event?.stopPropagation?.();
+            const popoverId = type === 'quick' ? 'quick-messages-popover' : 'meta-templates-popover';
+            const popover = document.getElementById(popoverId);
+            if (popover) popover.style.display = 'none';
+            window.clearCommandInputPrefix?.(type);
+        };
+
+        window.clearCommandInputPrefix = function(type) {
+            const input = document.getElementById('message-input');
+            if (input) {
+                const command = type === 'quick' ? './' : '/';
+                if (input.value.startsWith(command)) {
+                    input.value = input.value.slice(command.length).replace(/^\s+/, '');
+                    window._lastInputCommand = '';
+                    window.autoResizeChatTextarea?.(input);
+                    input.focus();
+                }
+            }
+        };
+        window._headerMenuAction = function(action) {
+            const buttonByAction = {
+                tags: 'open-tags-btn',
+                crm: 'open-crm-btn',
+                blacklist: 'blacklist-toggle-btn',
+                delete: 'delete-chat-btn'
+            };
+            const btn = document.getElementById(buttonByAction[action]);
+            if (!btn || btn.disabled) return;
+            btn.click();
+            window._closeMobileHeaderMenu();
         };
         window._toggleTagFilter = function(e) {
             e.stopPropagation();
@@ -782,7 +854,7 @@ window.backofficeView = {
         const panel = urlParams.get('openPanel') || urlParams.get('panel');
         if (panel) {
             setTimeout(() => {
-                if (panel === 'leads' && typeof window.realToggleLeads === 'function') window.realToggleLeads();
+                if (panel === 'leads' && typeof window.navigate === 'function') window.navigate('/contactos');
                 else if (panel === 'tickets' && typeof window.realToggleTickets === 'function') window.realToggleTickets();
                 else if (panel === 'meta' && typeof window.toggleMetaPanel === 'function') window.toggleMetaPanel();
             }, 400);
