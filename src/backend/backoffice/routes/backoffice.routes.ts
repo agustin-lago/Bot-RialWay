@@ -11,6 +11,7 @@ import { invalidateVisibilityCache } from "./static.routes";
 import { getOpenAI } from "../../apis/openai/openaiHelper";
 import { getAdapterProvider, getGroupProvider } from "../../providers/instances";
 import { upload } from "../../middleware/upload";
+import { getIdsByHost } from '../utils/routingResolver';
 
 // Invalidar visibility cache cuando cambia cualquier setting de visibilidad via Realtime
 const VISIBILITY_KEYS = ['WHATSAPP_VISIBLE', 'INSTAGRAM_VISIBLE', 'MESSENGER_VISIBLE', 'CRM_VISIBLE', 'SYSTEM_CONFIG_VISIBLE'];
@@ -74,13 +75,17 @@ historyEvents.on('setting_changed', async ({ key, value, projectId, serviceId }:
 // Helper to dynamically extract projectId from query, body, or headers
 export const resolveProjectId = (req: any): string | null => {
     const pId = req?.query?.projectId || (req?.body && req?.body.projectId) || req?.headers?.['x-project-id'] || (req?.auth && req?.auth.projectId);
-    return (pId && pId !== 'default') ? pId : null;
+    if (pId && pId !== 'default') return pId;
+    if (req?.hostInfo) return req.hostInfo.projectId;
+    return null;
 };
 
 // Helper to dynamically extract serviceId from query, body, or headers
 export const resolveServiceId = (req: any): string | null => {
     const sId = req?.query?.serviceId || (req?.body && req?.body.serviceId) || req?.headers?.['x-service-id'] || (req?.auth && req?.auth.serviceId);
-    return (sId && sId !== 'default') ? sId : (process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || 'default_service');
+    if (sId && sId !== 'default') return sId;
+    if (req?.hostInfo) return req.hostInfo.serviceId;
+    return (process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || 'default_service');
 };
 
 // Caché para fotos de perfil (chatId -> {url, timestamp})
@@ -662,6 +667,15 @@ export const registerBackofficeRoutes = (app: any) => {
     const adapterProvider = getAdapterProvider();
     const depsHistoryHandler = HistoryHandlerClass;
     const groupProvider = getGroupProvider();
+
+    // Middleware to dynamically resolve project and service IDs based on hostname
+    app.use(async (req: any, res: any, next: any) => {
+        const host = req.headers.host;
+        if (host) {
+            req.hostInfo = await getIdsByHost(host);
+        }
+        next();
+    });
 
     if (!(process as any)._hasGlobalLogHandler) {
         (process as any)._hasGlobalLogHandler = true;

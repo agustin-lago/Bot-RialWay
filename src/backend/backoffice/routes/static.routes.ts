@@ -4,6 +4,7 @@ import serve from 'serve-static';
 import { backofficeAuth } from '../middleware/auth'; // auth vive en backoffice/middleware
 import { HistoryHandler } from '../db/historyHandler';
 import { getAdapterProvider, getGroupProvider } from '../../providers/instances';
+import { getIdsByHost } from '../utils/routingResolver';
 
 let _visibilityCache: { wa: string; ig: string; ms: string; crm: string; sysConfig: string } | null = null;
 let _visibilityCacheAt = 0;
@@ -40,15 +41,18 @@ export const registerStaticRoutes = (app: any, { __dirname }: { __dirname: strin
 
                 if (htmlPath) {
                     let htmlContent = fs.readFileSync(htmlPath, 'utf8');
-                    const resolveDisplayName = async (): Promise<string> => {
-                        const railwayProjectId = HistoryHandler.PROJECT_IDENTIFIER || process.env.RAILWAY_PROJECT_ID || process.env.PROJECT_ID || '';
+                    const host = req.headers.host || '';
+                    const hostInfo = await getIdsByHost(host);
+                    const projectId = hostInfo?.projectId || HistoryHandler.PROJECT_IDENTIFIER || process.env.RAILWAY_PROJECT_ID || "";
+                    const serviceId = hostInfo?.serviceId || HistoryHandler.SERVICE_IDENTIFIER || process.env.RAILWAY_SERVICE_ID || "";
 
-                        if (railwayProjectId) {
+                    const resolveDisplayName = async (projId: string): Promise<string> => {
+                        if (projId) {
                             try {
                                 const { data, error } = await HistoryHandler.getSupabase()
                                     .from('proyectos_railway')
                                     .select('nombre_personalizado')
-                                    .eq('railway_project_id', railwayProjectId)
+                                    .eq('railway_project_id', projId)
                                     .maybeSingle();
 
                                 if (!error && data?.nombre_personalizado) {
@@ -61,7 +65,7 @@ export const registerStaticRoutes = (app: any, { __dirname }: { __dirname: strin
 
                         return process.env.RAILWAY_SERVICE_NAME || process.env.ASSISTANT_NAME || process.env.BOT_NAME || "Neurolinks";
                     };
-                    const botName = await resolveDisplayName();
+                    const botName = await resolveDisplayName(projectId);
 
                     console.log(`[Static] 🟢 Sirviendo ${filename} para ${route}. botName=${botName}`);
 
@@ -111,8 +115,6 @@ export const registerStaticRoutes = (app: any, { __dirname }: { __dirname: strin
 
                     // Reemplazo universal de placeholders
                     const projectName = botName;
-                    const projectId = HistoryHandler.PROJECT_IDENTIFIER || process.env.RAILWAY_PROJECT_ID || "";
-                    const serviceId = HistoryHandler.SERVICE_IDENTIFIER || process.env.RAILWAY_SERVICE_ID || "";
                     htmlContent = htmlContent.replace(/{{BOT_NAME}}/g, botName);
                     htmlContent = htmlContent.replace(/{{ASSISTANT_NAME}}/g, botName);
                     htmlContent = htmlContent.replace(/{{PROJECT_NAME}}/g, projectName);
