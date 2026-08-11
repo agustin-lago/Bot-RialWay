@@ -3019,13 +3019,14 @@ export class HistoryHandler {
                 if (payload.new?.project_id !== projectId && payload.old?.project_id !== projectId) return;
                 const key = payload.new?.key || payload.old?.key;
                 const value = payload.new?.value;
+                const serviceId = payload.new?.service_id || payload.old?.service_id;
                 if (!key) return;
                 this.invalidateSettingCache(key);
                 const displayVal = (key.toUpperCase().includes('KEY') || key.toUpperCase().includes('TOKEN') || key.toUpperCase().includes('SECRET') || key.toUpperCase().includes('PASS') || key.toUpperCase().includes('PWD'))
                     ? 'OK'
                     : value;
-                console.log(`📡 [Realtime] Setting cambiado: ${key} = ${displayVal}`);
-                historyEvents.emit('setting_changed', { key, value, projectId });
+                console.log(`📡 [Realtime] Setting cambiado: ${key} = ${displayVal} (Service: ${serviceId})`);
+                historyEvents.emit('setting_changed', { key, value, projectId, serviceId });
             })
             .subscribe((status: string) => {
                 if (status === 'SUBSCRIBED') {

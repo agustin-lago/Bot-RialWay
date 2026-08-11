@@ -674,7 +674,8 @@ window.metaView = (() => {
                 url.searchParams.append('metaAppSecret', data.appSecret);
                 if (data.configId) url.searchParams.append('configId', data.configId);
                 url.searchParams.append('projectUrl', origin);
-                url.searchParams.append('redirectUri', `${origin}/api/backoffice/whatsapp/onboard-callback`);
+                url.searchParams.append('redirectUri', `${origin}/api/backoffice/whatsapp/onboard-callback?serviceId=${sId}`);
+                url.searchParams.append('state', `${data.railwayProjectId}:${sId}`);
 
                 popup.location.href = url.toString();
 

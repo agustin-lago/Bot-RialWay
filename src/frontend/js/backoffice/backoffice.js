@@ -2291,7 +2291,8 @@ function launchMetaOnboarding() {
             url.searchParams.append('metaAppSecret', data.appSecret);
             if (data.configId) url.searchParams.append('configId', data.configId);
             url.searchParams.append('projectUrl', currentOrigin);
-            url.searchParams.append('redirectUri', `${currentOrigin}/api/backoffice/whatsapp/onboard-callback`);
+            url.searchParams.append('redirectUri', `${currentOrigin}/api/backoffice/whatsapp/onboard-callback?serviceId=${sId}`);
+            url.searchParams.append('state', `${data.railwayProjectId}:${sId}`);
 
             const width = 600;
             const height = 800;

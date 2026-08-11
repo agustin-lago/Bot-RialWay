@@ -14,19 +14,19 @@ import { upload } from "../../middleware/upload";
 
 // Invalidar visibility cache cuando cambia cualquier setting de visibilidad via Realtime
 const VISIBILITY_KEYS = ['WHATSAPP_VISIBLE', 'INSTAGRAM_VISIBLE', 'MESSENGER_VISIBLE', 'CRM_VISIBLE', 'SYSTEM_CONFIG_VISIBLE'];
-historyEvents.on('setting_changed', async ({ key, value, projectId }: { key: string; value: any; projectId: string }) => {
+historyEvents.on('setting_changed', async ({ key, value, projectId, serviceId }: { key: string; value: any; projectId: string; serviceId?: string }) => {
     if (VISIBILITY_KEYS.includes(key)) invalidateVisibilityCache();
     if (key === 'ADMIN_PASS' || key === 'ADMIN_USER') invalidateAuthCache();
 
     // Sincronización automática de herramientas según el CLIENT_SLUG configurado
     if (key === 'CLIENT_SLUG') {
         const slug = String(value || '').trim().toLowerCase();
-        console.log(`📡 [toolRouter/OpenAI] CLIENT_SLUG cambiado a '${slug}' en proyecto ${projectId}.`);
+        console.log(`📡 [toolRouter/OpenAI] CLIENT_SLUG cambiado a '${slug}' en proyecto ${projectId}, servicio ${serviceId}.`);
         
         // Limpiar el CRM_FIELDS_CONFIG anterior para que al entrar al CRM cargue los nuevos defaults del slug elegido
         try {
-            await HistoryHandlerClass.saveSetting('CRM_FIELDS_CONFIG', '', projectId);
-            console.log(`🧹 [CRM Config] Reset CRM_FIELDS_CONFIG a vacío para usar defaults de '${slug}' en ${projectId}.`);
+            await HistoryHandlerClass.saveSetting('CRM_FIELDS_CONFIG', '', projectId, serviceId);
+            console.log(`🧹 [CRM Config] Reset CRM_FIELDS_CONFIG a vacío para usar defaults de '${slug}' en ${projectId}, servicio ${serviceId}.`);
         } catch (e: any) {
             console.error(`❌ [CRM Config] Error al resetear CRM_FIELDS_CONFIG en cambio de slug:`, e.message);
         }
@@ -37,14 +37,14 @@ historyEvents.on('setting_changed', async ({ key, value, projectId }: { key: str
             const activeModule = (moduleRegistry as any)[slug];
             
             if (activeModule && activeModule.openAiTools) {
-                console.log(`🤖 [OpenAI] Registrando automáticamente herramientas del módulo '${slug}' para proyecto ${projectId}...`);
-                await HistoryHandlerClass.saveSetting('OPENAI_TOOLS_DEFINITION', JSON.stringify(activeModule.openAiTools), projectId);
+                console.log(`🤖 [OpenAI] Registrando automáticamente herramientas del módulo '${slug}' para proyecto ${projectId}, servicio ${serviceId}...`);
+                await HistoryHandlerClass.saveSetting('OPENAI_TOOLS_DEFINITION', JSON.stringify(activeModule.openAiTools), projectId, serviceId);
             } else {
                 // Si el slug está vacío o no tiene herramientas nativas de OpenAI, limpiamos la definición actual del proyecto
-                const currentTools = await HistoryHandlerClass.getConfig('OPENAI_TOOLS_DEFINITION', projectId);
+                const currentTools = await HistoryHandlerClass.getConfig('OPENAI_TOOLS_DEFINITION', projectId, serviceId);
                 if (currentTools && currentTools.trim() !== '') {
-                    console.log(`🗑️ [OpenAI] Quitando herramientas para proyecto ${projectId} (SLUG vacío o sin herramientas)...`);
-                    await HistoryHandlerClass.saveSetting('OPENAI_TOOLS_DEFINITION', '', projectId);
+                    console.log(`🗑️ [OpenAI] Quitando herramientas para proyecto ${projectId}, servicio ${serviceId} (SLUG vacío o sin herramientas)...`);
+                    await HistoryHandlerClass.saveSetting('OPENAI_TOOLS_DEFINITION', '', projectId, serviceId);
                 }
             }
         } catch (err: any) {
@@ -58,10 +58,10 @@ historyEvents.on('setting_changed', async ({ key, value, projectId }: { key: str
             const { syncAssistantTools } = await import('../../apis/openai/openaiHelper');
             const assistantsKeys = ['ASSISTANT_ID', 'ASSISTANT_2', 'ASSISTANT_3', 'ASSISTANT_4', 'ASSISTANT_5'];
             for (const envKey of assistantsKeys) {
-                const assistantId = await HistoryHandlerClass.getConfig(envKey, projectId);
+                const assistantId = await HistoryHandlerClass.getConfig(envKey, projectId, serviceId);
                 if (assistantId && assistantId.trim() !== '' && !assistantId.includes('+') && /^asst_[a-zA-Z0-9_-]+$/.test(assistantId.trim())) {
-                    console.log(`🔄 [OpenAI] Sincronizando herramientas para Asistente (${envKey}: ${assistantId}) en proyecto ${projectId}...`);
-                    await syncAssistantTools(assistantId);
+                    console.log(`🔄 [OpenAI] Sincronizando herramientas para Asistente (${envKey}: ${assistantId}) en proyecto ${projectId}, servicio ${serviceId}...`);
+                    await syncAssistantTools(assistantId, projectId, serviceId);
                 }
             }
         } catch (e: any) {
@@ -2742,10 +2742,21 @@ export const registerBackofficeRoutes = (app: any) => {
     // --- ONBOARDING META ---
 
     app.get('/api/backoffice/whatsapp/onboard-callback', async (req: any, res: any) => {
-        const { code, wabaId: queryWabaId, phoneId: queryPhoneId, projectId: queryProjectId, state } = req.query;
-        const projectId = (queryProjectId as string) || (state as string) || process.env.RAILWAY_PROJECT_ID || 'default_project';
+        const { code, wabaId: queryWabaId, phoneId: queryPhoneId, projectId: queryProjectId, state, serviceId: queryServiceId } = req.query;
+        let projectId = (queryProjectId as string) || process.env.RAILWAY_PROJECT_ID || 'default_project';
+        let serviceId = (queryServiceId as string) || resolveServiceId(req) || 'default_service';
+
+        if (state && typeof state === 'string') {
+            if (state.includes(':')) {
+                const parts = state.split(':');
+                projectId = parts[0];
+                serviceId = parts[1];
+            } else {
+                projectId = state;
+            }
+        }
         
-        console.log(`📡 [CALLBACK] Iniciando onboard-callback para Proyecto: ${projectId}`);
+        console.log(`📡 [CALLBACK] Iniciando onboard-callback para Proyecto: ${projectId}, Servicio: ${serviceId}`);
         if (!code) return res.send('<h2>❌ Error: No se recibió el código de Meta</h2>');
 
         try {
@@ -2782,18 +2793,18 @@ export const registerBackofficeRoutes = (app: any) => {
             const { discoverAndLinkMetaPages } = await import("../../apis/meta/metaPageDiscovery");
             const pageDiscovery = await discoverAndLinkMetaPages(accessToken);
             if (pageDiscovery) {
-                console.log(`✅ [CALLBACK] Guardando configuración de Página: ${pageDiscovery.pageName} para Proyecto: ${projectId}`);
-                await depsHistoryHandler.saveSetting('FACEBOOK_PAGE_ID', pageDiscovery.pageId, projectId);
-                await depsHistoryHandler.saveSetting('FACEBOOK_PAGE_TOKEN', pageDiscovery.pageAccessToken, projectId);
+                console.log(`✅ [CALLBACK] Guardando configuración de Página: ${pageDiscovery.pageName} para Proyecto: ${projectId}, Servicio: ${serviceId}`);
+                await depsHistoryHandler.saveSetting('FACEBOOK_PAGE_ID', pageDiscovery.pageId, projectId, serviceId);
+                await depsHistoryHandler.saveSetting('FACEBOOK_PAGE_TOKEN', pageDiscovery.pageAccessToken, projectId, serviceId);
                 
                 // Si encontramos Instagram vinculado, guardarlo también
                 if (pageDiscovery.instagramId) {
-                    await depsHistoryHandler.saveSetting('INSTAGRAM_BUSINESS_ID', pageDiscovery.instagramId, projectId);
+                    await depsHistoryHandler.saveSetting('INSTAGRAM_BUSINESS_ID', pageDiscovery.instagramId, projectId, serviceId);
                 }
 
                 // Activar visibilidad por defecto si encontramos una página
-                await depsHistoryHandler.saveSetting('INSTAGRAM_VISIBLE', 'on', projectId);
-                await depsHistoryHandler.saveSetting('MESSENGER_VISIBLE', 'on', projectId);
+                await depsHistoryHandler.saveSetting('INSTAGRAM_VISIBLE', 'on', projectId, serviceId);
+                await depsHistoryHandler.saveSetting('MESSENGER_VISIBLE', 'on', projectId, serviceId);
             }
 
             // 3. Verificación de resultados y depuración de scopes si falló todo
@@ -2859,6 +2870,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
                         <script>
                             const projectId = "${projectId}";
+                            const serviceId = "${serviceId}";
                             const accessToken = "${accessToken}";
 
                             function toggleLogs() {
@@ -2882,7 +2894,8 @@ export const registerBackofficeRoutes = (app: any) => {
                                             token: accessToken,
                                             wabaId: waba,
                                             phoneNumberId: phone,
-                                            projectId: projectId
+                                            projectId: projectId,
+                                            serviceId: serviceId
                                         })
                                     });
                                     const data = await res.json();
@@ -2902,7 +2915,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 `;
 
                 // Guardar solo el token para futuras referencias
-                await depsHistoryHandler.saveMetaOnboardingData(null as any, null as any, accessToken, { diagnostics: discovery.diagnostics }, projectId);
+                await depsHistoryHandler.saveMetaOnboardingData(null as any, null as any, accessToken, { diagnostics: discovery.diagnostics }, projectId, serviceId);
                 return res.send(htmlError);
             }
 
@@ -2937,7 +2950,7 @@ export const registerBackofficeRoutes = (app: any) => {
                     console.warn('⚠️ [CALLBACK] No se pudo suscribir a smb_message_echoes:', smbErr?.response?.data || smbErr.message);
                 }
 
-                await depsHistoryHandler.saveMetaOnboardingData(finalWabaId, finalPhoneId, tokenToUse, { verified_name: finalVerifiedName }, projectId);
+                await depsHistoryHandler.saveMetaOnboardingData(finalWabaId, finalPhoneId, tokenToUse, { verified_name: finalVerifiedName }, projectId, serviceId);
                 
                 // --- SINCRONIZACIÓN AUTOMÁTICA SMB ---
                 // Solicitamos contactos e historial inmediatamente tras la vinculación
@@ -2984,14 +2997,15 @@ export const registerBackofficeRoutes = (app: any) => {
      * También dispara la sincronización SMB automática.
      */
     app.post('/api/backoffice/whatsapp/sync-manual', bodyParser.json(), async (req: any, res: any) => {
-        const { token, wabaId, phoneNumberId, projectId } = req.body;
+        const { token, wabaId, phoneNumberId, projectId, serviceId: bodyServiceId } = req.body;
         if (!token || !wabaId || !phoneNumberId) {
             return res.status(400).json({ success: false, error: 'Faltan campos obligatorios' });
         }
+        const serviceId = bodyServiceId || resolveServiceId(req) || 'default_service';
 
         try {
-            console.log(`📡 [SYNC-MANUAL] Vinculando manualmente para Proyecto: ${projectId}`);
-            await depsHistoryHandler.saveMetaOnboardingData(wabaId, phoneNumberId, token, { manual: true }, projectId);
+            console.log(`📡 [SYNC-MANUAL] Vinculando manualmente para Proyecto: ${projectId}, Servicio: ${serviceId}`);
+            await depsHistoryHandler.saveMetaOnboardingData(wabaId, phoneNumberId, token, { manual: true }, projectId, serviceId);
             
             // Disparar sincronización SMB
             try {
@@ -3051,7 +3065,8 @@ export const registerBackofficeRoutes = (app: any) => {
                 discovery.data.phoneNumberId,
                 config.access_token,
                 { verified_name: discovery.data.verifiedName || '' },
-                projectId
+                projectId,
+                serviceId
             );
 
             if (!saveResult.success) {
@@ -3167,11 +3182,14 @@ export const registerBackofficeRoutes = (app: any) => {
                 app_secret: appSecret
             });
             const data = response.data;
+            const serviceId = resolveServiceId(req);
             const result = await depsHistoryHandler.saveMetaOnboardingData(
                 data.phoneNumberId || data.phone_number_id || "PENDING", 
                 data.wabaId || data.waba_id || "PENDING",
                 data.accessToken || data.access_token,
-                { ...data, syncedBy: 'duskcodes-master-router' }
+                { ...data, syncedBy: 'duskcodes-master-router' },
+                projectId,
+                serviceId
             );
             res.json(result);
         } catch (error: any) {

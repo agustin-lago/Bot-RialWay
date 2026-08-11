@@ -124,7 +124,32 @@ ${JSON.stringify(tablesSchema, null, 2)}
                         }
                         return processed;
                     });
-                    toolsJson = JSON.stringify(processedTools);
+
+                    let finalTools = processedTools;
+                    try {
+                        const clientSlug = await HistoryHandler.getConfig('CLIENT_SLUG', projectId, serviceId);
+                        if (clientSlug) {
+                            const { moduleRegistry } = await import('../../bot/toolRegistry');
+                            const activeModule = (moduleRegistry as any)[clientSlug.trim().toLowerCase()];
+                            if (activeModule && activeModule.openAiTools) {
+                                const moduleTools = activeModule.openAiTools;
+                                console.log(`🤖 [ToolGenerator] Combinando herramientas del módulo '${clientSlug}' con query_database...`);
+                                
+                                const mergedList = [...moduleTools];
+                                for (const tool of processedTools) {
+                                    const name = tool.function?.name || tool.name;
+                                    if (name && !mergedList.some(t => (t.function?.name || t.name) === name)) {
+                                        mergedList.push(tool);
+                                    }
+                                }
+                                finalTools = mergedList;
+                            }
+                        }
+                    } catch (err: any) {
+                        console.error("⚠️ [ToolGenerator] Error cargando herramientas del módulo cliente:", err.message);
+                    }
+
+                    toolsJson = JSON.stringify(finalTools);
                 }
 
 
