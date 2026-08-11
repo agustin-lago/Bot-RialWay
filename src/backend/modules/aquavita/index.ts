@@ -213,6 +213,19 @@ export const aquavitaModule = {
       const { state, ctx } = context;
       const clienteRaw = args.cliente || args.payload?.cliente || args;
       
+      if (!clienteRaw || !clienteRaw.nombre) {
+        return "❌ Error: El nombre del cliente es obligatorio para darlo de alta. Solicita el nombre al usuario.";
+      }
+      
+      if (!clienteRaw.direccion) {
+        return "❌ Error: La dirección (calle y altura) es obligatoria para dar de alta al cliente. Solicita la dirección completa al usuario.";
+      }
+
+      // Fallback para teléfono usando el número del chat actual
+      if (!clienteRaw.telefono && ctx?.from) {
+        clienteRaw.telefono = ctx.from.split('@')[0];
+      }
+      
       let nombreCompleto = '';
       if (clienteRaw.nombre && clienteRaw.apellido) {
         nombreCompleto = `${clienteRaw.nombre} ${clienteRaw.apellido}`.trim().toUpperCase();

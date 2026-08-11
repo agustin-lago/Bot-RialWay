@@ -1053,7 +1053,8 @@ export const registerBackofficeRoutes = (app: any) => {
         const limit = parseInt(req.query.limit as string) || 50;
         const offset = parseInt(req.query.offset as string) || 0;
         const projectId = resolveProjectId(req);
-        const messages = await depsHistoryHandler.getMessages(req.params.chatId, limit, offset, projectId);
+        const serviceId = resolveServiceId(req);
+        const messages = await depsHistoryHandler.getMessages(req.params.chatId, limit, offset, projectId, serviceId);
         res.json(messages);
     });
 

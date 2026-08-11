@@ -94,6 +94,26 @@
                 return originalFetch.call(this, input, init);
             };
         })();
+        (function() {
+            const originalIo = window.io;
+            if (typeof originalIo === 'function') {
+                window.io = function(url, options) {
+                    let opts = options || {};
+                    if (typeof url === 'object' && url !== null) {
+                        opts = url;
+                        url = undefined;
+                    }
+                    if (!opts.query) opts.query = {};
+                    if (window.railwayProjectId && !opts.query.projectId) {
+                        opts.query.projectId = window.railwayProjectId;
+                    }
+                    if (window.railwayServiceId && !opts.query.serviceId) {
+                        opts.query.serviceId = window.railwayServiceId;
+                    }
+                    return originalIo(url, opts);
+                };
+            }
+        })();
     </script>
     <style>
         /* Previene auto-zoom en iOS en todos los inputs de la app */

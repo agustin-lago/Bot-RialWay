@@ -1135,6 +1135,8 @@ export class HistoryHandler {
                 external_id: external_id || null,
                 project_id: currentProjectId,
                 projectId: currentProjectId,
+                service_id: currentServiceId,
+                serviceId: currentServiceId,
                 rawPayload
             });
 
@@ -1176,7 +1178,9 @@ export class HistoryHandler {
                     messageId: deletedMsg.id,
                     externalId: deletedMsg.external_id,
                     chatId: deletedMsg.chat_id,
-                    projectId: currentProjectId
+                    projectId: currentProjectId,
+                    serviceId: deletedMsg.service_id,
+                    service_id: deletedMsg.service_id
                 });
                 return true;
             }
@@ -1223,9 +1227,18 @@ export class HistoryHandler {
 
             this.invalidateChatCache(chatId, currentProjectId);
 
+            const { data: chatData } = await supabase
+                .from('chats')
+                .select('service_id')
+                .eq('id', chatId)
+                .eq('project_id', currentProjectId)
+                .maybeSingle();
+
             historyEvents.emit('chat_history_cleared', {
                 chatId,
-                projectId: currentProjectId
+                projectId: currentProjectId,
+                serviceId: chatData?.service_id || null,
+                service_id: chatData?.service_id || null
             });
             return true;
         } catch (err: any) {
@@ -1540,10 +1553,12 @@ export class HistoryHandler {
             }
 
             // Emitir evento para actualización en tiempo real en el Backoffice/CRM
-            historyEvents.emit('contact_updated', {
+             historyEvents.emit('contact_updated', {
                 chatId,
                 project_id: currentProjectId,
-                details: chatDetails
+                details: chatDetails,
+                service_id: currentServiceId,
+                serviceId: currentServiceId
             });
 
             return { success: true, newPhone: updatedPhoneId || undefined };
@@ -1686,8 +1701,8 @@ export class HistoryHandler {
             if (ticketErr) throw ticketErr;
 
             // Emitir eventos para refrescar backoffice y CRM en tiempo real
-            historyEvents.emit('ticket_updated', { chatId, ticket });
-            historyEvents.emit('contact_updated', { chatId, project_id: currentProjectId });
+            historyEvents.emit('ticket_updated', { chatId, ticket, service_id: currentServiceId, serviceId: currentServiceId });
+            historyEvents.emit('contact_updated', { chatId, project_id: currentProjectId, service_id: currentServiceId, serviceId: currentServiceId });
 
             return { success: true, ticket };
         } catch (err: any) {
@@ -1748,7 +1763,14 @@ export class HistoryHandler {
 
             if (error) throw error;
             // Emitir evento para WebSockets (ahora incluimos el agente y projectId para sincronización frontend)
-            historyEvents.emit('bot_toggled', { chatId, enabled, assigned_agent: 'asistente1', projectId: currentProjectId });
+            historyEvents.emit('bot_toggled', { 
+                chatId, 
+                enabled, 
+                assigned_agent: 'asistente1', 
+                projectId: currentProjectId,
+                serviceId: currentServiceId,
+                service_id: currentServiceId
+            });
 
             return { success: true };
         } catch (err: any) {
@@ -1953,7 +1975,7 @@ export class HistoryHandler {
     /**
      * Obtiene los mensajes de un chat específico
      */
-    static async getMessages(rawChatId: string, limit: number = 50, offset: number = 0, projectId: string | null = null) {
+    static async getMessages(rawChatId: string, limit: number = 50, offset: number = 0, projectId: string | null = null, serviceId: string | null = null) {
         const chatId = this.normalizeId(rawChatId);
         const targetProjectId = projectId || HistoryHandler.PROJECT_IDENTIFIER;
         if (process.env.STORAGE_MODE === "local") {
@@ -1961,7 +1983,7 @@ export class HistoryHandler {
             return msgs.reverse();
         }
         try {
-            const currentServiceId = process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || this.SERVICE_IDENTIFIER;
+            const currentServiceId = serviceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || this.SERVICE_IDENTIFIER;
             let query = supabase
                 .from('messages')
                 .select('*')

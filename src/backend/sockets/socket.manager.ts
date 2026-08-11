@@ -17,49 +17,118 @@ export const initSocketIO = (serverInstance: any, { processUserMessage }: any) =
             allowEIO3: true
         });
 
-        // Escuchar eventos de la base de datos (HistoryHandler) y retransmitir a Web
+        // Escuchar eventos de la base de datos (HistoryHandler) y retransmitir a Web con segregación de sala
         historyEvents.on('new_message', (payload) => {
-            io.emit('new_message', payload);
+            const projId = payload.project_id || payload.projectId;
+            const servId = payload.service_id || payload.serviceId;
+            if (projId && servId) {
+                io.to(`${projId}:${servId}`).emit('new_message', payload);
+            } else if (projId) {
+                io.to(`${projId}:*`).emit('new_message', payload);
+            }
         });
 
         historyEvents.on('message_deleted', (payload) => {
-            io.emit('message_deleted', payload);
+            const projId = payload.project_id || payload.projectId;
+            const servId = payload.service_id || payload.serviceId;
+            if (projId && servId) {
+                io.to(`${projId}:${servId}`).emit('message_deleted', payload);
+            } else if (projId) {
+                io.to(`${projId}:*`).emit('message_deleted', payload);
+            }
         });
 
         historyEvents.on('bot_toggled', (payload) => {
-            io.emit('bot_toggled', payload);
+            const projId = payload.project_id || payload.projectId;
+            const servId = payload.service_id || payload.serviceId;
+            if (projId && servId) {
+                io.to(`${projId}:${servId}`).emit('bot_toggled', payload);
+            } else if (projId) {
+                io.to(`${projId}:*`).emit('bot_toggled', payload);
+            }
         });
 
         historyEvents.on('contact_updated', (payload) => {
-            io.emit('contact_updated', payload);
+            const projId = payload.project_id || payload.projectId;
+            const servId = payload.service_id || payload.serviceId;
+            if (projId && servId) {
+                io.to(`${projId}:${servId}`).emit('contact_updated', payload);
+            } else if (projId) {
+                io.to(`${projId}:*`).emit('contact_updated', payload);
+            }
         });
 
         historyEvents.on('ticket_updated', (payload) => {
-            io.emit('ticket_updated', payload);
+            const ticket = payload.ticket || payload;
+            const projId = ticket.project_id || ticket.projectId || payload.projectId;
+            const servId = ticket.service_id || ticket.serviceId || payload.serviceId;
+            if (projId && servId) {
+                io.to(`${projId}:${servId}`).emit('ticket_updated', payload);
+            } else if (projId) {
+                io.to(`${projId}:*`).emit('ticket_updated', payload);
+            }
         });
 
         historyEvents.on('ticket_deleted', (payload) => {
-            io.emit('ticket_deleted', payload);
+            const projId = payload.project_id || payload.projectId;
+            const servId = payload.service_id || payload.serviceId;
+            if (projId && servId) {
+                io.to(`${projId}:${servId}`).emit('ticket_deleted', payload);
+            } else if (projId) {
+                io.to(`${projId}:*`).emit('ticket_deleted', payload);
+            }
         });
 
         historyEvents.on('setting_changed', (payload) => {
-            io.emit('setting_changed', payload);
+            const projId = payload.project_id || payload.projectId;
+            const servId = payload.service_id || payload.serviceId;
+            if (projId && servId) {
+                io.to(`${projId}:${servId}`).emit('setting_changed', payload);
+            } else if (projId) {
+                io.to(`${projId}:*`).emit('setting_changed', payload);
+            }
         });
 
         historyEvents.on('reporte_created', (payload) => {
-            io.emit('reporte_created', payload);
+            const projId = payload.project_id || payload.projectId;
+            const servId = payload.service_id || payload.serviceId || (payload.reporte && payload.reporte.service_id);
+            if (projId && servId) {
+                io.to(`${projId}:${servId}`).emit('reporte_created', payload);
+            } else if (projId) {
+                io.to(`${projId}:*`).emit('reporte_created', payload);
+            }
         });
 
         historyEvents.on('message_status_update', (payload) => {
-            io.emit('message_status_update', payload);
+            const projId = payload.project_id || payload.projectId;
+            const servId = payload.service_id || payload.serviceId;
+            if (projId && servId) {
+                io.to(`${projId}:${servId}`).emit('message_status_update', payload);
+            } else if (projId) {
+                io.to(`${projId}:*`).emit('message_status_update', payload);
+            }
         });
 
         historyEvents.on('user_updated', (payload) => {
-            io.emit('user_updated', payload);
+            const projId = payload.project_id || payload.projectId;
+            const servId = payload.service_id || payload.serviceId;
+            if (projId && servId) {
+                io.to(`${projId}:${servId}`).emit('user_updated', payload);
+            } else if (projId) {
+                io.to(`${projId}:*`).emit('user_updated', payload);
+            }
         });
 
         io.on('connection', (socket) => {
-            // console.log('💬 Cliente web conectado');
+            const query = socket.handshake.query || {};
+            const projectId = query.projectId || 'default_project';
+            const serviceId = query.serviceId || 'default_service';
+            
+            const room = `${projectId}:${serviceId}`;
+            socket.join(room);
+            socket.join(`${projectId}:*`);
+            
+            // console.log(`💬 Cliente web conectado a sala: ${room}`);
             socket.on('message', async (msg) => {
                 try {
                     let ip = '';

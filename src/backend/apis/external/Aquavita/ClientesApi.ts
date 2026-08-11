@@ -90,7 +90,7 @@ export class ClientesApi {
       delete clienteRaw.direccion;
     }
 
-    let domicilio = payload.cliente.domicilio;
+    let domicilio = clienteRaw.domicilio;
     if (typeof domicilio === 'string') {
       domicilio = parseDomicilioString(domicilio);
     } else if (!domicilio || typeof domicilio !== 'object') {
@@ -136,21 +136,21 @@ export class ClientesApi {
 
     const url = `/Clientes/CrearNuevoClientePorChatBot`;
     let tipoDeClienteId = 1;
-    if (payload.cliente.tipoCliente) {
-      const tipo = String(payload.cliente.tipoCliente).toLowerCase();
+    if (clienteRaw.tipoCliente) {
+      const tipo = String(clienteRaw.tipoCliente).toLowerCase();
       if (tipo === 'familia') tipoDeClienteId = 1;
       else if (tipo === 'empresa') tipoDeClienteId = 2;
     }
 
     const cliente = {
-      nombre: payload.cliente.nombre ?? '',
-      apellido: payload.cliente.apellido ?? '',
+      nombre: clienteRaw.nombre ?? '',
+      apellido: clienteRaw.apellido ?? '',
       tipoDeClienteId,
-      condicionIvaId: payload.cliente.condicionIvaId ?? 2,
-      dniCuit: payload.cliente.dni ?? '',
-      telefono: payload.cliente.telefono ?? '',
-      email: payload.cliente.email ?? '',
-      listaDePreciosId: payload.cliente.listaDePreciosId ?? 1,
+      condicionIvaId: clienteRaw.condicionIvaId ?? 2,
+      dniCuit: clienteRaw.dni || clienteRaw.cuit || clienteRaw.dniCuit || '',
+      telefono: clienteRaw.telefono ?? '',
+      email: clienteRaw.email ?? '',
+      listaDePreciosId: clienteRaw.listaDePreciosId ?? 1,
       reparto_id: payload.reparto_id,
       domicilio
     };
