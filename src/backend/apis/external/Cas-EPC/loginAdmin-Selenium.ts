@@ -27,7 +27,7 @@ export class LoginAdminSelenium {
 
         try {
             // URL para el panel del administrador de Cas-EPC
-            const targetUrl = "https://admin.epcbet.net/index.php?act=admin&area=login"; 
+            const targetUrl = "https://admin.epcbet.cc/index.php?act=admin&area=login"; 
             await this.driver.get(targetUrl);
 
             // XPaths para los campos del formulario provistos por el usuario.

@@ -128,8 +128,8 @@ async function executeRecharge(
     shouldQuit: boolean,
     onSubmitSent: () => void
 ): Promise<boolean> {
-    // 1. Asegurarse de estar en la URL: https://admin.epcbet.net/index.php
-    const usersListUrl = "https://admin.epcbet.net/index.php";
+    // 1. Asegurarse de estar en la URL: https://admin.epcbet.cc/index.php
+    const usersListUrl = "https://admin.epcbet.cc/index.php";
     const currentUrl = await localDriver.getCurrentUrl();
     if (!currentUrl.includes('/index.php')) {
         console.log(`[Cas-EPC] Navegando a ${usersListUrl}...`);
