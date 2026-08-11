@@ -3143,6 +3143,7 @@ export class HistoryHandler {
 
         if (error) {
             console.error(`❌ [HistoryHandler] Error guardando setting ${key}:`, error);
+            throw new Error(`Error guardando configuracion ${key}: ${error.message}`);
         } else {
             // Sincronizar en process.env para que el bot actualice su comportamiento de inmediato (Hot-update)
             if (targetProjectId === HistoryHandler.PROJECT_IDENTIFIER && value !== 'PENDING') {
@@ -3520,8 +3521,23 @@ export class HistoryHandler {
             if (error) throw error;
 
             if (data && data.length > 0) {
-                let count = 0;
+                // Agrupar para dar prioridad a la específica del servicio
+                const selectedSettings: Record<string, typeof data[0]> = {};
+                
                 data.forEach(setting => {
+                    const existing = selectedSettings[setting.key];
+                    if (!existing) {
+                        selectedSettings[setting.key] = setting;
+                    } else {
+                        // Si la existente es default_service y la nueva es específica, la sobreescribimos
+                        if (existing.service_id === 'default_service' && setting.service_id !== 'default_service') {
+                            selectedSettings[setting.key] = setting;
+                        }
+                    }
+                });
+
+                let count = 0;
+                Object.values(selectedSettings).forEach(setting => {
                     if (setting.value && setting.value !== 'PENDING') {
                         const isFixed = HistoryHandler.FIXED_KEYS.includes(setting.key);
                         const envVal = process.env[setting.key];
@@ -3540,7 +3556,7 @@ export class HistoryHandler {
                         }
                     }
                 });
-                console.log(`✅ [HistoryHandler] ${count} variables de entorno sincronizadas desde DB (prioridad base de datos aplicada).`);
+                console.log(`✅ [HistoryHandler] ${count} variables de entorno sincronizadas desde DB (prioridad base de datos aplicada con resolución de conflictos de servicio).`);
             } else {
                 console.log(`⚠️ [HistoryHandler] No se encontraron settings en DB para el proyecto ${currentProjectId}.`);
             }

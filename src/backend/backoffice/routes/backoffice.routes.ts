@@ -4082,15 +4082,28 @@ Hemos recibido tu pago con éxito.
             }
 
             // 2. Obtener todas las configuraciones de la base de datos
-            const { data: dbSettings, error } = await supabase
-                .from('settings')
-                .select('key, value')
-                .eq('project_id', depsHistoryHandler.PROJECT_IDENTIFIER);
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
 
+            let query = supabase
+                .from('settings')
+                .select('key, value, service_id')
+                .eq('project_id', projectId);
+
+            if (serviceId && serviceId !== 'default' && serviceId !== 'default_service') {
+                query = query.in('service_id', [serviceId, 'default_service']);
+            }
+
+            const { data: dbSettings, error } = await query;
             if (error) throw error;
 
             // 3. Mezclar: Prioridad DB > Railway/Env
             const mergedConfig: any = { ...railwayVars };
+            
+            // Agrupar para dar prioridad al servicio específico
+            const selectedSettings: Record<string, any> = {};
+            const settingOrigins: Record<string, string> = {};
+
             dbSettings?.forEach((s: any) => {
                 if (s.value !== null && s.value !== undefined) {
                     let val = s.value;
@@ -4099,8 +4112,23 @@ Hemos recibido tu pago con éxito.
                             val = Buffer.from(val.slice(4), 'base64').toString('utf-8');
                         } catch (_e) { /* intentional */ }
                     }
-                    mergedConfig[s.key] = val;
+                    
+                    const existingOrigin = settingOrigins[s.key];
+                    if (!existingOrigin) {
+                        selectedSettings[s.key] = val;
+                        settingOrigins[s.key] = s.service_id || 'default_service';
+                    } else {
+                        if (existingOrigin === 'default_service' && s.service_id !== 'default_service') {
+                            selectedSettings[s.key] = val;
+                            settingOrigins[s.key] = s.service_id;
+                        }
+                    }
                 }
+            });
+
+            // Aplicar la selección final sobre la configuración mezclada
+            Object.keys(selectedSettings).forEach(k => {
+                mergedConfig[k] = selectedSettings[k];
             });
 
             res.json({ success: true, variables: mergedConfig });
@@ -4125,14 +4153,15 @@ Hemos recibido tu pago con éxito.
             const keysToSave = keys.filter(k => !PROTECTED_KEYS.includes(k));
             
             const projectId = resolveProjectId(req);
-            console.log(`📡 [HOT-UPDATE] Guardando ${keysToSave.length} variables en la base de datos para proyecto ${projectId}...`);
+            const serviceId = resolveServiceId(req);
+            console.log(`📡 [HOT-UPDATE] Guardando ${keysToSave.length} variables en la base de datos para proyecto ${projectId} (Servicio: ${serviceId})...`);
 
             const promises = keysToSave.map(key => {
                 let val = settings[key];
                 if ((key === 'ADMIN_USER' || key === 'ADMIN_PASS') && val) {
                     val = 'b64:' + Buffer.from(val).toString('base64');
                 }
-                return depsHistoryHandler.saveSetting(key, val, projectId);
+                return depsHistoryHandler.saveSetting(key, val, projectId, serviceId);
             });
             await Promise.all(promises);
 
@@ -4153,23 +4182,44 @@ Hemos recibido tu pago con éxito.
     app.get('/api/backoffice/settings', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
-            const { data: dbSettings, error } = await supabase
+            const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+            
+            let query = supabase
                 .from('settings')
-                .select('key, value')
+                .select('key, value, service_id')
                 .eq('project_id', projectId);
 
+            if (serviceId && serviceId !== 'default' && serviceId !== 'default_service') {
+                query = query.in('service_id', [serviceId, 'default_service']);
+            }
+
+            const { data: dbSettings, error } = await query;
             if (error) throw error;
-            const results: any = {};
+            
+            // Agrupar por key para dar prioridad al servicio específico
+            const selectedSettings: Record<string, string> = {};
+            const settingOrigins: Record<string, string> = {};
+            
             dbSettings?.forEach((s: any) => {
+                const existingOrigin = settingOrigins[s.key];
                 let val = s.value;
                 if ((s.key === 'ADMIN_USER' || s.key === 'ADMIN_PASS') && typeof val === 'string' && val.startsWith('b64:')) {
                     try {
                         val = Buffer.from(val.slice(4), 'base64').toString('utf-8');
                     } catch (_e) { /* intentional */ }
                 }
-                results[s.key] = val;
+                
+                if (!existingOrigin) {
+                    selectedSettings[s.key] = val;
+                    settingOrigins[s.key] = s.service_id || 'default_service';
+                } else {
+                    if (existingOrigin === 'default_service' && s.service_id !== 'default_service') {
+                        selectedSettings[s.key] = val;
+                        settingOrigins[s.key] = s.service_id;
+                    }
+                }
             });
-            res.json(results);
+            res.json(selectedSettings);
         } catch (error: any) {
             res.status(500).json({ success: false, error: error.message });
         }
