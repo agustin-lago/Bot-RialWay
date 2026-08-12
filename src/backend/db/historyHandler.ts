@@ -374,6 +374,23 @@ export class HistoryHandler {
                 GRANT ALL ON TABLE quick_messages TO service_role;
                 GRANT ALL ON TABLE quick_messages TO authenticated;
                 GRANT SELECT ON TABLE quick_messages TO anon;`
+            },
+            {
+                name: 'system_notifications',
+                sql: `CREATE TABLE IF NOT EXISTS system_notifications (
+                    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    service_id TEXT,
+                    type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    metadata JSONB DEFAULT '{}'::jsonb,
+                    read BOOLEAN DEFAULT false,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+                GRANT ALL ON TABLE system_notifications TO service_role;
+                GRANT ALL ON TABLE system_notifications TO authenticated;
+                GRANT SELECT ON TABLE system_notifications TO anon;`
             }
         ];
 
@@ -4160,6 +4177,163 @@ export class HistoryHandler {
         } catch (err: any) {
             console.error('[HistoryHandler] Error en deleteQuickMessage:', err.message);
             return false;
+        }
+    }
+
+    /**
+     * Registra una nueva notificación de sistema (ej. error de Meta).
+     */
+    static async createSystemNotification(
+        projectId: string,
+        serviceId: string | null,
+        type: string,
+        title: string,
+        description: string,
+        metadata: any = {}
+    ): Promise<any> {
+        const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
+        const currentServiceId = serviceId || this.SERVICE_IDENTIFIER;
+        
+        if (process.env.STORAGE_MODE === "local") {
+            return LocalHistoryStore.createSystemNotification(currentProjectId, currentServiceId, type, title, description, metadata);
+        }
+        
+        try {
+            const insertData: any = {
+                project_id: currentProjectId,
+                service_id: currentServiceId,
+                type,
+                title,
+                description,
+                metadata,
+                read: false,
+                created_at: new Date().toISOString()
+            };
+
+            const { data, error } = await supabase
+                .from('system_notifications')
+                .insert(insertData)
+                .select()
+                .single();
+
+            if (error) throw error;
+            
+            // Emitir evento en tiempo real para avisar al Backoffice (Socket.IO / Realtime)
+            historyEvents.emit('notification_created', { projectId: currentProjectId, serviceId: currentServiceId, notification: data });
+
+            return data;
+        } catch (err: any) {
+            console.error('[HistoryHandler] Error en createSystemNotification:', err.message);
+            return null;
+        }
+    }
+
+    /**
+     * Obtiene notificaciones de sistema paginadas filtrando por project_id y service_id.
+     */
+    static async getSystemNotifications(
+        projectId: string,
+        serviceId: string | null,
+        limit = 20,
+        offset = 0
+    ): Promise<any[]> {
+        const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
+        const currentServiceId = serviceId || this.SERVICE_IDENTIFIER;
+
+        if (process.env.STORAGE_MODE === "local") {
+            return LocalHistoryStore.getSystemNotifications(currentProjectId, currentServiceId, limit, offset);
+        }
+
+        try {
+            let query = supabase
+                .from('system_notifications')
+                .select('*')
+                .eq('project_id', currentProjectId);
+
+            if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
+                query = query.eq('service_id', currentServiceId);
+            }
+
+            const { data, error } = await query
+                .order('created_at', { ascending: false })
+                .range(offset, offset + limit - 1);
+
+            if (error) throw error;
+            return data || [];
+        } catch (err: any) {
+            console.error('[HistoryHandler] Error en getSystemNotifications:', err.message);
+            return [];
+        }
+    }
+
+    /**
+     * Marca una o más notificaciones como leídas filtrando por project_id y service_id.
+     */
+    static async markNotificationsAsRead(
+        projectId: string,
+        serviceId: string | null,
+        notificationIds: string[]
+    ): Promise<boolean> {
+        const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
+        const currentServiceId = serviceId || this.SERVICE_IDENTIFIER;
+
+        if (process.env.STORAGE_MODE === "local") {
+            return LocalHistoryStore.markNotificationsAsRead(currentProjectId, currentServiceId, notificationIds);
+        }
+
+        try {
+            let query = supabase
+                .from('system_notifications')
+                .update({ read: true })
+                .eq('project_id', currentProjectId)
+                .in('id', notificationIds);
+
+            if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
+                query = query.eq('service_id', currentServiceId);
+            }
+
+            const { error } = await query;
+            if (error) throw error;
+
+            historyEvents.emit('notifications_read', { projectId: currentProjectId, serviceId: currentServiceId, ids: notificationIds });
+            return true;
+        } catch (err: any) {
+            console.error('[HistoryHandler] Error en markNotificationsAsRead:', err.message);
+            return false;
+        }
+    }
+
+    /**
+     * Obtiene la cantidad de notificaciones no leídas filtrando por project_id y service_id.
+     */
+    static async getUnreadNotificationsCount(
+        projectId: string,
+        serviceId: string | null
+    ): Promise<number> {
+        const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
+        const currentServiceId = serviceId || this.SERVICE_IDENTIFIER;
+
+        if (process.env.STORAGE_MODE === "local") {
+            return LocalHistoryStore.getUnreadNotificationsCount(currentProjectId, currentServiceId);
+        }
+
+        try {
+            let query = supabase
+                .from('system_notifications')
+                .select('id', { count: 'exact', head: true })
+                .eq('project_id', currentProjectId)
+                .eq('read', false);
+
+            if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
+                query = query.eq('service_id', currentServiceId);
+            }
+
+            const { count, error } = await query;
+            if (error) throw error;
+            return count || 0;
+        } catch (err: any) {
+            console.error('[HistoryHandler] Error en getUnreadNotificationsCount:', err.message);
+            return 0;
         }
     }
 

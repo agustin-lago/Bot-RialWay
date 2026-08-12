@@ -343,7 +343,7 @@ class MetaCloudProvider extends ProviderClass {
     /**
      * Envía un mensaje basado en una plantilla oficial
      */
-    public async sendTemplate(number: string, templateName: string, languageCode: string = 'es', components: any[] = []): Promise<any> {
+    public async sendTemplate(number: string, templateName: string, languageCode: string = 'es', components: any[] = [], options: any = {}): Promise<any> {
         const { phone_number_id, access_token } = this.config;
         if (!phone_number_id || !access_token) {
             console.error('❌ [MetaCloudProvider] sendTemplate: Faltan IDs o token');
@@ -379,6 +379,7 @@ class MetaCloudProvider extends ProviderClass {
         } catch (error: any) {
             const errorDetail = error?.response?.data || error.message;
             console.error('❌ [MetaCloudProvider] Error enviando plantilla:', JSON.stringify(errorDetail, null, 2));
+            await this.handleMetaError(error, number, options);
             throw error; // Lanzamos el error para que el proceso masivo lo capture
         }
     }
@@ -810,6 +811,9 @@ class MetaCloudProvider extends ProviderClass {
             const errorMsg = error.response?.data?.error?.message || error.message;
             const clientPhone = toFormat;
             
+            // Registrar notificación de error comercial
+            await this.handleMetaError(error, clientPhone, options);
+            
             let humanMessage = `Error [${errorCode}]: Falló el envío de mensaje de WhatsApp a [${clientPhone}]. Detalle: ${errorMsg}`;
             
             // Si Meta devuelve error por versión de API deprecada
@@ -1237,6 +1241,63 @@ class MetaCloudProvider extends ProviderClass {
         } catch (error: any) {
             console.error(`❌ [MetaCloudProvider] Error enviando a ${platform}:`, error?.response?.data || error.message);
             return null;
+        }
+    }
+
+    private async handleMetaError(error: any, recipient: string, options: any = {}) {
+        try {
+            const { HistoryHandler } = await import('../db/historyHandler.js');
+            const { phone_number_id } = this.config;
+            const resolvedProject = await HistoryHandler.getProjectIdByRecipient(phone_number_id);
+            const resolvedService = await HistoryHandler.getServiceIdByRecipient(phone_number_id);
+            const projectId = resolvedProject || HistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolvedService || HistoryHandler.SERVICE_IDENTIFIER;
+
+            const errorData = error.response?.data?.error || {};
+            const code = errorData.code || error.code || 'UNKNOWN';
+            const message = errorData.message || error.message || 'Error desconocido';
+
+            let title = 'Error de Meta Cloud API';
+            let description = '';
+            
+            const isBulk = options.isBulk === true || options.bulk === true;
+            let contactLabel = isBulk ? 'envío masivo' : `contacto ${recipient}`;
+            
+            if (!isBulk && recipient) {
+                const cleanRecipient = recipient.replace(/\D/g, '');
+                const chat = await HistoryHandler.getChat(cleanRecipient, projectId);
+                if (chat?.name) {
+                    contactLabel = `${chat.name} (${cleanRecipient})`;
+                }
+            }
+
+            // Mapeo según la documentación de Meta y códigos reportados
+            if (code === 131047) {
+                title = 'Ventana de 24 horas excedida';
+                description = `No se pudo enviar el mensaje a ${contactLabel} porque transcurrieron más de 24 horas desde su último mensaje. Debes enviarle una plantilla autorizada para reabrir la conversación.`;
+            } else if (code === 131042) {
+                title = 'Falta de fondos o pagos pendientes';
+                description = `El mensaje a ${contactLabel} falló debido a problemas de pago. Verifica que tu cuenta comercial de Meta tenga saldo o una tarjeta de crédito válida.`;
+            } else if (code === 132001 || code === 132000) {
+                title = 'Variables de plantilla no definidas';
+                description = `La plantilla no pudo enviarse a ${contactLabel} porque los parámetros o variables no coinciden con la definición aprobada en Meta.`;
+            } else if (code === 131016) {
+                title = 'Cuenta comercial restringida';
+                description = `Meta ha suspendido o restringido temporalmente tu cuenta de WhatsApp Business. Revisa la Calidad de la Cuenta en Meta Business Suite.`;
+            } else {
+                description = `Error de envío a ${contactLabel} (Código ${code}): ${message}`;
+            }
+
+            console.log(`📡 [MetaErrorNotifier] Registrando notificación: "${title}" para proyecto ${projectId}`);
+            await HistoryHandler.createSystemNotification(projectId, serviceId, 'meta_error', title, description, {
+                error_code: code,
+                raw_message: message,
+                recipient,
+                is_bulk: isBulk,
+                timestamp: new Date().toISOString()
+            });
+        } catch (e: any) {
+            console.error('❌ [MetaCloudProvider] Error al registrar notificación de sistema:', e.message);
         }
     }
 }

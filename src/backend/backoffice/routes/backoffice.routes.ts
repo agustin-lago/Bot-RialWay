@@ -603,7 +603,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
 
             try {
                 console.log(`[BULK] Preparando envío para ${phone}. Componentes:`, JSON.stringify(components, null, 2));
-                const resApi = await provider.sendTemplate(phone, templateName, languageCode || 'es_AR', components);
+                const resApi = await provider.sendTemplate(phone, templateName, languageCode || 'es_AR', components, { isBulk: true });
                 
                 if (resApi?.messages) {
                     const msgId = resApi.messages[0].id;
@@ -858,11 +858,15 @@ export const registerBackofficeRoutes = (app: any) => {
     app.get('/api/backoffice/notifications/summary', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req);
             let unread_chats_count = 0;
+            let unread_notifications_count = 0;
             let latest_ticket_time: string | null = null;
             let latest_reporte_time: string | null = null;
             let latest_crm_lead_time: string | null = null;
             let latest_tarea_time: string | null = null;
+
+            unread_notifications_count = await depsHistoryHandler.getUnreadNotificationsCount(projectId, serviceId);
 
             if (process.env.STORAGE_MODE === "local") {
                 const { LocalHistoryStore } = await import('../../db/localHistoryStore');
@@ -970,6 +974,7 @@ export const registerBackofficeRoutes = (app: any) => {
             res.json({
                 success: true,
                 unread_chats_count,
+                unread_notifications_count,
                 latest_ticket_time,
                 latest_reporte_time,
                 latest_crm_lead_time,
@@ -2384,7 +2389,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
                                     const accessToken = provider.config?.access_token || '';
                                     const downloadHeaders: any = {
-                                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/120.0.0.0 Safari/537.36',
                                         'Accept': '*/*'
                                     };
                                     if (isMetaUrl && accessToken) {
@@ -2603,7 +2608,7 @@ export const registerBackofficeRoutes = (app: any) => {
                                 console.log(`📥 [QUICK BULK] Descargando multimedia de cabecera de Meta: ${mediaLink.substring(0, 50)}...`);
                                 const accessToken = provider.config?.access_token || '';
                                 const downloadHeaders: any = {
-                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/120.0.0.0 Safari/537.36',
                                     'Accept': '*/*'
                                 };
                                 if (accessToken) {
@@ -2702,7 +2707,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 for (const chat of chatsList) {
                     const phone = chat.id.split('@')[0];
                     try {
-                        const resApi = await provider.sendTemplate(phone, templateName, languageCode || template.language || 'es', components);
+                        const resApi = await provider.sendTemplate(phone, templateName, languageCode || template.language || 'es', components, { isBulk: true });
                         if (resApi?.messages) {
                             const msgId = resApi.messages[0].id;
                             
@@ -4714,6 +4719,45 @@ Hemos recibido tu pago con éxito.
             historyEvents.emit('notifications_deactivated', { projectId });
 
             res.json({ success: true });
+        } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** GET /api/backoffice/notifications — Obtener notificaciones del sistema paginadas */
+    app.get('/api/backoffice/notifications', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req);
+            const limit = parseInt(req.query.limit) || 20;
+            const offset = parseInt(req.query.offset) || 0;
+
+            const notifications = await depsHistoryHandler.getSystemNotifications(projectId, serviceId, limit, offset);
+            const totalUnread = await depsHistoryHandler.getUnreadNotificationsCount(projectId, serviceId);
+
+            res.json({
+                success: true,
+                data: notifications,
+                unread_count: totalUnread
+            });
+        } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** POST /api/backoffice/notifications/read — Marcar notificaciones como leídas */
+    app.post('/api/backoffice/notifications/read', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req);
+            const { ids } = req.body;
+
+            if (!Array.isArray(ids) || ids.length === 0) {
+                return res.status(400).json({ success: false, error: 'Se requiere una lista de IDs válida.' });
+            }
+
+            const ok = await depsHistoryHandler.markNotificationsAsRead(projectId, serviceId, ids);
+            res.json({ success: ok });
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });
         }

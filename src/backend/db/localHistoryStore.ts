@@ -108,6 +108,18 @@ export interface LocalChatTag {
     service_id?: string;
 }
 
+export interface LocalNotification {
+    id: string;
+    project_id: string;
+    service_id: string | null;
+    type: string;
+    title: string;
+    description: string;
+    metadata: any;
+    read: boolean;
+    created_at: string;
+}
+
 export class LocalHistoryStore {
     // --- CHATS METHODS ---
 
@@ -814,5 +826,91 @@ export class LocalHistoryStore {
             return true;
         }
         return false;
+    }
+
+    // --- NOTIFICATIONS METHODS ---
+
+    static getNotificationsFile(projectId: string): string {
+        return `notifications_${projectId}.json`;
+    }
+
+    static getNotifications(projectId: string): LocalNotification[] {
+        return readJsonFile<LocalNotification[]>(this.getNotificationsFile(projectId), []);
+    }
+
+    static saveNotifications(projectId: string, notifications: LocalNotification[]) {
+        writeJsonFile(this.getNotificationsFile(projectId), notifications);
+    }
+
+    static async createSystemNotification(
+        projectId: string,
+        serviceId: string | null,
+        type: string,
+        title: string,
+        description: string,
+        metadata: any
+    ): Promise<LocalNotification> {
+        const notifications = this.getNotifications(projectId);
+        const newNotif: LocalNotification = {
+            id: crypto.randomUUID(),
+            project_id: projectId,
+            service_id: serviceId,
+            type,
+            title,
+            description,
+            metadata,
+            read: false,
+            created_at: new Date().toISOString()
+        };
+        notifications.push(newNotif);
+        this.saveNotifications(projectId, notifications);
+        return newNotif;
+    }
+
+    static async getSystemNotifications(
+        projectId: string,
+        serviceId: string | null,
+        limit: number,
+        offset: number
+    ): Promise<LocalNotification[]> {
+        let notifications = this.getNotifications(projectId);
+        if (serviceId && serviceId !== 'default' && serviceId !== 'default_service') {
+            notifications = notifications.filter(n => n.service_id === serviceId);
+        }
+        notifications.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        return notifications.slice(offset, offset + limit);
+    }
+
+    static async markNotificationsAsRead(
+        projectId: string,
+        serviceId: string | null,
+        notificationIds: string[]
+    ): Promise<boolean> {
+        const notifications = this.getNotifications(projectId);
+        let updated = false;
+        for (const n of notifications) {
+            if (notificationIds.includes(n.id)) {
+                if (serviceId && serviceId !== 'default' && serviceId !== 'default_service') {
+                    if (n.service_id !== serviceId) continue;
+                }
+                n.read = true;
+                updated = true;
+            }
+        }
+        if (updated) {
+            this.saveNotifications(projectId, notifications);
+        }
+        return updated;
+    }
+
+    static async getUnreadNotificationsCount(
+        projectId: string,
+        serviceId: string | null
+    ): Promise<number> {
+        let notifications = this.getNotifications(projectId);
+        if (serviceId && serviceId !== 'default' && serviceId !== 'default_service') {
+            notifications = notifications.filter(n => n.service_id === serviceId);
+        }
+        return notifications.filter(n => !n.read).length;
     }
 }

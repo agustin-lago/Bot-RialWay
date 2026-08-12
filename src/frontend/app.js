@@ -4,6 +4,7 @@
 
 const ROUTES = {
     '/backoffice':               '/js/backoffice/backoffice.view.js',
+    '/notifications':            '/js/notifications/notifications.view.js',
     '/dashboard':                '/js/dashboard/dashboard.view.js',
     '/conexion':                 '/js/conexion/conexion.view.js',
     '/crm':                      '/js/crm/crm.view.js',
@@ -93,6 +94,10 @@ function highlightActiveNav(path) {
     document.querySelectorAll('#nav-ajustes-btn .nav-dropdown-link[data-route]').forEach(item => {
         item.classList.toggle('active', item.getAttribute('data-route') === path);
     });
+
+    // Notificaciones active
+    const notifBtn = document.getElementById('nav-notifications-btn');
+    if (notifBtn) notifBtn.classList.toggle('active', path === '/notifications');
 
     // Expandir y activar sub-dropdown de Mercado Libre si corresponde
     const meliSub = document.getElementById('nav-mercado-libre-sub');
@@ -268,6 +273,14 @@ async function updateNotificationDots() {
 
         const currentPath = window.location.pathname;
 
+        // --- Notificaciones ---
+        const showNotificationsBadge = data.unread_notifications_count > 0 && currentPath !== '/notifications';
+        const badgeNotifications = document.getElementById('badge-notifications-count');
+        if (badgeNotifications) {
+            badgeNotifications.innerText = data.unread_notifications_count > 99 ? '+99' : data.unread_notifications_count;
+            badgeNotifications.style.display = showNotificationsBadge ? 'inline-flex' : 'none';
+        }
+
         // --- Conversaciones ---
         const showConversaciones = data.unread_chats_count > 0 && currentPath !== '/backoffice';
         const dotConversaciones = document.getElementById('dot-conversaciones');
@@ -361,6 +374,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Escuchar eventos en tiempo real para actualizar los puntos de notificacion
     _appSocket.on('new_message', () => {
+        updateNotificationDots();
+    });
+    _appSocket.on('notification_created', () => {
         updateNotificationDots();
     });
     _appSocket.on('contact_updated', () => {
