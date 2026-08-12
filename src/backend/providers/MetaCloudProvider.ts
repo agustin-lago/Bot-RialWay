@@ -991,6 +991,13 @@ class MetaCloudProvider extends ProviderClass {
                             if (status.status === 'failed' && status.errors) {
                                 for (const err of status.errors) {
                                     console.error(`❌ [MetaCloudProvider] Error de entrega para ${status.recipient_id} (ID: ${status.id}): [Código ${err.code}] ${err.message} - ${err.error_data?.details || ''}`);
+                                    
+                                    // Registrar notificación de error de entrega (asíncrono)
+                                    const errorObj = {
+                                        code: err.code,
+                                        message: `${err.message} - ${err.error_data?.details || ''}`
+                                    };
+                                    await this.handleMetaError(errorObj, status.recipient_id, { isBulk: false });
                                 }
                             }
                             if (status.status === 'read' || status.status === 'delivered') {
@@ -1247,9 +1254,9 @@ class MetaCloudProvider extends ProviderClass {
     private async handleMetaError(error: any, recipient: string, options: any = {}) {
         try {
             const { HistoryHandler } = await import('../db/historyHandler.js');
-            const { phone_number_id } = this.config;
-            const resolvedProject = await HistoryHandler.getProjectIdByRecipient(phone_number_id);
-            const resolvedService = await HistoryHandler.getServiceIdByRecipient(phone_number_id);
+            const phoneNumberId = this.config.phone_number_id || this.config.numberId;
+            const resolvedProject = await HistoryHandler.getProjectIdByRecipient(phoneNumberId);
+            const resolvedService = await HistoryHandler.getServiceIdByRecipient(phoneNumberId);
             const projectId = resolvedProject || HistoryHandler.PROJECT_IDENTIFIER;
             const serviceId = resolvedService || HistoryHandler.SERVICE_IDENTIFIER;
 
