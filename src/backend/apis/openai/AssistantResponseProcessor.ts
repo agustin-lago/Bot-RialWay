@@ -362,7 +362,7 @@ export class AssistantResponseProcessor {
             if (assistantApiResponse) {
                 try {
                     const cleanRes = limpiarBloquesJSON(String(assistantApiResponse)).trim();
-                    await flowDynamic([{ body: cleanRes }]);
+                    await AssistantResponseProcessor.sendResponseWithImages(flowDynamic, cleanRes);
                     // Guardar en el historial
                     if (ctx?.from) {
                         await HistoryHandler.saveMessage(ctx.from, 'assistant', cleanRes, 'text', null, ctx.userId, null, ctx.platform, projectId);
@@ -396,18 +396,10 @@ export class AssistantResponseProcessor {
                 );
             }
             
-            const chunks = cleanTextResponse.split(/\n\n+/);
-            for (const chunk of chunks) {
-                if (chunk.trim().length > 0) {
-                    try {
-                        await flowDynamic([{ body: chunk.trim() }]);
-                        // Pequeña pausa para evitar que WhatsApp ignore mensajes muy rápidos
-                        await new Promise(r => setTimeout(r, 600)); 
-                        // flowDynamic ejecutado correctamente
-                    } catch (err: any) {
-                        console.error('[WhatsApp Debug] Error en flowDynamic:', err);
-                    }
-                }
+            try {
+                await AssistantResponseProcessor.sendResponseWithImages(flowDynamic, cleanTextResponse);
+            } catch (err: any) {
+                console.error('[WhatsApp Debug] Error en sendResponseWithImages:', err);
             }
 
             // Enviar PDFs recolectados
@@ -544,6 +536,29 @@ export class AssistantResponseProcessor {
                 response, ctx, flowDynamic, state, provider, gotoFlow,
                 getAssistantResponse, currentAssistantId, assignedAgentName, 0, projectId
             );
+        }
+    }
+
+    public static async sendResponseWithImages(flowDynamic: any, text: string) {
+        const imageRegex = /(https?:\/\/\S+\.(?:png|jpg|jpeg|gif|webp)(?:\?\S+)?)/gi;
+        const chunks = text.split(/\n\n+/);
+        
+        for (const chunk of chunks) {
+            const trimmed = chunk.trim();
+            if (trimmed.length > 0) {
+                const match = trimmed.match(/(https?:\/\/\S+\.(?:png|jpg|jpeg|gif|webp)(?:\?\S+)?)/i);
+                
+                if (match) {
+                    const imageUrl = match[1];
+                    const cleanBody = trimmed.replace(imageUrl, '').trim();
+                    console.log(`[AssistantResponseProcessor] 📸 Enviando imagen parseada con caption: ${imageUrl}`);
+                    await flowDynamic([{ body: cleanBody, media: imageUrl }]);
+                } else {
+                    await flowDynamic([{ body: trimmed }]);
+                }
+                
+                await new Promise(r => setTimeout(r, 600));
+            }
         }
     }
 }

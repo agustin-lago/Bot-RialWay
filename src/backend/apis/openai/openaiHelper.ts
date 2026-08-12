@@ -221,6 +221,17 @@ export const askWithFunctions = async (assistantId: string, message: string, sta
             const dbPrompt = await HistoryHandler.getSetting('ASSISTANT_PROMPT', projectId, serviceId);
             systemPrompt = dbPrompt || await HistoryHandler.getConfig('ASSISTANT_PROMPT', projectId, serviceId) || "Eres un asistente servicial.";
         }
+        
+        // Obtener CLIENT_SLUG para formatear contexto de cliente
+        const slug = await HistoryHandler.getConfig('CLIENT_SLUG', projectId);
+        const cleanSlug = String(slug || '').trim().toLowerCase();
+
+        if (cleanSlug === 'aquavita') {
+            systemPrompt += `\n\nINSTRUCCIÓN CRÍTICA DE PERSISTENCIA Y MEMORIA:
+- Dispones de la herramienta 'ACTUALIZAR_CONTEXTO'.
+- Tan pronto como el usuario te proporcione datos clave como su nombre, dirección (calle y número), teléfono o DNI/CUIT, DEBES llamar inmediatamente a la herramienta 'ACTUALIZAR_CONTEXTO' para registrar estos datos en la memoria de la conversación.
+- Esto es sumamente importante para evitar que el bot olvide la información si la conversación se extiende, ya que el historial de mensajes se trunca.`;
+        }
 
         // Filtrar mensajes válidos y formatear para OpenAI
         const formattedHistory = history
@@ -265,42 +276,57 @@ export const askWithFunctions = async (assistantId: string, message: string, sta
         const currentDatetimeArg = getArgentinaDatetimeString();
         const contactNameInfo = chatData?.name ? `\nNombre de Contacto: ${chatData.name}` : '';
 
-        // Obtener CLIENT_SLUG para formatear contexto personalizado de cliente
-        const slug = await HistoryHandler.getConfig('CLIENT_SLUG', projectId);
-        const cleanSlug = String(slug || '').trim().toLowerCase();
+
+
+        // Cargar contexto temporal (pre-contexto) desde state y desde chats.metadata en la DB
+        let preContextData: any = {};
+        if (state && typeof state.get === 'function') {
+            preContextData = state.get('datosClienteContext') || {};
+        }
+        const dbContext = await HistoryHandler.getClientContext(userId);
+        if (dbContext) {
+            preContextData = {
+                ...dbContext,
+                ...preContextData
+            };
+        }
+
+        const finalName = chatData?.name || preContextData.nombre || 'No identificado';
+        const finalDni = chatData?.cuit_dni || preContextData.dni_cuit || preContextData.numCliente || 'No registrado';
+        const finalEmail = chatData?.email || preContextData.email || 'No registrado';
+        const finalAddress = chatData?.address || preContextData.direccion || 'No registrado';
+        const finalTax = chatData?.tax_status || preContextData.tipoCliente || 'No identificado';
 
         let leadContext = '';
-        if (chatData) {
-            if (cleanSlug === 'ganemos' || cleanSlug === 'ganemos-net' || cleanSlug === 'cas-epc' || cleanSlug === 'casepc') {
-                leadContext = `\n\nDATOS DEL CLIENTE EN CRM (Úsalos para personalizar tu respuesta):
-- Nombre: ${chatData.name || 'No identificado'}
-- Usuario / DNI (Nombre de usuario en la plataforma de juego): ${chatData.cuit_dni || 'No registrado'}
-- Correo Electrónico: ${chatData.email || 'No registrado'}
-- Domicilio: ${chatData.address || 'No registrado'}
-- Notas del CRM: ${chatData.notes || 'Sin notas'}
+        if (cleanSlug === 'ganemos' || cleanSlug === 'ganemos-net' || cleanSlug === 'cas-epc' || cleanSlug === 'casepc') {
+            leadContext = `\n\nDATOS DEL CLIENTE EN CRM (Úsalos para personalizar tu respuesta):
+- Nombre: ${finalName}
+- Usuario / DNI (Nombre de usuario en la plataforma de juego): ${finalDni}
+- Correo Electrónico: ${finalEmail}
+- Domicilio: ${finalAddress}
+- Notas del CRM: ${chatData?.notes || 'Sin notas'}
 
 INSTRUCCIÓN CRÍTICA DE IDENTIDAD DE JUGADOR:
 - El campo 'Usuario / DNI' representa el nombre de usuario oficial del jugador en la plataforma.
-- Para las llamadas de herramientas 'DEPOSITAR' o 'RETIRAR', debes utilizar este nombre de usuario registrado en la base de datos (${chatData.cuit_dni || 'No registrado'}) como argumento 'username', a menos que el usuario del chat te indique explícitamente en su mensaje que la operación es para un usuario distinto.`;
-            } else if (cleanSlug === 'aquavita') {
-                leadContext = `\n\nDATOS DEL CLIENTE EN CRM (Úsalos para personalizar tu respuesta):
-- Nombre: ${chatData.name || 'No identificado'}
-- Nro Cliente / DNI: ${chatData.cuit_dni || 'No registrado'}
-- Correo Electrónico: ${chatData.email || 'No registrado'}
-- Dirección: ${chatData.address || 'No registrada'}
-- Tipo Cliente: ${chatData.tax_status || 'No identificado'}
-- Producto Ofrecido: ${chatData.offered_product || 'No especificado'}
-- Notas del CRM: ${chatData.notes || 'Sin notas'}`;
-            } else {
-                leadContext = `\n\nDATOS DEL CLIENTE EN CRM (Úsalos para personalizar tu respuesta):
-- Nombre: ${chatData.name || 'No identificado'}
-- Cuil / Cuit / DNI: ${chatData.cuit_dni || 'No registrado'}
-- Correo Electrónico: ${chatData.email || 'No registrado'}
-- Domicilio: ${chatData.address || 'No registrado'}
-- Situación Impositiva: ${chatData.tax_status || 'No registrada'}
-- Producto Ofrecido: ${chatData.offered_product || 'No especificado'}
-- Notas del CRM: ${chatData.notes || 'Sin notas'}`;
-            }
+- Para las llamadas de herramientas 'DEPOSITAR' o 'RETIRAR', debes utilizar este nombre de usuario registrado en la base de datos (${finalDni}) como argumento 'username', a menos que el usuario del chat te indique explícitamente en su mensaje que la operación es para un usuario distinto.`;
+        } else if (cleanSlug === 'aquavita') {
+            leadContext = `\n\nDATOS DEL CLIENTE EN CRM (Úsalos para personalizar tu respuesta y evitar volver a preguntarlos):
+- Nombre: ${finalName}
+- Nro Cliente / DNI: ${finalDni}
+- Correo Electrónico: ${finalEmail}
+- Dirección: ${finalAddress}
+- Tipo Cliente: ${finalTax}
+- Producto Ofrecido: ${chatData?.offered_product || 'No especificado'}
+- Notas del CRM: ${chatData?.notes || 'Sin notas'}`;
+        } else {
+            leadContext = `\n\nDATOS DEL CLIENTE EN CRM (Úsalos para personalizar tu respuesta):
+- Nombre: ${finalName}
+- Cuil / Cuit / DNI: ${finalDni}
+- Correo Electrónico: ${finalEmail}
+- Domicilio: ${finalAddress}
+- Situación Impositiva: ${finalTax}
+- Producto Ofrecido: ${chatData?.offered_product || 'No especificado'}
+- Notas del CRM: ${chatData?.notes || 'Sin notas'}`;
         }
 
         messages[0].content += `\n\nFecha/Hora Actual (Argentina): ${currentDatetimeArg}\nID de Usuario: ${userId}${contactNameInfo}\nProject ID: ${projectId}${leadContext}`;

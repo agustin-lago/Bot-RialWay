@@ -93,6 +93,13 @@ export const aquavitaModule = {
   label: "Aquavita",
 
   tools: {
+    // 0. actualizarContexto
+    actualizarContexto: async (args: any, context: any) => {
+      const { state, ctx } = context;
+      await AssistantResponseProcessor.actualizarContextoCliente(state, args, ctx.from);
+      return "✅ Memoria de pre-contexto de la conversación actualizada con éxito.";
+    },
+
     // 1. buscarCliente
     buscarCliente: async (args: any, context: any) => {
       const { state, ctx } = context;
@@ -211,9 +218,19 @@ export const aquavitaModule = {
     // 3. crearCliente
     crearCliente: async (args: any, context: any) => {
       const { state, ctx } = context;
-      const clienteRaw = args.cliente || args.payload?.cliente || args;
+      const ctxData = state?.get ? state.get('datosClienteContext') : null;
+      const parsedArgs = args.cliente || args.payload?.cliente || args;
+      const clienteRaw = {
+        ...parsedArgs,
+        nombre: parsedArgs.nombre || ctxData?.nombre || '',
+        apellido: parsedArgs.apellido || ctxData?.apellido || '',
+        direccion: parsedArgs.direccion || ctxData?.direccion || '',
+        telefono: parsedArgs.telefono || ctxData?.telefono || '',
+        cuit: parsedArgs.cuit || ctxData?.numCliente || ctxData?.dni_cuit || '',
+        email: parsedArgs.email || ctxData?.email || '',
+      };
       
-      if (!clienteRaw || !clienteRaw.nombre) {
+      if (!clienteRaw.nombre) {
         return "❌ Error: El nombre del cliente es obligatorio para darlo de alta. Solicita el nombre al usuario.";
       }
       
@@ -580,13 +597,31 @@ export const aquavitaModule = {
     LINK_PAGO: async (args: any) => aquavitaModule.tools.linkPago(args),
     OBTENER_LINK_MERCADO_PAGO: async (args: any) => aquavitaModule.tools.linkPago(args),
     PRODUCTOS: async (args: any) => aquavitaModule.tools.productos(args),
-    REPARTO: async (args: any, context: any) => aquavitaModule.tools.reparto(args, context)
+    REPARTO: async (args: any, context: any) => aquavitaModule.tools.reparto(args, context),
+    ACTUALIZAR_CONTEXTO: async (args: any, context: any) => aquavitaModule.tools.actualizarContexto(args, context)
   },
 
   // ----------------------------------------------------
   // NATIVE OPENAI TOOLS SCHEMAS FOR AQUAVITA
   // ----------------------------------------------------
   openAiTools: [
+    {
+      "type": "function",
+      "function": {
+        "name": "ACTUALIZAR_CONTEXTO",
+        "description": "Guarda y actualiza los datos temporales del cliente (nombre, apellido, dirección, teléfono, cuit) en la memoria de la conversación para que el asistente no los olvide.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "nombre": { "type": "string", "description": "Nombre de pila o de la empresa." },
+            "apellido": { "type": "string", "description": "Apellido del cliente." },
+            "direccion": { "type": "string", "description": "Dirección completa (calle y número)." },
+            "telefono": { "type": "string", "description": "Número de teléfono de contacto." },
+            "cuit": { "type": "string", "description": "DNI, CUIT o CUIL." }
+          }
+        }
+      }
+    },
     {
       "type": "function",
       "function": {
