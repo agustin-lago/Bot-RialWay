@@ -859,6 +859,8 @@ window.supportWidget = (() => {
     function _syncSidebarTrigger() {
         const item = document.getElementById('nav-support-btn');
         if (item) item.classList.toggle('active', _isOpen);
+        const desktopItem = document.getElementById('desktop-support-btn');
+        if (desktopItem) desktopItem.classList.toggle('active', _isOpen);
     }
 
     function openChat(ticketId) {

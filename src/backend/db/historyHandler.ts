@@ -1,4 +1,4 @@
-
+﻿
 import { createClient } from "@supabase/supabase-js";
 import { EventEmitter } from "events";
 import dotenv from "dotenv";
@@ -927,9 +927,10 @@ export class HistoryHandler {
     /**
      * Actualiza el último resultado de base de datos para un chat
      */
-    static async updateLastDbResult(rawChatId: string, result: string, forcedProjectId?: string): Promise<boolean> {
+    static async updateLastDbResult(rawChatId: string, result: string, forcedProjectId?: string, forcedServiceId?: string | null): Promise<boolean> {
         const chatId = this.normalizeId(rawChatId);
         const currentProjectId = forcedProjectId || this.PROJECT_IDENTIFIER;
+        const currentServiceId = forcedServiceId || this.SERVICE_IDENTIFIER;
         if (process.env.STORAGE_MODE === "local") {
             return LocalHistoryStore.updateLastDbResult(chatId, result, currentProjectId);
         }
@@ -938,11 +939,17 @@ export class HistoryHandler {
         this.invalidateChatCache(chatId, currentProjectId);
 
         try {
-            const { error } = await supabase
+            let query = supabase
                 .from('chats')
                 .update({ last_db_result: result })
                 .eq('id', chatId)
                 .eq('project_id', currentProjectId);
+
+            if (isScopedServiceId(currentServiceId)) {
+                query = query.eq('service_id', currentServiceId);
+            }
+
+            const { error } = await query;
             if (error) {
                 console.error("[HistoryHandler] Error actualizando last_db_result en chats:", error.message);
                 return false;
@@ -1408,24 +1415,31 @@ export class HistoryHandler {
     /**
      * Limpia todo el historial de mensajes para un contacto específico en un proyecto.
      */
-    static async clearChatHistory(rawChatId: string, forcedProjectId?: string): Promise<boolean> {
+    static async clearChatHistory(rawChatId: string, forcedProjectId?: string, forcedServiceId?: string | null): Promise<boolean> {
         const chatId = this.normalizeId(rawChatId);
         const currentProjectId = forcedProjectId || this.PROJECT_IDENTIFIER;
+        const currentServiceId = forcedServiceId || this.SERVICE_IDENTIFIER;
         if (process.env.STORAGE_MODE === "local") {
             const success = await LocalHistoryStore.clearChatHistory(chatId, currentProjectId);
             if (success) {
-                historyEvents.emit('chat_history_cleared', { chatId, projectId: currentProjectId });
+                historyEvents.emit('chat_history_cleared', { chatId, projectId: currentProjectId, serviceId: currentServiceId });
             }
             return success;
         }
 
         try {
             // Eliminar todos los mensajes del chat en el proyecto actual
-            const { error } = await supabase
+            let deleteQuery = supabase
                 .from('messages')
                 .delete()
                 .eq('chat_id', chatId)
                 .eq('project_id', currentProjectId);
+
+            if (currentServiceId && currentServiceId !== 'default_service') {
+                deleteQuery = deleteQuery.eq('service_id', currentServiceId);
+            }
+
+            const { error } = await deleteQuery;
 
             if (error) {
                 console.error('[HistoryHandler] Error al limpiar historial de chat:', error.message);
@@ -1433,20 +1447,31 @@ export class HistoryHandler {
             }
 
             // También reiniciamos unread_count en la tabla chats
-            await supabase
+            let chatUpdateQuery = supabase
                 .from('chats')
                 .update({ unread_count: 0 })
                 .eq('id', chatId)
                 .eq('project_id', currentProjectId);
 
+            if (currentServiceId && currentServiceId !== 'default_service') {
+                chatUpdateQuery = chatUpdateQuery.eq('service_id', currentServiceId);
+            }
+
+            await chatUpdateQuery;
+
             this.invalidateChatCache(chatId, currentProjectId);
 
-            const { data: chatData } = await supabase
+            let chatDataQuery = supabase
                 .from('chats')
                 .select('service_id')
                 .eq('id', chatId)
-                .eq('project_id', currentProjectId)
-                .maybeSingle();
+                .eq('project_id', currentProjectId);
+
+            if (currentServiceId && currentServiceId !== 'default_service') {
+                chatDataQuery = chatDataQuery.eq('service_id', currentServiceId);
+            }
+
+            const { data: chatData } = await chatDataQuery.maybeSingle();
 
             historyEvents.emit('chat_history_cleared', {
                 chatId,
@@ -1679,6 +1704,7 @@ export class HistoryHandler {
                 .select('id, estado')
                 .eq('chat_id', chatId)
                 .eq('project_id', currentProjectId)
+                .eq('tipo', 'Nuevo Lead')
                 .neq('estado', 'Cerrado');
 
             if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
@@ -1748,7 +1774,7 @@ export class HistoryHandler {
                     project_id: currentProjectId,
                     chat_id: chatId,
                     titulo: ticketTitle || `Lead: ${name}`,
-                    descripcion: details.notes || 'Lead detectado automáticamente',
+                    descripcion: ticketDescription ?? details.notes ?? 'Lead detectado automáticamente',
                     estado: initialStatus,
                     tipo: 'Nuevo Lead',
                     prioridad: 'Media',
@@ -3116,6 +3142,14 @@ export class HistoryHandler {
             } catch (swapErr) {
                 console.warn('⚠️ [HistoryHandler] No se pudo migrar al main_token:', swapErr);
             }
+
+            historyEvents.emit('whatsapp_line_changed', {
+                projectId: targetProjectId,
+                project_id: targetProjectId,
+                serviceId: targetServiceId,
+                service_id: targetServiceId,
+                provider: 'meta'
+            });
 
             return { success: true, data };
         } catch (err: any) {

@@ -2,28 +2,7 @@
 // app.js - Client-side SPA router
 // Carga views dinamicamente y maneja la navegacion sin recargar la pagina
 
-const ROUTES = {
-    '/conversaciones':           '/js/backoffice/backoffice.view.js',
-    '/contactos':                '/js/contactos/contactos.view.js',
-    '/dashboard':                '/js/dashboard/dashboard.view.js',
-    '/conexion':                 '/js/conexion/conexion.view.js',
-    '/crm':                      '/js/crm/crm.view.js',
-    '/crm-tareas':               '/js/crm/crm-tareas.view.js',
-    '/system-config':            '/js/system-config/system-config.view.js',
-    '/docs':                     '/js/docs/docs.view.js',
-    '/documentacion':            '/js/docs/docs.view.js',
-    '/webchat':                  '/js/webchat/webchat.view.js',
-    '/meta':                     '/js/meta/meta.view.js',
-    '/mercado-libre':            '/js/mercado-libre/mercado-libre.view.js',
-    '/mercado-libre-productos':  '/js/mercado-libre/mercado-libre-productos.view.js',
-    '/mercado-libre-bot':        '/js/mercado-libre/mercado-libre-bot.view.js',
-    '/mercado-pago':             '/js/mercado-libre/mercado-pago.view.js',
-    '/lista-negra':              '/js/lista-negra/lista-negra.view.js',
-    '/reportes':                 '/js/reportes/reportes.view.js',
-    '/usuarios':                 '/js/usuarios/usuarios.view.js',
-    '/webhooks':                 '/js/webhook-config/webhook-config.view.js',
-    '/epc-cbu-cvu':              '/js/epc-cbu-cvu/epc-cbu-cvu.view.js',
-};
+const ROUTES = window.__APP_ROUTES || {};
 
 const _loadedScripts = {};
 let _currentView = null;
@@ -33,9 +12,28 @@ const SECTION_LAST_ROUTE_KEYS = {
     messaging: 'backoffice_last_route_messaging',
     integrations: 'backoffice_last_route_integrations'
 };
+function collectSectionRoutes(section) {
+    const config = window.__NAV_SECTION_TAB_CONFIG || {};
+    const visible = typeof window.__NAV_SECTION_TAB_VISIBLE === 'function'
+        ? window.__NAV_SECTION_TAB_VISIBLE
+        : () => true;
+    const routes = [];
+    (config[section] || []).filter(visible).forEach(tab => {
+        if (tab.route) routes.push(tab.route);
+        if (Array.isArray(tab.matchRoutes)) routes.push(...tab.matchRoutes);
+        if (Array.isArray(tab.children)) {
+            tab.children.filter(visible).forEach(child => {
+                if (child.route) routes.push(child.route);
+                if (Array.isArray(child.matchRoutes)) routes.push(...child.matchRoutes);
+            });
+        }
+    });
+    return Array.from(new Set(routes));
+}
+
 const SECTION_ROUTES = {
-    messaging: ['/dashboard', '/conversaciones', '/contactos', '/reportes', '/conexion', '/webchat'],
-    integrations: ['/crm', '/crm-tareas', '/meta', '/mercado-libre', '/mercado-libre-productos', '/mercado-libre-bot', '/mercado-pago', '/lista-negra', '/webhooks', '/epc-cbu-cvu']
+    messaging: collectSectionRoutes('messaging'),
+    integrations: collectSectionRoutes('integrations')
 };
 
 function isConversationsPath(path) {
@@ -61,17 +59,23 @@ function persistNotificationDotState() {
 }
 
 function getDefaultSectionRoute(section) {
+    if (window.navigationRouter) return window.navigationRouter.getDefaultSectionRoute(section);
     if (section === 'integrations') return window.__CRM_VISIBLE === false ? '/meta' : '/crm';
     return '/dashboard';
 }
 
 function getSectionForPath(path) {
+    if (window.navigationRouter) return window.navigationRouter.getSectionForPath(path);
     if (SECTION_ROUTES.messaging.includes(path)) return 'messaging';
     if (SECTION_ROUTES.integrations.includes(path)) return 'integrations';
     return null;
 }
 
 function rememberSectionRoute(path) {
+    if (window.navigationRouter) {
+        window.navigationRouter.rememberSectionRoute(path);
+        return;
+    }
     const section = getSectionForPath(path);
     if (!section) return;
     try {
@@ -82,6 +86,10 @@ function rememberSectionRoute(path) {
 }
 
 window.navigateToLastSectionRoute = function(section) {
+    if (window.navigationRouter) {
+        window.navigationRouter.navigateToLastSectionRoute(section);
+        return;
+    }
     const allowedRoutes = SECTION_ROUTES[section] || [];
     let route = '';
     try {
@@ -121,6 +129,9 @@ window.openSupportWidget = async function(e) {
     if (typeof window.closeMessagingFlyout === 'function') window.closeMessagingFlyout();
     if (typeof window.closeIntegracionesFlyout === 'function') window.closeIntegracionesFlyout();
     if (typeof window.closeAjustesFlyout === 'function') window.closeAjustesFlyout();
+    if (window.notificationsWidget && typeof window.notificationsWidget.close === 'function') {
+        window.notificationsWidget.close();
+    }
     await loadViewScript('/js/tickets/support.widget.js');
     if (window.supportWidget) {
         window.supportWidget.init();
@@ -137,8 +148,9 @@ window.openNotificationsModal = async function(e) {
     if (typeof window.closeIntegracionesFlyout === 'function') window.closeIntegracionesFlyout();
     if (typeof window.closeAjustesFlyout === 'function') window.closeAjustesFlyout();
     await loadViewScript('/js/notifications/notifications.modal.js');
-    if (typeof window.openNotificationsModal === 'function') {
-        window.openNotificationsModal();
+    if (window.notificationsWidget) {
+        window.notificationsWidget.init();
+        window.notificationsWidget.toggleOpen();
     }
 };
 
@@ -210,6 +222,8 @@ function highlightActiveNav(path) {
     if (typeof window.closeMessagingFlyout === 'function') window.closeMessagingFlyout();
     if (typeof window.closeIntegracionesFlyout === 'function') window.closeIntegracionesFlyout();
     if (typeof window.closeAjustesFlyout === 'function') window.closeAjustesFlyout();
+    if (typeof window.syncSidebarDropdownState === 'function') window.syncSidebarDropdownState(path);
+    if (window.navigationRouter) window.navigationRouter.updateActiveState(path);
 }
 window.highlightActiveNav = highlightActiveNav;
 
@@ -217,8 +231,12 @@ async function mountView(path) {
     const nonce = ++_mountNonce;
 
     // Normalizar path (quitar trailing slash)
-    const cleanPath = path.replace(/\/$/, '') || '/conversaciones';
+    const rawPath = path.replace(/\/$/, '') || '/conversaciones';
+    const cleanPath = rawPath === '/conexion' ? '/conexion-chatbot' : rawPath;
     const viewScript = ROUTES[cleanPath];
+    if (rawPath === '/conexion') {
+        history.replaceState(null, '', '/conexion-chatbot');
+    }
 
     if (!viewScript) {
         navigate('/conversaciones');
@@ -285,6 +303,7 @@ async function mountView(path) {
         if (nonce !== _mountNonce) return;
 
         if (view.title) document.title = view.title;
+        if (typeof window.renderDesktopSidebarMenus === 'function') window.renderDesktopSidebarMenus();
         highlightActiveNav(cleanPath);
         applyCachedNotificationDots();
         _currentView = view;
@@ -342,21 +361,27 @@ function setNotificationDot(id, visible, displayMode = 'inline-block') {
 }
 
 function applyNotificationDotElement(id, visible, displayMode = 'inline-block') {
+    const elements = [];
     const el = document.getElementById(id);
-    if (!el) return;
+    if (el) elements.push(el);
+    const selectorId = String(id).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    document.querySelectorAll(`[data-dot-sync="${selectorId}"]`).forEach(syncEl => elements.push(syncEl));
+    if (!elements.length) return;
 
-    if (el.classList.contains('section-tab-dot')) {
-        el.style.display = 'inline-block';
-        el.style.visibility = visible ? 'visible' : 'hidden';
-        el.style.opacity = visible ? '1' : '0';
-        el.dataset.visible = visible ? 'true' : 'false';
-        return;
-    }
+    elements.forEach(dotEl => {
+        if (dotEl.classList.contains('section-tab-dot')) {
+            dotEl.style.display = 'inline-block';
+            dotEl.style.visibility = visible ? 'visible' : 'hidden';
+            dotEl.style.opacity = visible ? '1' : '0';
+            dotEl.dataset.visible = visible ? 'true' : 'false';
+            return;
+        }
 
-    el.style.display = visible ? displayMode : 'none';
-    el.style.visibility = '';
-    el.style.opacity = '';
-    delete el.dataset.visible;
+        dotEl.style.display = visible ? displayMode : 'none';
+        dotEl.style.visibility = '';
+        dotEl.style.opacity = '';
+        delete dotEl.dataset.visible;
+    });
 }
 
 function isNotificationDotVisible(id) {
@@ -389,9 +414,15 @@ async function updateNotificationDots() {
         // --- Notificaciones ---
         const showNotificationsBadge = data.unread_notifications_count > 0 && currentPath !== '/notifications';
         const badgeNotifications = document.getElementById('badge-notifications-count');
+        const desktopBadgeNotifications = document.getElementById('desktop-badge-notifications-count');
+        const notificationsLabel = data.unread_notifications_count > 99 ? '+99' : data.unread_notifications_count;
         if (badgeNotifications) {
-            badgeNotifications.innerText = data.unread_notifications_count > 99 ? '+99' : data.unread_notifications_count;
+            badgeNotifications.innerText = notificationsLabel;
             badgeNotifications.style.display = showNotificationsBadge ? 'inline-flex' : 'none';
+        }
+        if (desktopBadgeNotifications) {
+            desktopBadgeNotifications.innerText = notificationsLabel;
+            desktopBadgeNotifications.style.display = showNotificationsBadge ? 'inline-flex' : 'none';
         }
 
         // --- Conversaciones ---
@@ -399,9 +430,7 @@ async function updateNotificationDots() {
         // Conversaciones esta montada: puede haber chats sin leer dentro.
         const showConversaciones = data.unread_chats_count > 0;
         setNotificationDot('dot-conversaciones', showConversaciones);
-
         // --- Tickets (Ahora en Support Widget) ---
-        // El widget maneja sus propias notificaciones si está instanciado, pero podemos notificarle
         const lastTicketsVisit = parseInt(localStorage.getItem('last_visited_tickets') || '0');
         const latestTicketTime = data.latest_ticket_time ? new Date(data.latest_ticket_time).getTime() : 0;
         const showTickets = latestTicketTime > lastTicketsVisit;
@@ -460,6 +489,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (typeof window.updateSectionHeader === 'function') {
                     window.updateSectionHeader(window.location.pathname, { force: true });
                 }
+                if (window.navigationRouter) window.navigationRouter.render();
             })
             .catch(err => console.error('[Router] Error checking client slug:', err));
     }
@@ -484,6 +514,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (typeof window.updateSectionHeader === 'function') {
                 window.updateSectionHeader(window.location.pathname, { force: true });
             }
+            if (window.navigationRouter) window.navigationRouter.render();
             if (!enabled && window.location.pathname === '/system-config') {
                 navigate('/dashboard');
             }
@@ -502,6 +533,25 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     _appSocket.on('notification_created', () => {
         updateNotificationDots();
+        if (window.notificationsWidget && typeof window.notificationsWidget.isOpen === 'function' && window.notificationsWidget.isOpen()) {
+            window.notificationsWidget.load();
+        }
+    });
+    _appSocket.on('whatsapp_line_changed', () => {
+        if (typeof window.refreshDesktopLineSelector === 'function') {
+            window.refreshDesktopLineSelector();
+        }
+        if (typeof window.refreshConexionStatus === 'function') {
+            window.refreshConexionStatus();
+        }
+    });
+    _appSocket.on('baileys_status_changed', () => {
+        if (typeof window.refreshConexionStatus === 'function') {
+            window.refreshConexionStatus();
+        }
+        if (typeof window.refreshDesktopLineSelector === 'function') {
+            window.refreshDesktopLineSelector();
+        }
     });
     _appSocket.on('contact_updated', () => {
         updateNotificationDots();

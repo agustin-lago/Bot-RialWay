@@ -5,10 +5,12 @@ import url from 'url';
 import bodyParser from 'body-parser';
 import axios from 'axios';
 import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { backofficeAuth, systemConfigAuth, invalidateAuthCache } from "../middleware/auth";
 import { supabase, HistoryHandler as HistoryHandlerClass, historyEvents } from "../db/historyHandler";
 import { invalidateVisibilityCache } from "./static.routes";
 import { getOpenAI } from "../../apis/openai/openaiHelper";
+import { updateMain } from "../../apis/google/updateMain";
 import { getAdapterProvider, getGroupProvider } from "../../providers/instances";
 import { upload } from "../../middleware/upload";
 import { getIdsByHost } from '../utils/routingResolver';
@@ -23,11 +25,26 @@ const SUPERADMIN_PASSWORDS = [
     'neuroadmin25'
 ].filter(Boolean) as string[];
 const isSuperAdminPassword = (pass: unknown): boolean => typeof pass === 'string' && SUPERADMIN_PASSWORDS.includes(pass);
+const getLatestLeadReportDescription = (description: string | null | undefined): string => {
+    const raw = String(description || '').trim();
+    if (!raw) return '';
+
+    const sections = raw
+        .split(/\n\s*---[^\n]*\n/g)
+        .map(section => section.trim())
+        .filter(Boolean);
+
+    const latestSummary = [...sections]
+        .reverse()
+        .find(section => /RESUMEN\s+DE\s+CONVERSACI/i.test(section) || /Chat del usuario/i.test(section));
+
+    return latestSummary || sections[sections.length - 1] || raw;
+};
 historyEvents.on('setting_changed', async ({ key, value, projectId, serviceId }: { key: string; value: any; projectId: string; serviceId?: string | null }) => {
     if (VISIBILITY_KEYS.includes(key)) invalidateVisibilityCache();
     if (key === 'ADMIN_PASS' || key === 'ADMIN_USER') invalidateAuthCache();
 
-    // Sincronización automática de herramientas según el CLIENT_SLUG configurado
+    // SincronizaciÃ³n automÃ¡tica de herramientas segÃºn el CLIENT_SLUG configurado
     if (key === 'CLIENT_SLUG') {
         const slug = String(value || '').trim().toLowerCase();
         console.log(`📡 [toolRouter/OpenAI] CLIENT_SLUG cambiado a '${slug}' en proyecto ${projectId}, servicio ${serviceId}.`);
@@ -37,10 +54,10 @@ historyEvents.on('setting_changed', async ({ key, value, projectId, serviceId }:
             await HistoryHandlerClass.saveSetting('CRM_FIELDS_CONFIG', '', projectId, serviceId);
             console.log(`🧹 [CRM Config] Reset CRM_FIELDS_CONFIG a vacío para usar defaults de '${slug}' en ${projectId}, servicio ${serviceId}.`);
         } catch (e: any) {
-            console.error(`❌ [CRM Config] Error al resetear CRM_FIELDS_CONFIG en cambio de slug:`, e.message);
+            console.error(`âŒ [CRM Config] Error al resetear CRM_FIELDS_CONFIG en cambio de slug:`, e.message);
         }
 
-        // Intentar cargar el módulo cliente dinámicamente desde el registro
+        // Intentar cargar el mÃ³dulo cliente dinÃ¡micamente desde el registro
         try {
             const { moduleRegistry } = await import('../../bot/toolRegistry');
             const activeModule = (moduleRegistry as any)[slug];
@@ -57,7 +74,7 @@ historyEvents.on('setting_changed', async ({ key, value, projectId, serviceId }:
                 }
             }
         } catch (err: any) {
-            console.error(`❌ [OpenAI] Error al resolver el módulo de cliente para registrar herramientas:`, err.message);
+            console.error(`âŒ [OpenAI] Error al resolver el mÃ³dulo de cliente para registrar herramientas:`, err.message);
         }
     }
 
@@ -74,7 +91,7 @@ historyEvents.on('setting_changed', async ({ key, value, projectId, serviceId }:
                 }
             }
         } catch (e: any) {
-            console.error(`❌ [OpenAI] Error al sincronizar herramientas de asistentes:`, e.message);
+            console.error(`âŒ [OpenAI] Error al sincronizar herramientas de asistentes:`, e.message);
         }
     }
 });
@@ -96,7 +113,7 @@ export const resolveServiceId = (req: any): string | null => {
     return (process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || 'default_service');
 };
 
-// Caché para fotos de perfil (chatId -> {url, timestamp})
+// CachÃ© para fotos de perfil (chatId -> {url, timestamp})
 const profilePicCache = new Map<string, { url: string, expires: number }>();
 const CACHE_TTL = 1000 * 60 * 60; // 1 hora
 // Negative cache: chatIds sin foto de perfil (evita llamadas repetidas a WhatsApp)
@@ -109,26 +126,26 @@ const NOT_FOUND_TTL = 1000 * 60 * 10; // 10 minutos
 
 
 /**
- * Helper para disparar la sincronización de Meta SMB (Contactos + Historial)
+ * Helper para disparar la sincronizaciÃ³n de Meta SMB (Contactos + Historial)
  */
 async function triggerMetaSync(accessToken: string, phoneId: string) {
-    console.log(`📡 [SMB-SYNC] Iniciando sincronización automática para ${phoneId}...`);
+    console.log(`ðŸ“¡ [SMB-SYNC] Iniciando sincronizaciÃ³n automÃ¡tica para ${phoneId}...`);
     // 1. Sincronizar Contactos
     await axios.post(`https://graph.facebook.com/v25.0/${phoneId}/smb_app_data`,
         { messaging_product: 'whatsapp', sync_type: 'smb_app_state_sync' },
         { headers: { 'Authorization': `Bearer ${accessToken}` } }
     );
-    console.log(`✅ [SMB-SYNC] Solicitud de Contactos enviada.`);
+    console.log(`âœ… [SMB-SYNC] Solicitud de Contactos enviada.`);
 
     // 2. Sincronizar Historial
     await axios.post(`https://graph.facebook.com/v25.0/${phoneId}/smb_app_data`,
         { messaging_product: 'whatsapp', sync_type: 'history' },
         { headers: { 'Authorization': `Bearer ${accessToken}` } }
     );
-    console.log(`✅ [SMB-SYNC] Solicitud de Historial enviada.`);
+    console.log(`âœ… [SMB-SYNC] Solicitud de Historial enviada.`);
 }
 
-/** Función unificada para procesar el envío de mensajes e historial */
+/** FunciÃ³n unificada para procesar el envÃ­o de mensajes e historial */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const isMetaProvider = (provider: any): boolean => {
@@ -228,7 +245,7 @@ export const processSendMessage = async (
     const currentServiceId = resolveServiceId(req) || HistoryHandlerClass.SERVICE_IDENTIFIER;
     const adapterProvider = getAdapterProvider();
     const depsHistoryHandler = HistoryHandlerClass;
-    const openaiMain = await getOpenAI();
+    const openaiMain = await getOpenAI(currentProjectId, currentServiceId);
     const groupProvider = getGroupProvider();
     // 1. Determinar tipo y contenido
     let finalType: 'text' | 'image' | 'video' | 'document' | 'sticker' | 'audio' = 'text';
@@ -256,12 +273,12 @@ export const processSendMessage = async (
             return res.status(503).json({ success: false, error: 'WhatsApp provider not initialized' });
         }
 
-        console.log(`[BACKOFFICE] Procesando envío para ${chatId}...`);
+        console.log(`[BACKOFFICE] Procesando envÃ­o para ${chatId}...`);
         let replyMessageData: any = null;
         let replyExternalId = '';
         let replyRawPayload: any = null;
 
-        // El guardado se movió después del envío para capturar el ID real y evitar duplicados
+        // El guardado se moviÃ³ despuÃ©s del envÃ­o para capturar el ID real y evitar duplicados
 
         // 3. Inyectar en thread OpenAI (silencioso)
         depsHistoryHandler.getThreadId(chatId).then((threadId: string | null) => {
@@ -388,7 +405,7 @@ export const processSendMessage = async (
             // Builderbot/Baileys retorna el objeto mensaje, Meta retorna un objeto con { messages: [ { id: ... } ] }
             const externalId = providerResponse?.key?.id || providerResponse?.messages?.[0]?.id || providerResponse?.id;
 
-            // Registrar ID en el caché de deduplicación para que el ECO no genere un segundo evento
+            // Registrar ID en el cachÃ© de deduplicaciÃ³n para que el ECO no genere un segundo evento
             const { trackSentMessage } = await import('../../providers/provider.manager');
             trackSentMessage(externalId);
 
@@ -400,18 +417,18 @@ export const processSendMessage = async (
         } catch (waError) {
             console.error('[BACKOFFICE] Error enviando a Whatsapp:', waError);
 
-            // Si falló el envío, igual guardamos pero sin ID externo para que al menos quede el log local
+            // Si fallÃ³ el envÃ­o, igual guardamos pero sin ID externo para que al menos quede el log local
             await depsHistoryHandler.saveMessage(chatId, 'assistant', finalContent, finalType, undefined, undefined, null, 'whatsapp', currentProjectId, currentServiceId, replyRawPayload);
 
             res.json({
                 success: true,
                 fileUrl: file ? fileUrl : undefined,
-                warning: 'El envío a WhatsApp falló (¿Bot conectado?), el mensaje solo se guardó localmente.'
+                warning: 'El envÃ­o a WhatsApp fallÃ³ (Â¿Bot conectado?), el mensaje solo se guardÃ³ localmente.'
             });
         }
 
     } catch (e: any) {
-        console.error('❌ Error crítico en processSendMessage:', e);
+        console.error('âŒ Error crÃ­tico en processSendMessage:', e);
         res.status(500).json({ success: false, error: e.message });
     }
 };
@@ -447,7 +464,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
         const data: any[] = xlsxLib.utils.sheet_to_json(worksheet, { defval: '' });
 
         if (data.length === 0) {
-            return sendJson(res, 400, { success: false, error: 'El Excel está vacío.' });
+            return sendJson(res, 400, { success: false, error: 'El Excel estÃ¡ vacÃ­o.' });
         }
 
         const allKeys = Object.keys(data[0]);
@@ -457,12 +474,12 @@ export const processBulkTemplate = async (req: any, res: any) => {
         const provider = (adapterProvider.constructor.name === 'MetaCloudProvider') ? adapterProvider : groupProvider;
         const templates = await provider.getTemplates();
         const template = templates.find((t: any) => t.name === templateName);
-        if (!template) throw new Error("Plantilla no encontrada al procesar envío masivo.");
+        if (!template) throw new Error("Plantilla no encontrada al procesar envÃ­o masivo.");
 
-        // DEBUG TOTAL: Ver toda la estructura de la plantilla para encontrar los nombres de parámetros
-        console.log(`🔍 [BULK] DEBUG ESTRUCTURA COMPLETA:`, JSON.stringify(template, null, 2));
+        // DEBUG TOTAL: Ver toda la estructura de la plantilla para encontrar los nombres de parÃ¡metros
+        console.log(`ðŸ” [BULK] DEBUG ESTRUCTURA COMPLETA:`, JSON.stringify(template, null, 2));
 
-        // Detección más agresiva: si tiene parameter_format='named' O si algún componente tiene parámetros nombrados en sus ejemplos
+        // DetecciÃ³n mÃ¡s agresiva: si tiene parameter_format='named' O si algÃºn componente tiene parÃ¡metros nombrados en sus ejemplos
         const isNamed = (template.parameter_format || '').toLowerCase() === 'named' ||
                         template.components.some((c: any) =>
                             c.example?.body_text_named_params ||
@@ -475,7 +492,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
         const mediaFormat = headerComp && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(headerComp.format) ? headerComp.format.toLowerCase() : null;
 
         const languageCode = template.language || 'es';
-        console.log(`📊 [BULK] Iniciando envío masivo: ${templateName} | Idioma: ${languageCode} | Formato final: ${isNamed ? 'NAMED' : 'POSITIONAL'} | Filas: ${data.length}`);
+        console.log(`ðŸ“Š [BULK] Iniciando envÃ­o masivo: ${templateName} | Idioma: ${languageCode} | Formato final: ${isNamed ? 'NAMED' : 'POSITIONAL'} | Filas: ${data.length}`);
 
         sendJson(res, 202, { success: true, message: 'Proceso masivo iniciado.', total: data.length });
 
@@ -483,13 +500,13 @@ export const processBulkTemplate = async (req: any, res: any) => {
         let firstRowLogged = false;
         let defaultMediaUrl = '';
 
-        // Caché local para no descargar 100 veces el mismo video de Drive
+        // CachÃ© local para no descargar 100 veces el mismo video de Drive
         const mediaCache = new Map<string, string>();
         const uploadsDir = path.join(process.cwd(), 'uploads');
         if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
         for (const row of data) {
-            // AUTO-CORRECCIÓN: Convertir links externos a links locales servidos por nosotros
+            // AUTO-CORRECCIÃ“N: Convertir links externos a links locales servidos por nosotros
             if (row.header_media_url && (row.header_media_url.includes('drive.google.com') || row.header_media_url.includes('scontent.whatsapp.net') || row.header_media_url.includes('fbcdn.net'))) {
 
                 let directUrl = row.header_media_url;
@@ -506,7 +523,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
                     row.header_media_url = mediaCache.get(directUrl);
                 } else {
                     try {
-                        console.log(`📥 [BULK] Descargando media para servir localmente: ${directUrl.substring(0, 50)}...`);
+                        console.log(`ðŸ“¥ [BULK] Descargando media para servir localmente: ${directUrl.substring(0, 50)}...`);
                         const response = await axios.get(directUrl, {
                             responseType: 'arraybuffer',
                             timeout: 60000,
@@ -539,7 +556,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
                         const dest = path.join(uploadsDir, filename);
                         fs.writeFileSync(dest, response.data);
 
-                        // Construir URL pública priorizando el host de la petición actual (ej: ngrok)
+                        // Construir URL pÃºblica priorizando el host de la peticiÃ³n actual (ej: ngrok)
                         let baseUrl = process.env.PROJECT_URL;
                         if (!baseUrl) {
                             const host = req.headers.host || '';
@@ -552,17 +569,17 @@ export const processBulkTemplate = async (req: any, res: any) => {
                         if (!baseUrl.startsWith('http')) baseUrl = `https://${baseUrl}`;
                         let finalUrl = `${baseUrl.replace(/\/$/, '')}/uploads/${filename}`;
 
-                        // --- LÓGICA DE COMPRESIÓN AUTOMÁTICA ---
+                        // --- LÃ“GICA DE COMPRESIÃ“N AUTOMÃTICA ---
                         try {
                             const stats = fs.statSync(dest);
                             const sizeMB = stats.size / (1024 * 1024);
 
                             if (sizeMB > 15.5 && ext === 'mp4') {
-                                console.log(`⚠️ [BULK] Video muy pesado (${sizeMB.toFixed(2)}MB). Iniciando compresión...`);
+                                console.log(`âš ï¸ [BULK] Video muy pesado (${sizeMB.toFixed(2)}MB). Iniciando compresiÃ³n...`);
                                 const compressedFilename = `compressed-${filename}`;
                                 const compressedDest = path.join(uploadsDir, compressedFilename);
 
-                                // 1. Obtener duración (intentamos con ffprobe, fallback a ffmpeg)
+                                // 1. Obtener duraciÃ³n (intentamos con ffprobe, fallback a ffmpeg)
                                 let durationStr = '';
                                 try {
                                     durationStr = execSync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${dest}"`).toString().trim();
@@ -577,7 +594,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
                                             durationStr = (hours * 3600 + mins * 60 + secs).toString();
                                         }
                                     } catch (e2) {
-                                        console.warn('⚠️ [BULK] Ni ffprobe ni ffmpeg están disponibles para obtener duración.');
+                                        console.warn('âš ï¸ [BULK] Ni ffprobe ni ffmpeg estÃ¡n disponibles para obtener duraciÃ³n.');
                                     }
                                 }
                                 const duration = parseFloat(durationStr);
@@ -590,32 +607,32 @@ export const processBulkTemplate = async (req: any, res: any) => {
                                     const audioBitrate = 64000; // 64 kbps es ideal y de excelente calidad para audio comprimido en WhatsApp
                                     let videoBitrate = totalTargetBitrate - audioBitrate;
                                     if (videoBitrate < 150000) {
-                                        videoBitrate = 150000; // Bitrate mínimo de video de seguridad para evitar mala calidad extrema
+                                        videoBitrate = 150000; // Bitrate mÃ­nimo de video de seguridad para evitar mala calidad extrema
                                     }
 
                                     // 3. Ejecutar ffmpeg especificando bitrates de video y audio
-                                    console.log(`🎬 [BULK] Comprimiendo: Video a ${videoBitrate} bps, Audio a ${audioBitrate} bps (Duración: ${durationStr}s)`);
+                                    console.log(`ðŸŽ¬ [BULK] Comprimiendo: Video a ${videoBitrate} bps, Audio a ${audioBitrate} bps (DuraciÃ³n: ${durationStr}s)`);
                                     execSync(`ffmpeg -i "${dest}" -b:v ${videoBitrate} -vcodec libx264 -preset fast -acodec aac -b:a ${audioBitrate} -movflags +faststart -y "${compressedDest}"`);
 
-                                    // 4. Cambiar a la versión comprimida
+                                    // 4. Cambiar a la versiÃ³n comprimida
                                     finalUrl = `${baseUrl.replace(/\/$/, '')}/uploads/${compressedFilename}`;
-                                    console.log(`✅ [BULK] Video comprimido con éxito: ${finalUrl}`);
+                                    console.log(`âœ… [BULK] Video comprimido con Ã©xito: ${finalUrl}`);
                                 }
                             }
                         } catch (compressError: any) {
-                            console.error(`❌ [BULK] Error en compresión automática:`, compressError.message);
+                            console.error(`âŒ [BULK] Error en compresiÃ³n automÃ¡tica:`, compressError.message);
                             if (compressError.stderr) {
-                                console.error(`🔍 [BULK] Detalle técnico (stderr):`, compressError.stderr.toString());
+                                console.error(`ðŸ” [BULK] Detalle tÃ©cnico (stderr):`, compressError.stderr.toString());
                             }
-                            // Si falla la compresión, seguimos con el original como fallback
+                            // Si falla la compresiÃ³n, seguimos con el original como fallback
                         }
                         // ---------------------------------------
 
                         mediaCache.set(directUrl, finalUrl);
                         row.header_media_url = finalUrl;
-                        console.log(`✅ [BULK] Media lista para envío: ${finalUrl}`);
+                        console.log(`âœ… [BULK] Media lista para envÃ­o: ${finalUrl}`);
                     } catch (e: any) {
-                        console.error(`❌ [BULK] Error descargando media de URL externa:`, e.message);
+                        console.error(`âŒ [BULK] Error descargando media de URL externa:`, e.message);
                         // Fallback al link directo original si falla
                         row.header_media_url = directUrl;
                     }
@@ -623,7 +640,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
             }
 
             if (!firstRowLogged) {
-                console.log('🔍 [BULK] Ejemplo de datos de la primera fila:', JSON.stringify(row));
+                console.log('ðŸ” [BULK] Ejemplo de datos de la primera fila:', JSON.stringify(row));
                 firstRowLogged = true;
                 // Guardamos la primera URL (ya corregida si era Drive) como default
                 defaultMediaUrl = row.header_media_url || '';
@@ -634,7 +651,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
                 row.header_media_url = defaultMediaUrl;
             }
 
-            // Detección de teléfono más flexible
+            // DetecciÃ³n de telÃ©fono mÃ¡s flexible
             const phoneKey = Object.keys(row).find(k =>
                 ['phone', 'tel', 'movil', 'cel', 'celular', 'telefono', 'whatsapp'].some(p => k.toLowerCase().includes(p))
             );
@@ -642,13 +659,13 @@ export const processBulkTemplate = async (req: any, res: any) => {
             const phone = phoneKey ? String(row[phoneKey] ?? '').replace(/\D/g, '') : '';
 
             if (!phone) {
-                console.warn(`⚠️ [BULK] Fila omitida: No se encontró teléfono.`);
+                console.warn(`âš ï¸ [BULK] Fila omitida: No se encontrÃ³ telÃ©fono.`);
                 continue;
             }
 
             const components: any[] = [];
 
-            // Reordenar componentes según la definición de la plantilla
+            // Reordenar componentes segÃºn la definiciÃ³n de la plantilla
             for (const compDef of template.components) {
                 if (compDef.type === 'HEADER') {
                     if (compDef.format === 'IMAGE' || compDef.format === 'VIDEO' || compDef.format === 'DOCUMENT') {
@@ -656,12 +673,12 @@ export const processBulkTemplate = async (req: any, res: any) => {
                         const hasNamedParams = compDef.example?.header_handle_named_params || compDef.example?.header_text_named_params;
 
                         // Meta requiere SIEMPRE enviar el componente HEADER si la plantilla lo define.
-                        // Si el usuario deja la celda vacía o con el link scontent original, lo usamos.
+                        // Si el usuario deja la celda vacÃ­a o con el link scontent original, lo usamos.
                         const mediaLink = row.header_media_url || defaultMediaUrl || compDef.example?.header_handle?.[0];
 
                         if (!mediaLink) {
-                            console.warn(`⚠️ [BULK] No hay mediaLink para HEADER en la plantilla ${templateName}. Esto causará error en Meta.`);
-                            continue; // Si realmente no hay nada que enviar, saltamos pero fallará.
+                            console.warn(`âš ï¸ [BULK] No hay mediaLink para HEADER en la plantilla ${templateName}. Esto causarÃ¡ error en Meta.`);
+                            continue; // Si realmente no hay nada que enviar, saltamos pero fallarÃ¡.
                         }
 
                         const headerParam: any = {
@@ -679,14 +696,14 @@ export const processBulkTemplate = async (req: any, res: any) => {
                 } else if (compDef.type === 'BODY') {
                     const bodyParams: any[] = [];
 
-                    // Si es positional, contamos cuántos parámetros espera
+                    // Si es positional, contamos cuÃ¡ntos parÃ¡metros espera
                     let expectedCount = 99; // Por defecto muchos para NAMED
                     if (!isNamed) {
                         const placeholders = (compDef.text || '').match(/{{(\d+)}}/g) || [];
                         expectedCount = placeholders.length;
                     }
 
-                    // Para NAMED, mapeamos según los nombres definidos en la plantilla
+                    // Para NAMED, mapeamos segÃºn los nombres definidos en la plantilla
                     if (isNamed) {
                         const namedParams = compDef.example?.body_text_named_params || [];
                         const varNames: string[] = [];
@@ -709,7 +726,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
                             const matchedKey = Object.keys(row).find(k => k.toLowerCase() === varName.toLowerCase());
                             let val = matchedKey ? String(row[matchedKey] ?? '') : '';
 
-                            // Auto-completado desde DB si es una variable de nombre y viene vacía
+                            // Auto-completado desde DB si es una variable de nombre y viene vacÃ­a
                             const lowerVar = varName.toLowerCase();
                             const isNameVar = ['nombre', 'name', 'nombre_cliente', 'nombrecliente'].includes(lowerVar);
                             if (isNameVar && (!val || val.trim() === '' || val === '-')) {
@@ -717,10 +734,10 @@ export const processBulkTemplate = async (req: any, res: any) => {
                                     const chat = await depsHistoryHandler.getChat(phone, projectId, serviceId);
                                     if (chat && chat.name) {
                                         val = chat.name;
-                                        console.log(`👤 [BULK] Nombre autocompletado desde DB para ${phone}: ${val}`);
+                                        console.log(`ðŸ‘¤ [BULK] Nombre autocompletado desde DB para ${phone}: ${val}`);
                                     }
                                 } catch (dbErr: any) {
-                                    console.warn(`⚠️ [BULK] No se pudo obtener el nombre desde DB para ${phone}:`, dbErr.message);
+                                    console.warn(`âš ï¸ [BULK] No se pudo obtener el nombre desde DB para ${phone}:`, dbErr.message);
                                 }
                             }
 
@@ -731,7 +748,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
                             });
                         }
                     } else {
-                        // POSITIONAL: Mapeo clásico por orden
+                        // POSITIONAL: Mapeo clÃ¡sico por orden
                         let added = 0;
                         for (const key of paramKeys) {
                             if (key === 'header_media_url' || key.startsWith('button_') || key === phoneKey) continue;
@@ -749,7 +766,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
                 }
             }
 
-            // 3. BUTTONS Dinámicos
+            // 3. BUTTONS DinÃ¡micos
             for (const key of paramKeys) {
                 if (key.startsWith('button_') && key.endsWith('_url_suffix') && row[key]) {
                     const idxMatch = key.match(/button_(\d+)_/);
@@ -771,7 +788,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
 
                 if (resApi?.messages) {
                     const msgId = resApi.messages[0].id;
-                    console.log(`✅ [BULK] Mensaje aceptado por Meta para ${phone}. ID: ${msgId}`);
+                    console.log(`âœ… [BULK] Mensaje aceptado por Meta para ${phone}. ID: ${msgId}`);
 
                     // Si la plantilla tiene cabecera multimedia, guardar primero el mensaje multimedia
                     const headerComp = template.components.find((c: any) => c.type === 'HEADER');
@@ -798,27 +815,27 @@ export const processBulkTemplate = async (req: any, res: any) => {
                     }
 
                     // Guardar con un prefijo informativo para el asistente
-                    const historyContent = `[Campaña: ${templateName}]\n${renderedText}`;
+                    const historyContent = `[CampaÃ±a: ${templateName}]\n${renderedText}`;
 
                     await depsHistoryHandler.saveMessage(phone, 'assistant', historyContent, 'text', undefined, undefined, msgId, 'whatsapp', projectId, serviceId);
                     sent++;
                 } else {
                     errors++;
-                    console.error(`❌ [BULK] Fallo al enviar a ${phone}: Meta no devolvió ID de mensaje. Respuesta:`, JSON.stringify(resApi));
+                    console.error(`âŒ [BULK] Fallo al enviar a ${phone}: Meta no devolviÃ³ ID de mensaje. Respuesta:`, JSON.stringify(resApi));
                 }
             } catch (e: any) {
                 errors++;
                 const errorData = e?.response?.data || e.message || e;
-                console.error(`❌ [BULK] Error de Meta para ${phone}:`, JSON.stringify(errorData, null, 2));
+                console.error(`âŒ [BULK] Error de Meta para ${phone}:`, JSON.stringify(errorData, null, 2));
             }
-            // Pequeño delay para no saturar la API
+            // PequeÃ±o delay para no saturar la API
             await new Promise(r => setTimeout(r, 200));
         }
 
-        console.log(`✅ [BULK] Proceso finalizado: ${sent} enviados, ${errors} errores de ${data.length} filas.`);
+        console.log(`âœ… [BULK] Proceso finalizado: ${sent} enviados, ${errors} errores de ${data.length} filas.`);
     } catch (e: any) {
         console.error('Error en processBulkTemplate:', e);
-        // Nota: El res ya fue enviado (202), este error solo va a logs si ocurre después
+        // Nota: El res ya fue enviado (202), este error solo va a logs si ocurre despuÃ©s
     } finally {
         if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
     }
@@ -874,7 +891,7 @@ export const registerBackofficeRoutes = (app: any) => {
     app.post('/api/backoffice/auth', bodyParser.json(), async (req: any, res: any) => {
         const { user, pass, token } = req.body;
 
-        // 1. Soporte para login dinámico (Prioridad: DB > Env)
+        // 1. Soporte para login dinÃ¡mico (Prioridad: DB > Env)
         const dbAdminUser = await depsHistoryHandler.getSetting('ADMIN_USER');
         const dbAdminPass = await depsHistoryHandler.getSetting('ADMIN_PASS');
 
@@ -906,7 +923,7 @@ export const registerBackofficeRoutes = (app: any) => {
             });
         }
 
-        return res.status(401).json({ success: false, error: "Credenciales inválidas" });
+        return res.status(401).json({ success: false, error: "Credenciales invÃ¡lidas" });
     });
 
     app.get('/api/backoffice/me', backofficeAuth, async (req: any, res: any) => {
@@ -1092,7 +1109,7 @@ export const registerBackofficeRoutes = (app: any) => {
         const tag = req.query.tag as string;
         const platform = req.query.platform as string;
 
-        // Si es subusuario, aplicamos filtro de asignación (ve lo suyo + lo libre)
+        // Si es subusuario, aplicamos filtro de asignaciÃ³n (ve lo suyo + lo libre)
         const assignedTo = req.auth.isSubUser ? req.auth.userId : null;
 
         const projectId = resolveProjectId(req);
@@ -1141,14 +1158,14 @@ export const registerBackofficeRoutes = (app: any) => {
         if (!projectId) return res.status(400).json({ success: false, error: 'Se requiere ID de proyecto' });
 
         try {
-            console.log(`[VACIAR] Iniciando eliminación secuencial para project_id: ${projectId}...`);
+            console.log(`[VACIAR] Iniciando eliminaciÃ³n secuencial para project_id: ${projectId}...`);
             await supabase.from("chat_tags").delete().eq("project_id", projectId);
             await supabase.from("messages").delete().eq("project_id", projectId);
             await supabase.from("tickets").delete().eq("project_id", projectId);
             await supabase.from("chats").delete().eq("project_id", projectId);
             await supabase.from("tags").delete().eq("project_id", projectId);
 
-            console.log(`[VACIAR] Éxito: Base de datos vaciada para el proyecto.`);
+            console.log(`[VACIAR] Ã‰xito: Base de datos vaciada para el proyecto.`);
             res.json({ success: true });
         } catch (e: any) {
             console.error(`[VACIAR] Error:`, e);
@@ -1179,7 +1196,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 unread_chats_count = chats.filter(c => (c.unread_count || 0) > 0).length;
 
                 // 2. Latest ticket time (tipo = 'Soporte')
-                const activeTickets = tickets.filter(t => t.tipo === 'Soporte');
+                const activeTickets = tickets.filter(t => t.tipo === 'Soporte' && t.estado !== 'Cerrado');
                 if (activeTickets.length > 0) {
                     const times = activeTickets.map(t => Math.max(new Date(t.created_at).getTime(), new Date(t.updated_at).getTime()));
                     latest_ticket_time = new Date(Math.max(...times)).toISOString();
@@ -1221,6 +1238,7 @@ export const registerBackofficeRoutes = (app: any) => {
                     .select('created_at, updated_at')
                     .eq('project_id', projectId)
                     .eq('tipo', 'Soporte')
+                    .neq('estado', 'Cerrado')
                     .order('updated_at', { ascending: false })
                     .limit(1)
                     .maybeSingle();
@@ -1287,7 +1305,7 @@ export const registerBackofficeRoutes = (app: any) => {
         }
     });
 
-    // --- NUEVO: IMPORTACIÓN DE CONTACTOS ---
+    // --- NUEVO: IMPORTACIÃ“N DE CONTACTOS ---
     app.get('/api/backoffice/chats/import-template', backofficeAuth, (req: any, res: any) => {
         try {
             const data = [
@@ -1350,7 +1368,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
             const { title, message } = req.body;
             if (!title || !message) {
-                return res.status(400).json({ success: false, error: 'Falta título o mensaje' });
+                return res.status(400).json({ success: false, error: 'Falta tÃ­tulo o mensaje' });
             }
             const qm = await depsHistoryHandler.createQuickMessage(projectId, title, message);
             res.json({ success: true, data: qm });
@@ -1404,7 +1422,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const vendor = (adapterProvider as any).vendor || adapterProvider.globalVendorArgs?.sock;
             if (vendor && typeof vendor.profilePictureUrl === 'function') {
                 try {
-                    // 1. Verificar caché positivo
+                    // 1. Verificar cachÃ© positivo
                     const cached = profilePicCache.get(jid);
                     if (cached && cached.expires > Date.now()) {
                         res.writeHead(302, { Location: cached.url });
@@ -1445,7 +1463,7 @@ export const registerBackofficeRoutes = (app: any) => {
             // 1. Revisar si estamos en modo META OFFICIAL
             const metaConfig = await depsHistoryHandler.getMetaOnboardingData(projectId, false, serviceId);
             if (metaConfig && metaConfig.access_token && metaConfig.phone_number_id) {
-                console.log(`📡 [SYNC] Sincronización Meta detectada. Solicitando historial SMB...`);
+                console.log(`ðŸ“¡ [SYNC] SincronizaciÃ³n Meta detectada. Solicitando historial SMB...`);
                 try {
                     const tokenForSync = metaConfig.onboarding_data?.client_token || metaConfig.access_token;
                     await triggerMetaSync(tokenForSync, metaConfig.phone_number_id);
@@ -1462,12 +1480,12 @@ export const registerBackofficeRoutes = (app: any) => {
                     const errorData = metaErr?.response?.data || {};
                     const details = errorData.error?.error_data?.details || errorData.error?.message || metaErr.message;
 
-                    console.error('❌ [SMB-SYNC] Falló la sincronización de Meta:', details);
+                    console.error('âŒ [SMB-SYNC] FallÃ³ la sincronizaciÃ³n de Meta:', details);
 
                     if (details.includes('outside of allowed time window')) {
                         return res.status(403).json({
                             success: false,
-                            error: 'Meta solo permite la sincronización de historial dentro de las primeras 24 horas después de la vinculación inicial. Pasado este tiempo, los contactos se sincronizarán automáticamente a medida que escriban.'
+                            error: 'Meta solo permite la sincronizaciÃ³n de historial dentro de las primeras 24 horas despuÃ©s de la vinculaciÃ³n inicial. Pasado este tiempo, los contactos se sincronizarÃ¡n automÃ¡ticamente a medida que escriban.'
                         });
                     }
 
@@ -1488,7 +1506,7 @@ export const registerBackofficeRoutes = (app: any) => {
                            (provider as any)?.sock ||
                            (provider as any)?.vendor?.sock;
 
-            console.log(`📡 [SYNC] Intento de sincronización.`);
+            console.log(`ðŸ“¡ [SYNC] Intento de sincronizaciÃ³n.`);
             console.log(`   - Provider: ${provider?.constructor?.name || 'Unknown'}`);
             console.log(`   - Vendor encontrado: ${!!vendor}`);
             if (vendor) {
@@ -1497,14 +1515,14 @@ export const registerBackofficeRoutes = (app: any) => {
                 console.log(`   - Auth ID: ${vendor.authState?.creds?.me?.id || 'No auth'}`);
             }
 
-            // DEBUG: Ver qué tiene el vendor realmente
+            // DEBUG: Ver quÃ© tiene el vendor realmente
             if (vendor) {
                 const keys = Object.keys(vendor).filter(k => !k.startsWith('_'));
                 console.log(`   - Propiedades del Vendor: ${keys.slice(0, 15).join(', ')}...`);
                 console.log(`   - Store detectado: ${!!(vendor as any).store}`);
             }
 
-            // Un motor es válido si tiene el vendor y alguna señal de sesión activa
+            // Un motor es vÃ¡lido si tiene el vendor y alguna seÃ±al de sesiÃ³n activa
             const isConnected = vendor && (
                 vendor.ws?.isOpen ||
                 !!vendor.user?.id ||
@@ -1512,31 +1530,31 @@ export const registerBackofficeRoutes = (app: any) => {
             );
 
             if (!isConnected) {
-                console.warn('⚠️ [SYNC] Intento de sincronización con motor desconectado.');
+                console.warn('âš ï¸ [SYNC] Intento de sincronizaciÃ³n con motor desconectado.');
                 return res.status(503).json({
                     success: false,
-                    error: 'El motor de WhatsApp (Baileys) no está conectado o la sesión ha expirado. Por favor, vuelva a vincular el dispositivo desde el panel de control.'
+                    error: 'El motor de WhatsApp (Baileys) no estÃ¡ conectado o la sesiÃ³n ha expirado. Por favor, vuelva a vincular el dispositivo desde el panel de control.'
                 });
             }
 
             if (vendor.ws?.isOpen === false) {
-                console.warn('⚠️ [SYNC] El motor tiene sesión pero el WebSocket está cerrado. Los datos podrían estar desactualizados.');
+                console.warn('âš ï¸ [SYNC] El motor tiene sesiÃ³n pero el WebSocket estÃ¡ cerrado. Los datos podrÃ­an estar desactualizados.');
             }
 
-            console.log('📡 [SYNC] Iniciando extracción de datos desde el socket...');
+            console.log('ðŸ“¡ [SYNC] Iniciando extracciÃ³n de datos desde el socket...');
 
             // 1. Obtener Etiquetas (Labels) por Query (solo Business)
             let labels: any[] = [];
             try {
                 if (typeof vendor.labelsQuery === 'function') {
-                    console.log('📡 [SYNC] Usando labelsQuery()...');
+                    console.log('ðŸ“¡ [SYNC] Usando labelsQuery()...');
                     labels = await vendor.labelsQuery() || [];
                 } else if (typeof (vendor as any).getLabels === 'function') {
-                    console.log('📡 [SYNC] Usando getLabels()...');
+                    console.log('ðŸ“¡ [SYNC] Usando getLabels()...');
                     labels = await (vendor as any).getLabels() || [];
                 }
             } catch (e) {
-                console.warn('⚠️ [SYNC] Error obteniendo etiquetas vía Query:', e);
+                console.warn('âš ï¸ [SYNC] Error obteniendo etiquetas vÃ­a Query:', e);
             }
 
             // 2. Obtener Datos del Store
@@ -1546,7 +1564,7 @@ export const registerBackofficeRoutes = (app: any) => {
                           (provider as any).provider?.store ||
                           (provider as any).globalVendorArgs?.store;
 
-            console.log(`📡 [SYNC] Diagnóstico de Store:`);
+            console.log(`ðŸ“¡ [SYNC] DiagnÃ³stico de Store:`);
             console.log(`   - En vendor: ${!!(vendor as any).store}`);
             console.log(`   - En provider: ${!!(provider as any).store}`);
             console.log(`   - En provider.provider: ${!!(provider as any).provider?.store}`);
@@ -1581,7 +1599,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
                     console.log(`   - Store Data: ${allChats.length} chats en store.chats`);
 
-                    // Fusionar: Agregar chats que no estén en contactList
+                    // Fusionar: Agregar chats que no estÃ©n en contactList
                     const existingIds = new Set(contactList.map(c => c.id));
                     for (const chat of allChats) {
                         if (chat.id && !existingIds.has(chat.id)) {
@@ -1604,9 +1622,9 @@ export const registerBackofficeRoutes = (app: any) => {
                 }
             }
 
-            // Fallback total al vendor si todo lo anterior falló (intentamos obtener del socket directamente)
+            // Fallback total al vendor si todo lo anterior fallÃ³ (intentamos obtener del socket directamente)
             if (contactList.length === 0) {
-                console.log('📡 [SYNC] ContactList vacía, intentando fallback a vendor.contacts o vendor.chats...');
+                console.log('ðŸ“¡ [SYNC] ContactList vacÃ­a, intentando fallback a vendor.contacts o vendor.chats...');
                 const vendorContacts = vendor.contacts || (vendor as any).contacts || (vendor as any).chats || {};
 
                 if (vendorContacts && typeof (vendorContacts as any).all === 'function') {
@@ -1616,7 +1634,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 }
             }
 
-            console.log(`📡 [SYNC] Resultado extracción: ${contactList.length} registros, ${labels.length} etiquetas.`);
+            console.log(`ðŸ“¡ [SYNC] Resultado extracciÃ³n: ${contactList.length} registros, ${labels.length} etiquetas.`);
 
             // 3. Sincronizar Etiquetas en DB
             const tagMap = new Map<string, string>(); // name -> uuid_db
@@ -1661,14 +1679,14 @@ export const registerBackofficeRoutes = (app: any) => {
                     };
                 });
 
-            console.log(`📡 [SYNC] Procesados ${chatsToSync.length} candidatos para upsert.`);
+            console.log(`ðŸ“¡ [SYNC] Procesados ${chatsToSync.length} candidatos para upsert.`);
             const syncChatsRes = await depsHistoryHandler.syncChats(chatsToSync, projectId, serviceId);
 
             // 5. Vincular Etiquetas a Contactos
             const associations: any[] = [];
             for (const contact of contactList as any[]) {
                 if (contact.id && contact.labels && Array.isArray(contact.labels) && contact.labels.length > 0) {
-                    // Normalizar ID para la asociación
+                    // Normalizar ID para la asociaciÃ³n
                     let cleanId = contact.id.replace(/@s\.whatsapp\.net$/, '');
                     cleanId = cleanId.replace(/@c\.us$/, '');
 
@@ -1685,7 +1703,7 @@ export const registerBackofficeRoutes = (app: any) => {
             }
 
             if (associations.length > 0) {
-                console.log(`📡 [SYNC] Vinculando ${associations.length} etiquetas a contactos...`);
+                console.log(`ðŸ“¡ [SYNC] Vinculando ${associations.length} etiquetas a contactos...`);
                 await depsHistoryHandler.syncChatTags(associations, projectId, serviceId);
             }
 
@@ -1699,7 +1717,7 @@ export const registerBackofficeRoutes = (app: any) => {
             });
 
         } catch (error: any) {
-            console.error('❌ [SYNC] Error en ruta de sincronización:', error);
+            console.error('âŒ [SYNC] Error en ruta de sincronizaciÃ³n:', error);
             res.status(500).json({ success: false, error: error.message });
         }
     });
@@ -1708,18 +1726,18 @@ export const registerBackofficeRoutes = (app: any) => {
 
     app.post('/api/backoffice/send-message', backofficeAuth, (req: any, res: any, _next: any) => {
         if (req.body && Object.keys(req.body).length > 0) {
-            console.warn("⚠️ [BACKOFFICE] Cuerpo detectado ANTES de Multer. Posible conflicto de stream.");
+            console.warn("âš ï¸ [BACKOFFICE] Cuerpo detectado ANTES de Multer. Posible conflicto de stream.");
         }
 
         upload.single('file')(req, res, (err: any) => {
             if (err) {
-                console.error("❌ [BACKOFFICE] Error de Multer:", err);
+                console.error("âŒ [BACKOFFICE] Error de Multer:", err);
                 return res.status(400).json({ success: false, error: `Error de archivo: ${err.message}` });
             }
             const { chatId, message, replyTo } = req.body;
             if (!chatId) return res.status(400).json({ success: false, error: 'chatId is required' });
 
-            // Pasamos deps como sexto argumento y replyTo como el séptimo
+            // Pasamos deps como sexto argumento y replyTo como el sÃ©ptimo
             processSendMessage(req, res, chatId, message, (req as any).file, replyTo);
         });
     });
@@ -1859,7 +1877,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 }
             } else if (isMeta && externalId) {
                 if (!externalId.startsWith('wamid.')) {
-                    return res.status(400).json({ success: false, error: 'Este mensaje no tiene un ID de Meta válido (wamid) para reaccionar. Fue enviado localmente o con otro proveedor.' });
+                    return res.status(400).json({ success: false, error: 'Este mensaje no tiene un ID de Meta vÃ¡lido (wamid) para reaccionar. Fue enviado localmente o con otro proveedor.' });
                 }
                 const { phone_number_id, access_token } = provider.config || (provider as any).globalVendorArgs || {};
                 if (phone_number_id && access_token) {
@@ -1885,7 +1903,7 @@ export const registerBackofficeRoutes = (app: any) => {
                         }
                     });
                     reactedInWhatsApp = true;
-                    console.log(`[BACKOFFICE] Reacción enviada a Meta Cloud API (ID: ${externalId})`);
+                    console.log(`[BACKOFFICE] ReacciÃ³n enviada a Meta Cloud API (ID: ${externalId})`);
                 }
             }
 
@@ -1897,9 +1915,9 @@ export const registerBackofficeRoutes = (app: any) => {
                 await supabase.from('messages').update({ reaction: reaction || '' }).eq('id', messageData.id);
             }
 
-            res.json({ success: true, reactedInWhatsApp, message: 'Reacción enviada' });
+            res.json({ success: true, reactedInWhatsApp, message: 'ReacciÃ³n enviada' });
         } catch (e: any) {
-            console.error('❌ Error enviando reacción:', e);
+            console.error('âŒ Error enviando reacciÃ³n:', e);
             res.status(500).json({ success: false, error: e.message });
         }
     });
@@ -1972,7 +1990,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 finalType = 'video';
             }
 
-            // Enviar usando el método adecuado del proveedor
+            // Enviar usando el mÃ©todo adecuado del proveedor
             if (finalType === 'text') {
                 providerResponse = await providerToSend.sendMessage(jid, mediaUrl, {});
             } else if (finalType === 'sticker') {
@@ -2014,7 +2032,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
             res.json({ success: true, message: 'Archivo reenviado correctamente' });
         } catch (e: any) {
-            console.error('❌ Error crítico en reenviar mensaje:', e);
+            console.error('âŒ Error crÃ­tico en reenviar mensaje:', e);
             res.status(500).json({ success: false, error: e.message });
         }
     });
@@ -2031,10 +2049,10 @@ export const registerBackofficeRoutes = (app: any) => {
         const statusObj = await hasActiveSession(adapterProvider, groupProvider);
         const providerStatus = isGroup ? statusObj.group : statusObj.adapter;
         if (providerStatus?.active) {
-            return res.json({ success: true, message: 'El proveedor ya está conectado' });
+            return res.json({ success: true, message: 'El proveedor ya estÃ¡ conectado' });
         }
 
-        console.log(`[BACKOFFICE] Iniciando vinculación para Baileys (Grupo: ${!!isGroup}, PairingCode: ${!!usePairingCode})...`);
+        console.log(`[BACKOFFICE] Iniciando vinculaciÃ³n para Baileys (Grupo: ${!!isGroup}, PairingCode: ${!!usePairingCode})...`);
 
         try {
             if (provider.globalVendorArgs) {
@@ -2055,7 +2073,7 @@ export const registerBackofficeRoutes = (app: any) => {
                     const currentProvStatus = isGroup ? currentStatus.group : currentStatus.adapter;
 
                     if (currentProvStatus && !currentProvStatus.active) {
-                        console.log(`[TIMEOUT] Pasaron 5 minutos y no se escaneó el QR. Deteniendo proveedor Baileys (Grupo: ${!!isGroup}) para ahorrar recursos.`);
+                        console.log(`[TIMEOUT] Pasaron 5 minutos y no se escaneÃ³ el QR. Deteniendo proveedor Baileys (Grupo: ${!!isGroup}) para ahorrar recursos.`);
                         if (typeof provider.stopProvider === 'function') {
                             await provider.stopProvider();
                         }
@@ -2090,6 +2108,59 @@ export const registerBackofficeRoutes = (app: any) => {
             res.json({ success: true, enabled });
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.post('/api/backoffice/bot-command', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
+        const command = String(req.body?.command || '').trim().toUpperCase();
+        const chatId = String(req.body?.chatId || '').trim();
+        const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+        const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+
+        try {
+            if (command === '#ACTUALIZAR#') {
+                await updateMain(projectId, serviceId);
+
+                const { syncAssistantTools } = await import("../../apis/openai/openaiHelper");
+                const assistantKeys = ['ASSISTANT_ID', 'ASSISTANT_1', 'ASSISTANT_2', 'ASSISTANT_3', 'ASSISTANT_4', 'ASSISTANT_5'];
+                const assistantIds = new Set<string>();
+
+                for (const key of assistantKeys) {
+                    const assistantId = await depsHistoryHandler.getConfig(key, projectId, serviceId) || process.env[key];
+                    if (assistantId && /^asst_[a-zA-Z0-9_-]+$/.test(String(assistantId).trim())) {
+                        assistantIds.add(String(assistantId).trim());
+                    }
+                }
+
+                for (const assistantId of assistantIds) {
+                    await syncAssistantTools(assistantId, projectId, serviceId);
+                }
+
+                return res.json({ success: true, message: 'Sincronizacion completada.', assistantsSynced: assistantIds.size });
+            }
+
+            if (!chatId) {
+                return res.status(400).json({ success: false, error: 'chatId is required' });
+            }
+
+            if (command === '#RESET#') {
+                await depsHistoryHandler.setAssignedAgent(chatId, 'asistente1', projectId, serviceId);
+                return res.json({ success: true, message: 'Asistente reiniciado a asistente1.' });
+            }
+
+            if (command === '#HILO_NUEVO#') {
+                const cleared = await depsHistoryHandler.clearChatHistory(chatId, projectId, serviceId);
+                if (!cleared) {
+                    return res.status(500).json({ success: false, error: 'No se pudo limpiar el historial.' });
+                }
+                await depsHistoryHandler.setAssignedAgent(chatId, 'asistente1', projectId, serviceId);
+                return res.json({ success: true, message: 'Historial borrado y asistente reiniciado.' });
+            }
+
+            return res.status(400).json({ success: false, error: 'Comando no soportado.' });
+        } catch (e: any) {
+            console.error('[Backoffice Bot Command] Error:', e.message);
+            return res.status(500).json({ success: false, error: e.message });
         }
     });
 
@@ -2347,6 +2418,53 @@ export const registerBackofficeRoutes = (app: any) => {
         });
     });
 
+    app.get('/api/backoffice/whatsapp/lines', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || process.env.RAILWAY_PROJECT_ID || "default";
+            const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+            const lines: any[] = [];
+            const cleanNumber = (value: any) => String(value || '').replace(/[^\d]/g, '');
+            const isPresent = (value: any) => !!value && value !== 'PENDING';
+
+            const metaConfig = await depsHistoryHandler.getMetaOnboardingData(projectId, false, serviceId);
+            const metaData = metaConfig?.onboarding_data || {};
+            const metaNumber = metaData.display_phone_number || metaData.phone?.display_phone_number || metaData.phoneNumber || metaData.phone_number || metaConfig?.display_phone_number || null;
+            const metaPhoneId = metaConfig?.phone_number_id || metaConfig?.whatsappNumberId || null;
+            const metaWabaId = metaConfig?.waba_id || metaConfig?.whatsappBusinessId || null;
+
+            if (isPresent(metaPhoneId) || isPresent(metaNumber)) {
+                const cleanMetaNumber = cleanNumber(metaNumber);
+                lines.push({
+                    id: metaPhoneId || cleanMetaNumber || 'meta-line',
+                    provider: 'Meta',
+                    number: cleanMetaNumber || metaNumber || metaPhoneId,
+                    displayNumber: cleanMetaNumber || metaNumber || `Meta ${metaPhoneId}`,
+                    phoneNumberId: metaPhoneId,
+                    wabaId: metaWabaId,
+                    linked: true
+                });
+            }
+
+            const currentProvider = getAdapterProvider();
+            const baileysJid = currentProvider?.vendor?.authState?.creds?.me?.id || currentProvider?.vendor?.user?.id || '';
+            const baileysNumber = cleanNumber(String(baileysJid).split(':')[0].split('@')[0]);
+            if (!lines.length && baileysNumber) {
+                lines.push({
+                    id: baileysNumber,
+                    provider: 'Baileys',
+                    number: baileysNumber,
+                    displayNumber: baileysNumber,
+                    linked: true
+                });
+            }
+
+            res.json({ success: true, projectId, serviceId, lines, activeLine: lines[0] || null });
+        } catch (error: any) {
+            console.error('[WHATSAPP-LINES] Error obteniendo linea vinculada:', error);
+            res.status(500).json({ success: false, error: error.message, lines: [], activeLine: null });
+        }
+    });
+
     app.post('/api/backoffice/whatsapp/sync-manual', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         const { token: manualToken, wabaId, phoneNumberId, projectId: bodyProjectId } = req.body;
         if (!manualToken) return res.status(400).json({ success: false, error: 'Token is required' });
@@ -2360,12 +2478,12 @@ export const registerBackofficeRoutes = (app: any) => {
 
             if (!finalWabaId || !finalPhoneId) {
                 const { discoverMetaIds } = await import("../../apis/meta/metaDiscovery");
-                console.log(`📡 [META-SYNC-MANUAL] Iniciando descubrimiento manual por falta de IDs...`);
+                console.log(`ðŸ“¡ [META-SYNC-MANUAL] Iniciando descubrimiento manual por falta de IDs...`);
                 const appId = await depsHistoryHandler.getConfig('META_APP_ID', projectId, serviceId) || process.env.META_APP_ID || '1493670789148486';
                 const appSecret = await depsHistoryHandler.getConfig('META_APP_SECRET', projectId, serviceId) || process.env.META_APP_SECRET || '362b2ec20c00bdf51336fd165ad47160';
                 const discovery = await discoverMetaIds(manualToken, null, appId, appSecret);
                 if (!discovery.found || !discovery.data?.phoneNumberId) {
-                    return res.status(404).json({ success: false, error: 'No se pudieron encontrar los datos automáticamente. Por favor ingresa los IDs manualmente.' });
+                    return res.status(404).json({ success: false, error: 'No se pudieron encontrar los datos automÃ¡ticamente. Por favor ingresa los IDs manualmente.' });
                 }
                 finalWabaId = discovery.data.wabaId;
                 finalPhoneId = discovery.data.phoneNumberId;
@@ -2390,17 +2508,17 @@ export const registerBackofficeRoutes = (app: any) => {
 
     // --- TEMPLATES & BULK MESSAGING ---
 
-    /** Asegura que el proveedor tenga la config más reciente de la DB */
+    /** Asegura que el proveedor tenga la config mÃ¡s reciente de la DB */
     const syncMetaProvider = async (projectId: string | null = null, serviceId: string | null = null) => {
         const config = await depsHistoryHandler.getMetaOnboardingData(projectId || process.env.RAILWAY_PROJECT_ID, false, serviceId);
         if (config && adapterProvider && adapterProvider.updateConfig) {
-            // El objeto config puede venir de la DB (whatsappToken) o de una sincronización previa (access_token)
+            // El objeto config puede venir de la DB (whatsappToken) o de una sincronizaciÃ³n previa (access_token)
             const token = config.whatsappToken || config.access_token;
             const phoneId = config.whatsappNumberId || config.phone_number_id;
             const wabaId = config.whatsappBusinessId || config.waba_id;
 
             if (token && token !== 'PENDING') {
-                console.log("🔄 [MetaSync] Sincronizando credenciales de Meta...");
+                console.log("ðŸ”„ [MetaSync] Sincronizando credenciales de Meta...");
                 adapterProvider.updateConfig({
                     jwtToken: token,
                     numberId: phoneId,
@@ -2441,13 +2559,13 @@ export const registerBackofficeRoutes = (app: any) => {
                 return res.status(400).json({ success: false, error: 'El proveedor actual no soporta la biblioteca de Meta.' });
             }
 
-            console.log('📡 [BACKOFFICE-ROUTES] Solicitando plantillas de biblioteca...');
+            console.log('ðŸ“¡ [BACKOFFICE-ROUTES] Solicitando plantillas de biblioteca...');
             const templates = await provider.getLibraryTemplates();
-            console.log(`✅ [BACKOFFICE-ROUTES] Se obtuvieron ${templates?.length || 0} plantillas.`);
+            console.log(`âœ… [BACKOFFICE-ROUTES] Se obtuvieron ${templates?.length || 0} plantillas.`);
 
             res.json({ success: true, templates });
         } catch (error: any) {
-            console.error('❌ [BACKOFFICE-ROUTES] Error en library-templates:', error);
+            console.error('âŒ [BACKOFFICE-ROUTES] Error en library-templates:', error);
             res.status(500).json({ success: false, error: error.message });
         }
     });
@@ -2462,7 +2580,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
             const provider = (adapterProvider.constructor.name === 'MetaCloudProvider') ? adapterProvider : groupProvider;
             if (!provider || typeof provider.createTemplate !== 'function') {
-                return res.status(400).json({ success: false, error: 'Proveedor Meta no configurado o no soporta creación.' });
+                return res.status(400).json({ success: false, error: 'Proveedor Meta no configurado o no soporta creaciÃ³n.' });
             }
 
             const result = await provider.createTemplate(name, category, language, text, examples || []);
@@ -2486,7 +2604,7 @@ export const registerBackofficeRoutes = (app: any) => {
         }
     });
 
-    /** Paso 1: Añadir número a Meta y solicitar OTP */
+    /** Paso 1: AÃ±adir nÃºmero a Meta y solicitar OTP */
     app.post('/api/backoffice/whatsapp/register-step-1', bodyParser.json(), async (req: any, res: any) => {
         const { phoneNumber, verifiedName, projectId, manualWabaId, manualToken } = req.body;
         try {
@@ -2495,14 +2613,14 @@ export const registerBackofficeRoutes = (app: any) => {
 
             // Si el usuario provee un token manual (Super User), lo priorizamos
             const token = manualToken || config?.access_token;
-            if (!token) throw new Error('No se encontró sesión de Meta ni Token manual provisto.');
+            if (!token) throw new Error('No se encontrÃ³ sesiÃ³n de Meta ni Token manual provisto.');
 
             const wabaId = manualWabaId || config?.waba_id;
-            if (!wabaId) throw new Error('No se encontró WABA ID. Búscalo en tu Panel de Meta o ingrésalo manualmente.');
+            if (!wabaId) throw new Error('No se encontrÃ³ WABA ID. BÃºscalo en tu Panel de Meta o ingrÃ©salo manualmente.');
 
             const { addPhoneNumberToWaba, requestPhoneNumberOtp } = await import("../../apis/meta/metaDiscovery");
 
-            // 1. Añadir el número (esto nos da el Phone ID)
+            // 1. AÃ±adir el nÃºmero (esto nos da el Phone ID)
             const result = await addPhoneNumberToWaba(token, wabaId, phoneNumber, verifiedName);
             const phoneId = result.id;
 
@@ -2532,7 +2650,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 errorMessage = title ? `${title}: ${detail}` : detail;
             }
 
-            console.error('❌ [Register-Step-1] Error:', metaError || error.message);
+            console.error('âŒ [Register-Step-1] Error:', metaError || error.message);
             res.status(error.response?.status || 400).json({
                 success: false,
                 error: errorMessage
@@ -2567,7 +2685,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 errorMessage = title ? `${title}: ${detail}` : detail;
             }
 
-            console.error('❌ [Register-Step-2] Error:', metaError || error.message);
+            console.error('âŒ [Register-Step-2] Error:', metaError || error.message);
             res.status(error.response?.status || 400).json({
                 success: false,
                 error: errorMessage
@@ -2598,7 +2716,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const text = bodyComponent?.text || '';
             const varNames: string[] = [];
 
-            // Detección robusta: si tiene parameter_format='named' (case-insensitive)
+            // DetecciÃ³n robusta: si tiene parameter_format='named' (case-insensitive)
             const isNamed = (template.parameter_format || '').toLowerCase() === 'named';
             const bodyNamedParams = bodyComponent?.example?.body_text_named_params || [];
 
@@ -2606,8 +2724,8 @@ export const registerBackofficeRoutes = (app: any) => {
                 bodyNamedParams.forEach((p: any) => varNames.push(p.param_name));
             }
 
-            // Fallback: Si no es named o si varNames quedó vacío, escaneamos el texto del cuerpo.
-            // Esto sirve para Positional ({{1}}) o si es Named ({{nombre}}) pero no tenía ejemplos oficiales.
+            // Fallback: Si no es named o si varNames quedÃ³ vacÃ­o, escaneamos el texto del cuerpo.
+            // Esto sirve para Positional ({{1}}) o si es Named ({{nombre}}) pero no tenÃ­a ejemplos oficiales.
             if (varNames.length === 0 && text) {
                 const varRegex = /\{\{([^}]+)\}\}/g;
                 let match;
@@ -2624,7 +2742,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const hasMediaHeader = headerComp && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(headerComp.format);
             const headerExampleUrl = headerComp?.example?.header_handle?.[0] || '';
 
-            // 3. Detectar BUTTONS dinámicos
+            // 3. Detectar BUTTONS dinÃ¡micos
             const buttonsComp = template.components.find((c: any) => c.type === 'BUTTONS');
             const dynamicButtonIndices: number[] = [];
             if (buttonsComp && buttonsComp.buttons) {
@@ -2771,13 +2889,13 @@ export const registerBackofficeRoutes = (app: any) => {
 
         try {
             if (!templateName || (!chatId && !phone)) {
-                return res.status(400).json({ success: false, error: 'Faltan parámetros requeridos (templateName, chatId o phone).' });
+                return res.status(400).json({ success: false, error: 'Faltan parÃ¡metros requeridos (templateName, chatId o phone).' });
             }
 
             const rawTarget = phone || chatId || '';
             const targetPhone = String(rawTarget).split('@')[0].replace(/\D/g, '');
             if (!targetPhone) {
-                return res.status(400).json({ success: false, error: 'Número de teléfono de destino no válido.' });
+                return res.status(400).json({ success: false, error: 'NÃºmero de telÃ©fono de destino no vÃ¡lido.' });
             }
             const targetJid = String(rawTarget).includes('@') ? rawTarget : `${targetPhone}@s.whatsapp.net`;
 
@@ -2793,7 +2911,7 @@ export const registerBackofficeRoutes = (app: any) => {
             }
 
             const lang = languageCode || template.language || 'es';
-            console.log(`📡 [SINGLE-TEMPLATE] Enviando plantilla '${templateName}' (${lang}) a ${targetPhone}...`);
+            console.log(`ðŸ“¡ [SINGLE-TEMPLATE] Enviando plantilla '${templateName}' (${lang}) a ${targetPhone}...`);
 
             // Procesar componentes (en especial cabeceras multimedia) para subir directamente a Meta
             const finalComponents: any[] = JSON.parse(JSON.stringify(components || []));
@@ -2808,7 +2926,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
                             if (rawLink && typeof rawLink === 'string') {
                                 try {
-                                    console.log(`📥 [SINGLE-TEMPLATE] Procesando multimedia de cabecera: ${rawLink.substring(0, 60)}...`);
+                                    console.log(`ðŸ“¥ [SINGLE-TEMPLATE] Procesando multimedia de cabecera: ${rawLink.substring(0, 60)}...`);
                                     const isMetaUrl = rawLink.includes('fbcdn') || rawLink.includes('fbsbx') || rawLink.includes('facebook.com') || rawLink.includes('lookaside.fbsbx.com') || rawLink.includes('whatsapp.net') || rawLink.includes('whatsapp.com');
                                     const isDrive = rawLink.includes('drive.google.com');
 
@@ -2869,9 +2987,9 @@ export const registerBackofficeRoutes = (app: any) => {
                                     if (uploadedMediaId) {
                                         delete param[formatType].link;
                                         param[formatType].id = uploadedMediaId;
-                                        console.log(`✅ [SINGLE-TEMPLATE] Multimedia de cabecera subido exitosamente a Meta. Media ID: ${uploadedMediaId}`);
+                                        console.log(`âœ… [SINGLE-TEMPLATE] Multimedia de cabecera subido exitosamente a Meta. Media ID: ${uploadedMediaId}`);
                                     } else {
-                                        // 2. Fallback: Servir desde nuestro propio dominio público
+                                        // 2. Fallback: Servir desde nuestro propio dominio pÃºblico
                                         let baseUrl = process.env.PROJECT_URL;
                                         if (!baseUrl) {
                                             const host = req.headers.host || '';
@@ -2883,11 +3001,11 @@ export const registerBackofficeRoutes = (app: any) => {
                                         }
                                         if (!baseUrl.startsWith('http')) baseUrl = `https://${baseUrl}`;
                                         param[formatType].link = `${baseUrl.replace(/\/$/, '')}/uploads/${filename}`;
-                                        console.log(`✅ [SINGLE-TEMPLATE] Multimedia servido localmente en: ${param[formatType].link}`);
+                                        console.log(`âœ… [SINGLE-TEMPLATE] Multimedia servido localmente en: ${param[formatType].link}`);
                                     }
                                 } catch (downloadErr: any) {
-                                    console.error(`❌ [SINGLE-TEMPLATE] Error procesando multimedia de cabecera:`, downloadErr.message);
-                                    // Fallback: Si el link falló y la plantilla original de Meta define header_handle
+                                    console.error(`âŒ [SINGLE-TEMPLATE] Error procesando multimedia de cabecera:`, downloadErr.message);
+                                    // Fallback: Si el link fallÃ³ y la plantilla original de Meta define header_handle
                                     const headerCompDef = template.components?.find((c: any) => c.type === 'HEADER');
                                     const rawHandle = headerCompDef?.example?.header_handle?.[0];
                                     if (rawHandle) {
@@ -2897,7 +3015,7 @@ export const registerBackofficeRoutes = (app: any) => {
                                         } else {
                                             param[formatType].handle = rawHandle;
                                         }
-                                        console.log(`⚠️ [SINGLE-TEMPLATE] Usando handle/link de ejemplo original de la plantilla: ${rawHandle}`);
+                                        console.log(`âš ï¸ [SINGLE-TEMPLATE] Usando handle/link de ejemplo original de la plantilla: ${rawHandle}`);
                                     }
                                 }
                             }
@@ -2928,12 +3046,12 @@ export const registerBackofficeRoutes = (app: any) => {
 
                 return res.json({ success: true, messageId: msgId });
             } else {
-                console.error('❌ [SINGLE-TEMPLATE] Meta no devolvió un ID de mensaje:', resApi);
-                return res.status(400).json({ success: false, error: 'Meta no devolvió un ID de mensaje válido.', details: resApi });
+                console.error('âŒ [SINGLE-TEMPLATE] Meta no devolviÃ³ un ID de mensaje:', resApi);
+                return res.status(400).json({ success: false, error: 'Meta no devolviÃ³ un ID de mensaje vÃ¡lido.', details: resApi });
             }
         } catch (error: any) {
             const errDetail = error?.response?.data || error?.message || error;
-            console.error('❌ [SINGLE-TEMPLATE] Error enviando plantilla:', JSON.stringify(errDetail, null, 2));
+            console.error('âŒ [SINGLE-TEMPLATE] Error enviando plantilla:', JSON.stringify(errDetail, null, 2));
             return res.status(500).json({ success: false, error: error?.response?.data?.error?.message || error.message || 'Error al enviar la plantilla' });
         }
     });
@@ -3003,7 +3121,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 chatsList = [];
             }
 
-            // Filtrar el número de ejemplo
+            // Filtrar el nÃºmero de ejemplo
             chatsList = chatsList.filter((chat: any) => {
                 const cleanPhone = chat.id.split('@')[0];
                 return cleanPhone !== '5491100000000';
@@ -3014,15 +3132,15 @@ export const registerBackofficeRoutes = (app: any) => {
             }
 
             // 2. Responder 202 de inmediato
-            res.status(202).json({ success: true, message: 'Envío rápido masivo iniciado.', total: chatsList.length });
+            res.status(202).json({ success: true, message: 'EnvÃ­o rÃ¡pido masivo iniciado.', total: chatsList.length });
 
-            // 3. Procesar envíos en segundo plano
+            // 3. Procesar envÃ­os en segundo plano
             (async () => {
                 const provider = (adapterProvider.constructor.name === 'MetaCloudProvider') ? adapterProvider : groupProvider;
                 const templates = await provider.getTemplates();
                 const template = templates.find((t: any) => t.name === templateName);
                 if (!template) {
-                    console.error(`❌ [QUICK BULK] Plantilla ${templateName} no encontrada.`);
+                    console.error(`âŒ [QUICK BULK] Plantilla ${templateName} no encontrada.`);
                     return;
                 }
 
@@ -3032,7 +3150,7 @@ export const registerBackofficeRoutes = (app: any) => {
                     bodyText = bodyComp.text || "";
                 }
 
-                const historyContent = `[Campaña Rápida: ${templateName}]\n${bodyText}`;
+                const historyContent = `[CampaÃ±a RÃ¡pida: ${templateName}]\n${bodyText}`;
 
                 // Construir componentes (como multimedia por defecto)
                 const components: any[] = [];
@@ -3047,7 +3165,7 @@ export const registerBackofficeRoutes = (app: any) => {
                         const isMetaUrl = mediaLink.includes('fbcdn') || mediaLink.includes('fbsbx') || mediaLink.includes('facebook.com') || mediaLink.includes('lookaside.fbsbx.com') || mediaLink.includes('whatsapp.net') || mediaLink.includes('whatsapp.com');
                         if (isMetaUrl) {
                             try {
-                                console.log(`📥 [QUICK BULK] Descargando multimedia de cabecera de Meta: ${mediaLink.substring(0, 50)}...`);
+                                console.log(`ðŸ“¥ [QUICK BULK] Descargando multimedia de cabecera de Meta: ${mediaLink.substring(0, 50)}...`);
                                 const accessToken = provider.config?.access_token || '';
                                 const downloadHeaders: any = {
                                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/120.0.0.0 Safari/537.36',
@@ -3093,7 +3211,7 @@ export const registerBackofficeRoutes = (app: any) => {
                                     const uploadedMediaId = await (provider as any).uploadMedia(downloadedPath);
                                     if (uploadedMediaId) {
                                         headerParamPayload = { id: uploadedMediaId };
-                                        console.log(`✅ [QUICK BULK] Multimedia subida a Meta con éxito. Media ID: ${uploadedMediaId}`);
+                                        console.log(`âœ… [QUICK BULK] Multimedia subida a Meta con Ã©xito. Media ID: ${uploadedMediaId}`);
                                     }
                                 }
 
@@ -3110,10 +3228,10 @@ export const registerBackofficeRoutes = (app: any) => {
                                     if (!baseUrl.startsWith('http')) baseUrl = `https://${baseUrl}`;
                                     const publicUrl = `${baseUrl.replace(/\/$/, '')}/uploads/${filename}`;
                                     headerParamPayload = { link: publicUrl };
-                                    console.log(`✅ [QUICK BULK] Multimedia servida localmente en: ${publicUrl}`);
+                                    console.log(`âœ… [QUICK BULK] Multimedia servida localmente en: ${publicUrl}`);
                                 }
                             } catch (downloadErr: any) {
-                                console.error(`❌ [QUICK BULK] Error descargando multimedia de cabecera:`, downloadErr.message);
+                                console.error(`âŒ [QUICK BULK] Error descargando multimedia de cabecera:`, downloadErr.message);
                             }
                         }
                     }
@@ -3141,7 +3259,7 @@ export const registerBackofficeRoutes = (app: any) => {
                             }]
                         });
                     } else {
-                        console.warn(`⚠️ [QUICK BULK] Plantilla ${templateName} tiene cabecera multimedia pero no fue posible resolver un parámetro válido.`);
+                        console.warn(`âš ï¸ [QUICK BULK] Plantilla ${templateName} tiene cabecera multimedia pero no fue posible resolver un parÃ¡metro vÃ¡lido.`);
                     }
                 }
 
@@ -3166,11 +3284,11 @@ export const registerBackofficeRoutes = (app: any) => {
                         }
                     } catch (e: any) {
                         errors++;
-                        console.error(`❌ [QUICK BULK] Error de Meta para ${phone}:`, e.message || e);
+                        console.error(`âŒ [QUICK BULK] Error de Meta para ${phone}:`, e.message || e);
                     }
                     await new Promise(r => setTimeout(r, 200));
                 }
-                console.log(`✅ [QUICK BULK] Envío rápido finalizado: ${sent} enviados, ${errors} errores de ${chatsList.length} contactos.`);
+                console.log(`âœ… [QUICK BULK] EnvÃ­o rÃ¡pido finalizado: ${sent} enviados, ${errors} errores de ${chatsList.length} contactos.`);
             })();
 
         } catch (error: any) {
@@ -3196,7 +3314,7 @@ export const registerBackofficeRoutes = (app: any) => {
             res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
             res.end(buf);
         } catch (error: any) {
-            console.error('Error generando plantilla de importación:', error);
+            console.error('Error generando plantilla de importaciÃ³n:', error);
             res.status(500).json({ success: false, error: error.message });
         }
     });
@@ -3222,7 +3340,7 @@ export const registerBackofficeRoutes = (app: any) => {
         if (!code) return res.send('<h2>❌ Error: No se recibió el código de Meta</h2>');
 
         try {
-            console.log(`📡 [CALLBACK] Intercambiando código Meta por token (v25.0)...`);
+            console.log(`ðŸ“¡ [CALLBACK] Intercambiando cÃ³digo Meta por token (v25.0)...`);
 
             const appId = await depsHistoryHandler.getConfig('META_APP_ID', projectId) || process.env.META_APP_ID || '1493670789148486';
             const appSecret = await depsHistoryHandler.getConfig('META_APP_SECRET', projectId) || process.env.META_APP_SECRET || '362b2ec20c00bdf51336fd165ad47160';
@@ -3251,7 +3369,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 finalVerifiedName = discovery.data.verifiedName || "";
             }
 
-            // 2. Descubrimiento de Páginas (Messenger / Instagram)
+            // 2. Descubrimiento de PÃ¡ginas (Messenger / Instagram)
             const { discoverAndLinkMetaPages } = await import("../../apis/meta/metaPageDiscovery");
             const pageDiscovery = await discoverAndLinkMetaPages(accessToken);
             if (pageDiscovery) {
@@ -3259,7 +3377,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 await depsHistoryHandler.saveSetting('FACEBOOK_PAGE_ID', pageDiscovery.pageId, projectId, serviceId);
                 await depsHistoryHandler.saveSetting('FACEBOOK_PAGE_TOKEN', pageDiscovery.pageAccessToken, projectId, serviceId);
 
-                // Si encontramos Instagram vinculado, guardarlo también
+                // Si encontramos Instagram vinculado, guardarlo tambiÃ©n
                 if (pageDiscovery.instagramId) {
                     await depsHistoryHandler.saveSetting('INSTAGRAM_BUSINESS_ID', pageDiscovery.instagramId, projectId, serviceId);
                 }
@@ -3269,9 +3387,9 @@ export const registerBackofficeRoutes = (app: any) => {
                 await depsHistoryHandler.saveSetting('MESSENGER_VISIBLE', 'on', projectId, serviceId);
             }
 
-            // 3. Verificación de resultados y depuración de scopes si falló todo
+            // 3. VerificaciÃ³n de resultados y depuraciÃ³n de scopes si fallÃ³ todo
             if (!discovery.found && !pageDiscovery) {
-                console.warn('⚠️ [CALLBACK] No se pudo descubrir ningún recurso automáticamente.');
+                console.warn('âš ï¸ [CALLBACK] No se pudo descubrir ningÃºn recurso automÃ¡ticamente.');
 
                 const diagHtml = discovery.diagnostics.map(d => `
                     <div style="margin-bottom: 15px; border-bottom: 1px solid #edf2f7; padding-bottom: 10px;">
@@ -3292,12 +3410,12 @@ export const registerBackofficeRoutes = (app: any) => {
                 const htmlError = `
                     <div style="font-family: sans-serif; padding: 40px; color: #2d3748; max-width: 800px; margin: 0 auto; line-height: 1.6; background: #f7fafc; min-height: 100vh;">
                         <div style="background: white; padding: 40px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;">
-                            <h1 style="color: #e53e3e; margin-bottom: 10px; font-size: 28px; font-weight: 800; text-align: center;">Configuración Incompleta</h1>
-                            <p style="color: #718096; margin-bottom: 30px; text-align: center;">Hemos vinculado tu cuenta de Meta, pero no pudimos encontrar automáticamente una cuenta de WhatsApp Cloud API activa.</p>
+                            <h1 style="color: #e53e3e; margin-bottom: 10px; font-size: 28px; font-weight: 800; text-align: center;">ConfiguraciÃ³n Incompleta</h1>
+                            <p style="color: #718096; margin-bottom: 30px; text-align: center;">Hemos vinculado tu cuenta de Meta, pero no pudimos encontrar automÃ¡ticamente una cuenta de WhatsApp Cloud API activa.</p>
 
                             <div style="margin-top: 30px; background: #ebf8ff; padding: 25px; border-radius: 12px; border: 1px solid #bee3f8; text-align: left;">
-                                <h3 style="margin-top: 0; color: #2b6cb0; font-size: 18px;">Opción 1: Configuración Manual (Recomendado)</h3>
-                                <p style="font-size: 14px; margin-bottom: 20px;">Si conoces tus IDs de WhatsApp, ingrésalos aquí. Esto activará el bot directamente sin validación por SMS.</p>
+                                <h3 style="margin-top: 0; color: #2b6cb0; font-size: 18px;">OpciÃ³n 1: ConfiguraciÃ³n Manual (Recomendado)</h3>
+                                <p style="font-size: 14px; margin-bottom: 20px;">Si conoces tus IDs de WhatsApp, ingrÃ©salos aquÃ­. Esto activarÃ¡ el bot directamente sin validaciÃ³n por SMS.</p>
 
                                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                                     <div>
@@ -3317,7 +3435,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
                             <div style="margin-top: 35px; border-top: 1px solid #edf2f7; padding-top: 25px; text-align: center;">
                                 <button onclick="toggleLogs()" style="background: #edf2f7; border: none; padding: 10px 20px; border-radius: 8px; font-size: 13px; color: #4a5568; cursor: pointer; font-weight: 600;">
-                                    🔍 Ver Diagnóstico Técnico del Descubrimiento
+                                    ðŸ” Ver DiagnÃ³stico TÃ©cnico del Descubrimiento
                                 </button>
 
                                 <div id="logSection" style="display: none; margin-top: 20px; text-align: left; background: white; border: 1px solid #e2e8f0; padding: 20px; border-radius: 12px; max-height: 400px; overflow-y: auto;">
@@ -3326,7 +3444,7 @@ export const registerBackofficeRoutes = (app: any) => {
                             </div>
 
                             <div style="margin-top: 40px; font-size: 13px; color: #a0aec0; text-align: center;">
-                                <p>Tip: Asegúrate de que tu cuenta de WhatsApp esté validada en el panel de Meta Developer antes de intentar la vinculación.</p>
+                                <p>Tip: AsegÃºrate de que tu cuenta de WhatsApp estÃ© validada en el panel de Meta Developer antes de intentar la vinculaciÃ³n.</p>
                             </div>
                         </div>
 
@@ -3369,7 +3487,7 @@ export const registerBackofficeRoutes = (app: any) => {
                                         document.getElementById('btnSaveManual').disabled = false;
                                     }
                                 } catch (e) {
-                                    alert('Error de conexión: ' + e.message);
+                                    alert('Error de conexiÃ³n: ' + e.message);
                                 }
                             }
                         </script>
@@ -3381,7 +3499,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 return res.send(htmlError);
             }
 
-            // Registrar y suscribir WhatsApp si se encontró
+            // Registrar y suscribir WhatsApp si se encontrÃ³
             const tokenToUse = mainToken || accessToken;
             if (finalPhoneId) {
                 await axios.post(`https://graph.facebook.com/v25.0/${finalPhoneId}/register`,
@@ -3396,10 +3514,10 @@ export const registerBackofficeRoutes = (app: any) => {
                     { headers: { 'Authorization': `Bearer ${tokenToUse}` } }
                 ).catch(() => {});
 
-                // Suscribir también a smb_message_echoes para capturar mensajes
-                // enviados manualmente desde la app de WhatsApp (Atención Humana)
+                // Suscribir tambiÃ©n a smb_message_echoes para capturar mensajes
+                // enviados manualmente desde la app de WhatsApp (AtenciÃ³n Humana)
                 try {
-                    console.log('📡 [CALLBACK] Suscribiendo a smb_message_echoes para sincronización de mensajes manuales...');
+                    console.log('ðŸ“¡ [CALLBACK] Suscribiendo a smb_message_echoes para sincronizaciÃ³n de mensajes manuales...');
                     await axios.post(`https://graph.facebook.com/v25.0/${finalWabaId}/subscribed_apps`,
                         { override_callback_uri: undefined },
                         {
@@ -3407,41 +3525,41 @@ export const registerBackofficeRoutes = (app: any) => {
                             params: { subscribed_fields: 'messages,smb_message_echoes' }
                         }
                     );
-                    console.log('✅ [CALLBACK] Suscripción a smb_message_echoes exitosa.');
+                    console.log('âœ… [CALLBACK] SuscripciÃ³n a smb_message_echoes exitosa.');
                 } catch (smbErr: any) {
-                    console.warn('⚠️ [CALLBACK] No se pudo suscribir a smb_message_echoes:', smbErr?.response?.data || smbErr.message);
+                    console.warn('âš ï¸ [CALLBACK] No se pudo suscribir a smb_message_echoes:', smbErr?.response?.data || smbErr.message);
                 }
 
                 await depsHistoryHandler.saveMetaOnboardingData(finalWabaId, finalPhoneId, tokenToUse, { verified_name: finalVerifiedName }, projectId, serviceId);
 
-                // --- SINCRONIZACIÓN AUTOMÁTICA SMB ---
-                // Solicitamos contactos e historial inmediatamente tras la vinculación
+                // --- SINCRONIZACIÃ“N AUTOMÃTICA SMB ---
+                // Solicitamos contactos e historial inmediatamente tras la vinculaciÃ³n
                 if (finalPhoneId) {
                     try {
                         await triggerMetaSync(accessToken, finalPhoneId);
                     } catch (syncErr: any) {
-                        console.warn('⚠️ [CALLBACK] Sincronización automática de contactos/historial falló (omitiendo para no bloquear la vinculación):', syncErr.response?.data || syncErr.message);
+                        console.warn('âš ï¸ [CALLBACK] SincronizaciÃ³n automÃ¡tica de contactos/historial fallÃ³ (omitiendo para no bloquear la vinculaciÃ³n):', syncErr.response?.data || syncErr.message);
                     }
                 }
             }
 
-            console.log(`✅ [CALLBACK] Onboarding finalizado con éxito para Proyecto: ${projectId}`);
+            console.log(`âœ… [CALLBACK] Onboarding finalizado con Ã©xito para Proyecto: ${projectId}`);
 
-            // Programar un reinicio automático para aplicar el cambio de motor (Baileys -> Meta)
+            // Programar un reinicio automÃ¡tico para aplicar el cambio de motor (Baileys -> Meta)
             setTimeout(() => {
-                console.log('🔄 [SYSTEM] Reiniciando bot automáticamente para aplicar la configuración de Meta...');
+                console.log('ðŸ”„ [SYSTEM] Reiniciando bot automÃ¡ticamente para aplicar la configuraciÃ³n de Meta...');
                 process.exit(1);
             }, 5000);
 
             return res.redirect("https://duskcodes.com.ar/dashboard.html?metaStatus=success");
 
         } catch (error: any) {
-            console.error('❌ [CALLBACK] Error en vinculación Meta:', error.response?.data || error.message);
+            console.error('âŒ [CALLBACK] Error en vinculaciÃ³n Meta:', error.response?.data || error.message);
             const errorDetails = error.response?.data ? JSON.stringify(error.response.data, null, 2) : error.message;
 
             return res.status(500).send(`
                 <div style="font-family: sans-serif; padding: 40px; text-align: center; background: #fff5f5; border: 1px solid #feb2b2; border-radius: 8px; max-width: 600px; margin: 40px auto;">
-                    <h2 style="color: #c53030; margin-bottom: 20px;">❌ Error en la vinculación con Meta</h2>
+                    <h2 style="color: #c53030; margin-bottom: 20px;">âŒ Error en la vinculaciÃ³n con Meta</h2>
                     <p style="color: #4a5568; margin-bottom: 20px;">No se pudieron guardar las credenciales del proyecto <b>${projectId || 'No Detectado'}</b>.</p>
                     <div style="text-align: left; background: #fff; padding: 15px; border-radius: 4px; border: 1px solid #edf2f7; overflow: auto; max-height: 200px;">
                         <pre style="font-size: 12px; color: #718096; margin: 0;">${errorDetails}</pre>
@@ -3455,8 +3573,8 @@ export const registerBackofficeRoutes = (app: any) => {
     });
 
     /**
-     * Endpoint para vinculación manual de IDs si el auto-descubrimiento falló.
-     * También dispara la sincronización SMB automática.
+     * Endpoint para vinculaciÃ³n manual de IDs si el auto-descubrimiento fallÃ³.
+     * TambiÃ©n dispara la sincronizaciÃ³n SMB automÃ¡tica.
      */
     app.post('/api/backoffice/whatsapp/sync-manual', bodyParser.json(), async (req: any, res: any) => {
         const { token, wabaId, phoneNumberId, projectId, serviceId: bodyServiceId } = req.body;
@@ -3469,22 +3587,22 @@ export const registerBackofficeRoutes = (app: any) => {
             console.log(`📡 [SYNC-MANUAL] Vinculando manualmente para Proyecto: ${projectId}, Servicio: ${serviceId}`);
             await depsHistoryHandler.saveMetaOnboardingData(wabaId, phoneNumberId, token, { manual: true }, projectId, serviceId);
 
-            // Disparar sincronización SMB
+            // Disparar sincronizaciÃ³n SMB
             try {
                 await triggerMetaSync(token, phoneNumberId);
             } catch (syncErr: any) {
-                console.warn('⚠️ [SYNC-MANUAL] Sincronización automática manual falló (omitiendo para no bloquear la vinculación):', syncErr.response?.data || syncErr.message);
+                console.warn('âš ï¸ [SYNC-MANUAL] SincronizaciÃ³n automÃ¡tica manual fallÃ³ (omitiendo para no bloquear la vinculaciÃ³n):', syncErr.response?.data || syncErr.message);
             }
 
             // Programar reinicio
             setTimeout(() => {
-                console.log('🔄 [SYSTEM] Reiniciando bot por vinculación manual...');
+                console.log('ðŸ”„ [SYSTEM] Reiniciando bot por vinculaciÃ³n manual...');
                 process.exit(1);
             }, 3000);
 
             res.json({ success: true });
         } catch (error: any) {
-            console.error('❌ [SYNC-MANUAL] Error:', error);
+            console.error('âŒ [SYNC-MANUAL] Error:', error);
             res.status(500).json({ success: false, error: error.message });
         }
     });
@@ -3492,24 +3610,24 @@ export const registerBackofficeRoutes = (app: any) => {
     app.post('/api/backoffice/whatsapp/sync-ids', backofficeAuth, async (req: any, res: any) => {
         const projectId = resolveProjectId(req) || (req.query.projectId as string) || process.env.RAILWAY_PROJECT_ID || 'default';
         const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
-        console.log(`🔄 [SYNC-IDS] Iniciando sincronizacion para proyecto: ${projectId}, servicio: ${serviceId}`);
+        console.log(`ðŸ”„ [SYNC-IDS] Iniciando sincronizacion para proyecto: ${projectId}, servicio: ${serviceId}`);
         try {
             const config = await depsHistoryHandler.getMetaOnboardingData(projectId, false, serviceId);
 
             if (!config?.access_token || config.access_token === 'PENDING') {
-                console.warn(`⚠️ [SYNC-IDS] No hay access_token guardado para proyecto: ${projectId}`);
+                console.warn(`âš ï¸ [SYNC-IDS] No hay access_token guardado para proyecto: ${projectId}`);
                 return res.status(400).json({ success: false, error: 'No hay token guardado para este proyecto. Completa el proceso de vinculacion primero.' });
             }
 
-            console.log(`✅ [SYNC-IDS] Token encontrado. waba_id=${config.waba_id || 'null'}, phone_number_id=${config.phone_number_id || 'null'}`);
+            console.log(`âœ… [SYNC-IDS] Token encontrado. waba_id=${config.waba_id || 'null'}, phone_number_id=${config.phone_number_id || 'null'}`);
 
             const isAbsent = (v: any) => !v || v === 'PENDING';
             if (!isAbsent(config.waba_id) && !isAbsent(config.phone_number_id)) {
-                console.log(`✅ [SYNC-IDS] IDs ya presentes en Supabase. No requiere discovery.`);
+                console.log(`âœ… [SYNC-IDS] IDs ya presentes en Supabase. No requiere discovery.`);
                 return res.json({ success: true, already: true, waba_id: config.waba_id, phone_number_id: config.phone_number_id });
             }
 
-            console.log(`🔍 [SYNC-IDS] IDs faltantes. Iniciando discovery con token guardado...`);
+            console.log(`ðŸ” [SYNC-IDS] IDs faltantes. Iniciando discovery con token guardado...`);
             const { discoverMetaIds } = await import('../../apis/meta/metaDiscovery');
             const mainToken = await depsHistoryHandler.getMainToken();
             const appId = await depsHistoryHandler.getConfig('META_APP_ID', projectId) || process.env.META_APP_ID || '1493670789148486';
@@ -3517,11 +3635,11 @@ export const registerBackofficeRoutes = (app: any) => {
             const discovery = await discoverMetaIds(config.access_token, mainToken, appId, appSecret);
 
             if (!discovery.found || !discovery.data?.wabaId || !discovery.data?.phoneNumberId) {
-                console.error(`❌ [SYNC-IDS] Discovery fallo para proyecto ${projectId}. No se encontraron IDs.`);
+                console.error(`âŒ [SYNC-IDS] Discovery fallo para proyecto ${projectId}. No se encontraron IDs.`);
                 return res.status(404).json({ success: false, error: 'No se pudieron descubrir los IDs automaticamente. Ingresalos manualmente.' });
             }
 
-            console.log(`🔍 [SYNC-IDS] Discovery exitoso: WABA=${discovery.data.wabaId}, Phone=${discovery.data.phoneNumberId}. Guardando en Supabase...`);
+            console.log(`ðŸ” [SYNC-IDS] Discovery exitoso: WABA=${discovery.data.wabaId}, Phone=${discovery.data.phoneNumberId}. Guardando en Supabase...`);
             const saveResult = await depsHistoryHandler.saveMetaOnboardingData(
                 discovery.data.wabaId,
                 discovery.data.phoneNumberId,
@@ -3532,14 +3650,14 @@ export const registerBackofficeRoutes = (app: any) => {
             );
 
             if (!saveResult.success) {
-                console.error(`❌ [SYNC-IDS] Fallo al guardar en Supabase para proyecto ${projectId}:`, saveResult.error);
+                console.error(`âŒ [SYNC-IDS] Fallo al guardar en Supabase para proyecto ${projectId}:`, saveResult.error);
                 return res.status(500).json({ success: false, error: 'No se pudieron guardar los IDs en la base de datos.' });
             }
 
-            console.log(`✅ [SYNC-IDS] IDs guardados exitosamente para proyecto ${projectId}.`);
+            console.log(`âœ… [SYNC-IDS] IDs guardados exitosamente para proyecto ${projectId}.`);
             res.json({ success: true, waba_id: discovery.data.wabaId, phone_number_id: discovery.data.phoneNumberId });
         } catch (error: any) {
-            console.error(`❌ [SYNC-IDS] Error inesperado para proyecto ${projectId}:`, error);
+            console.error(`âŒ [SYNC-IDS] Error inesperado para proyecto ${projectId}:`, error);
             res.status(500).json({ success: false, error: error.message });
         }
     });
@@ -3547,7 +3665,7 @@ export const registerBackofficeRoutes = (app: any) => {
     app.post('/api/backoffice/whatsapp/unlink-meta', backofficeAuth, async (req: any, res: any) => {
         const projectId = resolveProjectId(req) || req.query.projectId || process.env.RAILWAY_PROJECT_ID || "default";
         const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
-        console.log(`📡 [UNLINK-META] Iniciando desvinculación de Meta para Proyecto: ${projectId}, Servicio: ${serviceId}`);
+        console.log(`ðŸ“¡ [UNLINK-META] Iniciando desvinculaciÃ³n de Meta para Proyecto: ${projectId}, Servicio: ${serviceId}`);
         try {
             // 1. Obtener datos de onboarding actuales de la base de datos
             const config = await depsHistoryHandler.getMetaOnboardingData(projectId, false, serviceId);
@@ -3557,36 +3675,36 @@ export const registerBackofficeRoutes = (app: any) => {
                 const wabaId = config.waba_id || config.whatsappBusinessId;
 
                 if (token && token !== 'PENDING') {
-                    // 2. Llamada a la API de Meta para desvincular (Deregister del teléfono y DELETE de subscribed_apps)
+                    // 2. Llamada a la API de Meta para desvincular (Deregister del telÃ©fono y DELETE de subscribed_apps)
                     try {
                         if (phoneId && phoneId !== 'PENDING') {
-                            console.log(`📡 [UNLINK-META] Ejecutando deregister para Phone ID: ${phoneId}...`);
+                            console.log(`ðŸ“¡ [UNLINK-META] Ejecutando deregister para Phone ID: ${phoneId}...`);
                             await axios.post(`https://graph.facebook.com/v25.0/${phoneId}/deregister`,
                                 {},
                                 { headers: { 'Authorization': `Bearer ${token}` } }
                             );
-                            console.log(`✅ [UNLINK-META] Phone ID deregistered exitosamente.`);
+                            console.log(`âœ… [UNLINK-META] Phone ID deregistered exitosamente.`);
                         }
                     } catch (metaPhoneErr: any) {
-                        console.warn(`⚠️ [UNLINK-META] Error desregistrando número en Meta (puede estar ya desregistrado):`, metaPhoneErr.response?.data || metaPhoneErr.message);
+                        console.warn(`âš ï¸ [UNLINK-META] Error desregistrando nÃºmero en Meta (puede estar ya desregistrado):`, metaPhoneErr.response?.data || metaPhoneErr.message);
                     }
 
                     try {
                         if (wabaId && wabaId !== 'PENDING') {
-                            console.log(`📡 [UNLINK-META] Eliminando suscripción de app para WABA ID: ${wabaId}...`);
+                            console.log(`ðŸ“¡ [UNLINK-META] Eliminando suscripciÃ³n de app para WABA ID: ${wabaId}...`);
                             await axios.delete(`https://graph.facebook.com/v25.0/${wabaId}/subscribed_apps`,
                                 { headers: { 'Authorization': `Bearer ${token}` } }
                             );
-                            console.log(`✅ [UNLINK-META] App unsubscribed de WABA exitosamente.`);
+                            console.log(`âœ… [UNLINK-META] App unsubscribed de WABA exitosamente.`);
                         }
                     } catch (metaWabaErr: any) {
-                        console.warn(`⚠️ [UNLINK-META] Error eliminando suscripción en Meta (puede estar ya eliminada):`, metaWabaErr.response?.data || metaWabaErr.message);
+                        console.warn(`âš ï¸ [UNLINK-META] Error eliminando suscripciÃ³n en Meta (puede estar ya eliminada):`, metaWabaErr.response?.data || metaWabaErr.message);
                     }
                 }
             }
 
             // 3. Eliminar onboarding de la base de datos para este proyecto
-            console.log(`🧹 [UNLINK-META] Eliminando registro onboarding de la DB...`);
+            console.log(`ðŸ§¹ [UNLINK-META] Eliminando registro onboarding de la DB...`);
             let obQuery = supabase
                 .from('meta_onboarding')
                 .delete()
@@ -3600,7 +3718,7 @@ export const registerBackofficeRoutes = (app: any) => {
             if (errOnboard) throw errOnboard;
 
             // 4. Eliminar rutas de routing_table de la base de datos para este proyecto
-            console.log(`🧹 [UNLINK-META] Eliminando registros de rutas en routing_table de la DB...`);
+            console.log(`ðŸ§¹ [UNLINK-META] Eliminando registros de rutas en routing_table de la DB...`);
             let rtQuery = supabase
                 .from('routing_table')
                 .delete()
@@ -3613,17 +3731,24 @@ export const registerBackofficeRoutes = (app: any) => {
             const { error: errRoutes } = await rtQuery;
             if (errRoutes) throw errRoutes;
 
-            console.log(`✅ [UNLINK-META] Desvinculación de Meta completada para el proyecto ${projectId}.`);
+            historyEvents.emit('whatsapp_line_changed', {
+                projectId,
+                project_id: projectId,
+                serviceId,
+                service_id: serviceId,
+                provider: 'meta-unlink'
+            });
+            console.log(`âœ… [UNLINK-META] DesvinculaciÃ³n de Meta completada para el proyecto ${projectId}.`);
 
-            // 5. Programar reinicio automático del bot para limpiar caché y revertir motor a por defecto
+            // 5. Programar reinicio automÃ¡tico del bot para limpiar cachÃ© y revertir motor a por defecto
             setTimeout(() => {
-                console.log('🔄 [SYSTEM] Reiniciando bot automáticamente para aplicar desvinculación...');
+                console.log('ðŸ”„ [SYSTEM] Reiniciando bot automÃ¡ticamente para aplicar desvinculaciÃ³n...');
                 process.exit(1);
             }, 3000);
 
             res.json({ success: true });
         } catch (error: any) {
-            console.error('❌ [UNLINK-META] Error crítico:', error);
+            console.error('âŒ [UNLINK-META] Error crÃ­tico:', error);
             res.status(500).json({ success: false, error: error.message });
         }
     });
@@ -3666,10 +3791,12 @@ export const registerBackofficeRoutes = (app: any) => {
         if (!assistantId) return res.status(400).json({ success: false, error: 'assistantId is required' });
 
         try {
-            console.log(`📡 [SYNC] Obteniendo instrucciones para el asistente: ${assistantId}`);
-            const dynamicOpenAI = await getOpenAI();
+            console.log(`ðŸ“¡ [SYNC] Obteniendo instrucciones para el asistente: ${assistantId}`);
+            const projectId = resolveProjectId(req);
+            const serviceId = resolveServiceId(req);
+            const dynamicOpenAI = await getOpenAI(projectId || undefined, serviceId || undefined);
             if (!dynamicOpenAI) {
-                return res.status(400).json({ success: false, error: 'OpenAI API Key no configurada. Por favor, guarde la configuración con una clave válida primero.' });
+                return res.status(400).json({ success: false, error: 'OpenAI API Key no configurada. Por favor, guarde la configuraciÃ³n con una clave vÃ¡lida primero.' });
             }
             const assistant = await dynamicOpenAI.beta.assistants.retrieve(assistantId);
 
@@ -3709,7 +3836,7 @@ export const registerBackofficeRoutes = (app: any) => {
         try {
             const PROTECTED_KEYS = ['OPENAI_ADMIN_API_KEY', 'OPENAI_API_KEY_TOOLS'];
             if (PROTECTED_KEYS.includes(key)) {
-                return res.status(403).json({ success: false, error: 'Esta variable es estática y solo puede editarse vía base de datos.' });
+                return res.status(403).json({ success: false, error: 'Esta variable es estÃ¡tica y solo puede editarse vÃ­a base de datos.' });
             }
             const projectId = resolveProjectId(req);
             const serviceId = resolveServiceId(req);
@@ -3776,7 +3903,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const projectId = resolveProjectId(req) || 'default';
             const { userId } = req.body;
             if (!userId) {
-                return res.status(400).json({ success: false, error: 'userId faltante en la petición' });
+                return res.status(400).json({ success: false, error: 'userId faltante en la peticiÃ³n' });
             }
 
             // Desactivar todas las cuentas de este proyecto
@@ -3796,7 +3923,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
             if (activateErr) throw activateErr;
 
-            res.json({ success: true, message: 'Cuenta de Mercado Pago activada con éxito.' });
+            res.json({ success: true, message: 'Cuenta de Mercado Pago activada con Ã©xito.' });
         } catch (error: any) {
             res.status(500).json({ success: false, error: error.message });
         }
@@ -3807,7 +3934,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const projectId = resolveProjectId(req) || 'default';
             const { userId } = req.body;
             if (!userId) {
-                return res.status(400).json({ success: false, error: 'userId faltante en la petición' });
+                return res.status(400).json({ success: false, error: 'userId faltante en la peticiÃ³n' });
             }
 
             // 1. Obtener la cuenta para ver si es la activa
@@ -3834,7 +3961,7 @@ export const registerBackofficeRoutes = (app: any) => {
                         client_secret: appSecret,
                         token: targetAccount.access_token
                     });
-                    console.log(`[MP Revoke] Token de usuario ${userId} revocado con éxito en Mercado Pago.`);
+                    console.log(`[MP Revoke] Token de usuario ${userId} revocado con Ã©xito en Mercado Pago.`);
                 }
             } catch (revokeErr: any) {
                 console.warn('[MP Revoke] No se pudo revocar el token en Mercado Pago:', revokeErr.response?.data || revokeErr.message);
@@ -3865,11 +3992,11 @@ export const registerBackofficeRoutes = (app: any) => {
                         .update({ is_active: true })
                         .eq('project_id', projectId)
                         .eq('user_id', nextActiveUserId);
-                    console.log(`[MP Delete] Cuenta activa eliminada. Activando cuenta ${nextActiveUserId} automáticamente.`);
+                    console.log(`[MP Delete] Cuenta activa eliminada. Activando cuenta ${nextActiveUserId} automÃ¡ticamente.`);
                 }
             }
 
-            res.json({ success: true, message: 'Cuenta de Mercado Pago eliminada con éxito.' });
+            res.json({ success: true, message: 'Cuenta de Mercado Pago eliminada con Ã©xito.' });
         } catch (error: any) {
             res.status(500).json({ success: false, error: error.message });
         }
@@ -3881,7 +4008,7 @@ export const registerBackofficeRoutes = (app: any) => {
         try {
             const projectId = resolveProjectId(req) || 'default';
 
-            // Detectar dominio público y guardarlo dinámicamente en settings
+            // Detectar dominio pÃºblico y guardarlo dinÃ¡micamente en settings
             const host = req.headers.host || '';
             const protocol = req.headers['x-forwarded-proto'] || 'https';
             const domain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.PROJECT_URL || `${protocol}://${host}`;
@@ -3899,7 +4026,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
             const appId = await depsHistoryHandler.getSetting('MP_APP_ID', projectId) || process.env.MP_APP_ID;
             if (!appId) {
-                return res.status(500).json({ success: false, error: 'Configuración MP_APP_ID faltante en el servidor o base de datos.' });
+                return res.status(500).json({ success: false, error: 'ConfiguraciÃ³n MP_APP_ID faltante en el servidor o base de datos.' });
             }
 
             const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -3920,7 +4047,7 @@ export const registerBackofficeRoutes = (app: any) => {
     app.get('/api/backoffice/mercadopago/callback', async (req: any, res: any) => {
         const { code, state } = req.query;
         if (!code) {
-            return res.status(400).send('Código de autorización faltante de Mercado Pago.');
+            return res.status(400).send('CÃ³digo de autorizaciÃ³n faltante de Mercado Pago.');
         }
 
         try {
@@ -3929,8 +4056,8 @@ export const registerBackofficeRoutes = (app: any) => {
             const appSecret = await depsHistoryHandler.getSetting('MP_PASS', projectId) || process.env.MP_PASS; // client_secret
 
             if (!appId || !appSecret) {
-                console.error('[MercadoPago Callback] Faltan credenciales de aplicación en env o DB:', { appId, appSecret, projectId });
-                return res.status(500).send(`Error interno: Configuración de la aplicación faltante. (Project: ${projectId}, AppID: ${appId ? 'Presente' : 'Faltante'}, Secret: ${appSecret ? 'Presente' : 'Faltante'})`);
+                console.error('[MercadoPago Callback] Faltan credenciales de aplicaciÃ³n en env o DB:', { appId, appSecret, projectId });
+                return res.status(500).send(`Error interno: ConfiguraciÃ³n de la aplicaciÃ³n faltante. (Project: ${projectId}, AppID: ${appId ? 'Presente' : 'Faltante'}, Secret: ${appSecret ? 'Presente' : 'Faltante'})`);
             }
 
             const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -3953,7 +4080,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const { access_token, public_key, user_id } = tokenRes.data;
 
             if (!access_token) {
-                return res.status(400).send('No se recibió el access token en la respuesta de Mercado Pago.');
+                return res.status(400).send('No se recibiÃ³ el access token en la respuesta de Mercado Pago.');
             }
 
             // Obtener el nickname e email del vendedor desde Mercado Pago
@@ -3980,7 +4107,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const isFirst = (existingAccounts || []).length === 0;
             const makeActive = isFirst || !hasActiveAccount;
 
-            // Guardar en la tabla mercadopago_acount_user (Soporta múltiples cuentas por proyecto)
+            // Guardar en la tabla mercadopago_acount_user (Soporta mÃºltiples cuentas por proyecto)
             await supabase.from('mercadopago_acount_user').upsert({
                 project_id: projectId,
                 access_token,
@@ -4000,7 +4127,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 updated_at: new Date().toISOString()
             }, { onConflict: 'user_id' });
 
-            // Retornar página HTML para cerrar el popup y notificar a la ventana principal, o redirigir si no hay opener
+            // Retornar pÃ¡gina HTML para cerrar el popup y notificar a la ventana principal, o redirigir si no hay opener
             const publicDomain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.PROJECT_URL || "";
             const cleanDomain = publicDomain.startsWith("http") ? publicDomain : publicDomain ? `https://${publicDomain}` : "";
             const origin = cleanDomain || '';
@@ -4011,12 +4138,12 @@ export const registerBackofficeRoutes = (app: any) => {
                 <!DOCTYPE html>
                 <html>
                 <head>
-                    <title>Vinculación Exitosa</title>
+                    <title>VinculaciÃ³n Exitosa</title>
                 </head>
                 <body>
                     <div style="text-align: center; margin-top: 50px; font-family: sans-serif;">
                         <h2>Vinculando cuenta...</h2>
-                        <p>Esta ventana se cerrará automáticamente.</p>
+                        <p>Esta ventana se cerrarÃ¡ automÃ¡ticamente.</p>
                     </div>
                     <script>
                         try {
@@ -4054,10 +4181,10 @@ export const registerBackofficeRoutes = (app: any) => {
         let message = 'Tu pago se encuentra en proceso o pendiente.';
 
         if (isApproved) {
-            title = '¡Pago Exitoso!';
+            title = 'Â¡Pago Exitoso!';
             color = '#10b981'; // green
             icon = 'fa-circle-check';
-            message = '¡Muchas gracias! Tu pago ha sido procesado con éxito.';
+            message = 'Â¡Muchas gracias! Tu pago ha sido procesado con Ã©xito.';
         } else if (status === 'rejected' || status === 'cancelled') {
             title = 'Pago Rechazado';
             color = '#ef4444'; // red
@@ -4165,7 +4292,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
                     <div class="details">
                         <div class="detail-row">
-                            <span class="label">ID de Operación:</span>
+                            <span class="label">ID de OperaciÃ³n:</span>
                             <span class="value">${payment_id || 'N/D'}</span>
                         </div>
                         <div class="detail-row">
@@ -4192,14 +4319,14 @@ export const registerBackofficeRoutes = (app: any) => {
         res.end('OK');
 
         try {
-            console.log('📡 [MP Webhook] Recibida notificación de pago:', JSON.stringify(req.body));
+            console.log('ðŸ“¡ [MP Webhook] Recibida notificaciÃ³n de pago:', JSON.stringify(req.body));
 
             const paymentId = req.body?.data?.id || req.body?.id || req.query?.id;
             const type = req.body?.type || req.body?.topic || req.query?.topic;
             const userId = req.body?.user_id || req.query?.user_id;
 
             if (type !== 'payment' || !paymentId) {
-                console.log(`[MP Webhook] Ignorando notificación tipo: ${type || 'indefinido'}, ID: ${paymentId || 'indefinido'}`);
+                console.log(`[MP Webhook] Ignorando notificaciÃ³n tipo: ${type || 'indefinido'}, ID: ${paymentId || 'indefinido'}`);
                 return;
             }
 
@@ -4235,7 +4362,7 @@ export const registerBackofficeRoutes = (app: any) => {
             }
 
             if (!accessToken) {
-                console.error('[MP Webhook] Error: No se encontró Access Token para procesar el pago ID:', paymentId);
+                console.error('[MP Webhook] Error: No se encontrÃ³ Access Token para procesar el pago ID:', paymentId);
                 return;
             }
 
@@ -4251,7 +4378,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const refProjectId = parts[0] || projectId;
             const chatId = parts[1];
 
-            // 5. Evitar procesar el mismo pago más de una vez (Deduplicación)
+            // 5. Evitar procesar el mismo pago mÃ¡s de una vez (DeduplicaciÃ³n)
             const { data: existingPayment, error: payErr } = await supabase
                 .from('mercadopago_payments_clients')
                 .select('id, status')
@@ -4265,7 +4392,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 return;
             }
 
-            // Guardar registro de la transacción en la base de datos mercadopago_payments_clients
+            // Guardar registro de la transacciÃ³n en la base de datos mercadopago_payments_clients
             if (payment) {
                 const { error: savePayErr } = await supabase
                     .from('mercadopago_payments_clients')
@@ -4289,7 +4416,7 @@ export const registerBackofficeRoutes = (app: any) => {
             }
 
             if (!payment || payment.status !== 'approved') {
-                console.log(`[MP Webhook] Pago ${paymentId} no está aprobado (Estado: ${payment?.status || 'indefinido'}). Ignorando.`);
+                console.log(`[MP Webhook] Pago ${paymentId} no estÃ¡ aprobado (Estado: ${payment?.status || 'indefinido'}). Ignorando.`);
                 return;
             }
 
@@ -4298,9 +4425,9 @@ export const registerBackofficeRoutes = (app: any) => {
                 return;
             }
 
-            console.log(`✅ [MP Webhook] Procesando pago aprobado ${paymentId} para chat: ${chatId}, proyecto: ${refProjectId}`);
+            console.log(`âœ… [MP Webhook] Procesando pago aprobado ${paymentId} para chat: ${chatId}, proyecto: ${refProjectId}`);
 
-            // 6. Enviar mensaje de confirmación por WhatsApp
+            // 6. Enviar mensaje de confirmaciÃ³n por WhatsApp
             const cleanChatId = chatId.includes('@') ? chatId : `${chatId}@s.whatsapp.net`;
             const isGroup = cleanChatId.includes('@g.us');
 
@@ -4311,19 +4438,19 @@ export const registerBackofficeRoutes = (app: any) => {
             const providerToSend = (isGroup && activeGroupAdapter) ? activeGroupAdapter : activeAdapter;
 
             if (!providerToSend) {
-                console.error('[MP Webhook] Error: No hay proveedor de WhatsApp disponible para enviar la confirmación.');
+                console.error('[MP Webhook] Error: No hay proveedor de WhatsApp disponible para enviar la confirmaciÃ³n.');
                 return;
             }
 
-            const confMessage = `✅ *Pago Aprobado*
-Hemos recibido tu pago con éxito.
+            const confMessage = `âœ… *Pago Aprobado*
+Hemos recibido tu pago con Ã©xito.
 
 *Detalles del pago:*
-• *Concepto:* ${payment.description || 'Cobro'}
-• *Monto:* $${payment.transaction_amount} ARS
-• *ID de Pago:* ${paymentId}
+â€¢ *Concepto:* ${payment.description || 'Cobro'}
+â€¢ *Monto:* $${payment.transaction_amount} ARS
+â€¢ *ID de Pago:* ${paymentId}
 
-¡Muchas gracias!`;
+Â¡Muchas gracias!`;
 
             try {
                 const providerResponse = await providerToSend.sendMessage(cleanChatId, confMessage, {});
@@ -4332,11 +4459,11 @@ Hemos recibido tu pago con éxito.
                 const externalId = providerResponse?.key?.id || providerResponse?.messages?.[0]?.id || providerResponse?.id || null;
                 await depsHistoryHandler.saveMessage(chatId, 'assistant', confMessage, 'text', undefined, undefined, externalId, 'whatsapp', refProjectId);
             } catch (sendErr: any) {
-                console.error('[MP Webhook] Error al enviar confirmación de WhatsApp:', sendErr.message);
+                console.error('[MP Webhook] Error al enviar confirmaciÃ³n de WhatsApp:', sendErr.message);
             }
 
         } catch (error: any) {
-            console.error('[MP Webhook] Error crítico procesando webhook:', error.response?.data || error.message);
+            console.error('[MP Webhook] Error crÃ­tico procesando webhook:', error.response?.data || error.message);
         }
     });
 
@@ -4365,7 +4492,7 @@ Hemos recibido tu pago con éxito.
     app.post('/api/backoffice/mercadopago/create-link', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         const { title, amount } = req.body;
         if (!title || !amount) {
-            return res.status(400).json({ success: false, error: 'Título y monto son requeridos.' });
+            return res.status(400).json({ success: false, error: 'TÃ­tulo y monto son requeridos.' });
         }
         try {
             const projectId = resolveProjectId(req);
@@ -4379,13 +4506,13 @@ Hemos recibido tu pago con éxito.
 
     // --- META SMB SYNC ---
     /**
-     * Dispara la sincronización de contactos o historial desde Meta SMB API.
-     * Esto enviará webhooks smb_app_state_sync o history que son procesados por el provider.
+     * Dispara la sincronizaciÃ³n de contactos o historial desde Meta SMB API.
+     * Esto enviarÃ¡ webhooks smb_app_state_sync o history que son procesados por el provider.
      */
     app.post('/api/backoffice/whatsapp/sync-smb', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         const { type } = req.body; // 'contacts' | 'history'
         if (!['contacts', 'history'].includes(type)) {
-            return res.status(400).json({ success: false, error: 'Tipo de sincronización inválido. Use "contacts" o "history".' });
+            return res.status(400).json({ success: false, error: 'Tipo de sincronizaciÃ³n invÃ¡lido. Use "contacts" o "history".' });
         }
 
         try {
@@ -4395,25 +4522,25 @@ Hemos recibido tu pago con éxito.
             if (!provider || provider.constructor.name !== 'MetaCloudProvider') {
                 return res.status(400).json({
                     success: false,
-                    error: 'El proveedor Meta Cloud no está activo. Verifique que el bot esté configurado con Meta.'
+                    error: 'El proveedor Meta Cloud no estÃ¡ activo. Verifique que el bot estÃ© configurado con Meta.'
                 });
             }
 
             const syncType = type === 'contacts' ? 'smb_app_state_sync' : 'history';
-            console.log(`📡 [BACKOFFICE] Disparando sincronización SMB: ${syncType}`);
+            console.log(`ðŸ“¡ [BACKOFFICE] Disparando sincronizaciÃ³n SMB: ${syncType}`);
             const result = await (provider as any).requestSmbSync(syncType);
 
             if (result) {
                 res.json({
                     success: true,
-                    message: `Solicitud de sincronización de ${type} enviada a Meta correctamente.`,
+                    message: `Solicitud de sincronizaciÃ³n de ${type} enviada a Meta correctamente.`,
                     data: result
                 });
             } else {
-                res.status(500).json({ success: false, error: 'Meta rechazó la solicitud de sincronización o hubo un error de red.' });
+                res.status(500).json({ success: false, error: 'Meta rechazÃ³ la solicitud de sincronizaciÃ³n o hubo un error de red.' });
             }
         } catch (error: any) {
-            console.error('❌ [BACKOFFICE] Error en sync-smb:', error);
+            console.error('âŒ [BACKOFFICE] Error en sync-smb:', error);
             res.status(500).json({ success: false, error: error.message });
         }
     });
@@ -4441,7 +4568,7 @@ Hemos recibido tu pago con éxito.
             if (!sock || typeof sock.groupFetchAllParticipating !== 'function') {
                 return res.status(400).json({
                     success: false,
-                    error: 'No hay un proveedor de WhatsApp (Baileys) activo o conectado para listar grupos. Verifica el código QR en la sección de Conexión.'
+                    error: 'No hay un proveedor de WhatsApp (Baileys) activo o conectado para listar grupos. Verifica el cÃ³digo QR en la secciÃ³n de ConexiÃ³n.'
                 });
             }
 
@@ -4497,8 +4624,8 @@ Hemos recibido tu pago con éxito.
      */
     app.post('/api/backoffice/chat/assign', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         const { chatId, agentId, userId } = req.body;
-        // agentId: 'asistente1', 'asistente2'... (Lógica del Bot)
-        // userId: uuid del usuario humano (Lógica CRM)
+        // agentId: 'asistente1', 'asistente2'... (LÃ³gica del Bot)
+        // userId: uuid del usuario humano (LÃ³gica CRM)
 
         if (!chatId) return res.status(400).json({ success: false, error: 'chatId is required' });
 
@@ -4514,7 +4641,7 @@ Hemos recibido tu pago con éxito.
             if (userId !== undefined) {
                 await depsHistoryHandler.assignChatToUser(chatId, userId, resolveProjectId(req), resolveServiceId(req));
 
-                // Si se asignó a un humano, desactivamos el bot automáticamente para no interferir
+                // Si se asignÃ³ a un humano, desactivamos el bot automÃ¡ticamente para no interferir
                 if (userId) {
                     await depsHistoryHandler.toggleBot(chatId, false, resolveProjectId(req), resolveServiceId(req));
                 }
@@ -4522,7 +4649,7 @@ Hemos recibido tu pago con éxito.
 
             res.json({ success: true });
         } catch (error: any) {
-            console.error('❌ Error en /api/backoffice/chat/assign:', error);
+            console.error('âŒ Error en /api/backoffice/chat/assign:', error);
             res.status(500).json({ success: false, error: error.message });
         }
     });
@@ -4551,7 +4678,7 @@ Hemos recibido tu pago con éxito.
     // --- CONFIGURACION DINAMICA (HOT-UPDATE) ---
 
     /**
-     * Obtiene todas las variables de configuración mezclando el entorno (.env)
+     * Obtiene todas las variables de configuraciÃ³n mezclando el entorno (.env)
      * con la base de datos (settings), priorizando la base de datos.
      */
     app.get('/api/backoffice/config', systemConfigAuth, async (req: any, res: any) => {
@@ -4585,7 +4712,7 @@ Hemos recibido tu pago con éxito.
             // 3. Mezclar: Prioridad DB > Railway/Env
             const mergedConfig: any = { ...railwayVars };
             
-            // Agrupar para dar prioridad al servicio específico
+            // Agrupar para dar prioridad al servicio especÃ­fico
             const selectedSettings: Record<string, any> = {};
             const settingOrigins: Record<string, string> = {};
 
@@ -4611,20 +4738,20 @@ Hemos recibido tu pago con éxito.
                 }
             });
 
-            // Aplicar la selección final sobre la configuración mezclada
+            // Aplicar la selecciÃ³n final sobre la configuraciÃ³n mezclada
             Object.keys(selectedSettings).forEach(k => {
                 mergedConfig[k] = selectedSettings[k];
             });
 
             res.json({ success: true, variables: mergedConfig });
         } catch (error: any) {
-            console.error('Error al obtener configuración:', error.message);
+            console.error('Error al obtener configuraciÃ³n:', error.message);
             res.status(500).json({ success: false, error: error.message });
         }
     });
 
     /**
-     * Guarda múltiples configuraciones en la base de datos sin reiniciar el bot.
+     * Guarda mÃºltiples configuraciones en la base de datos sin reiniciar el bot.
      */
     app.post('/api/backoffice/save-settings-bulk', systemConfigAuth, bodyParser.json(), async (req: any, res: any) => {
         const { settings } = req.body;
@@ -4639,7 +4766,7 @@ Hemos recibido tu pago con éxito.
 
             const projectId = resolveProjectId(req);
             const serviceId = resolveServiceId(req);
-            console.log(`📡 [HOT-UPDATE] Guardando ${keysToSave.length} variables en la base de datos para proyecto ${projectId} (Servicio: ${serviceId})...`);
+            console.log(`ðŸ“¡ [HOT-UPDATE] Guardando ${keysToSave.length} variables en la base de datos para proyecto ${projectId} (Servicio: ${serviceId})...`);
 
             const promises = keysToSave.map(key => {
                 let val = settings[key];
@@ -4654,7 +4781,7 @@ Hemos recibido tu pago con éxito.
             const credentialKeys = ['ADMIN_PASS', 'ADMIN_USER'];
             if (keysToSave.some(k => credentialKeys.includes(k))) {
                 invalidateAuthCache();
-                console.log('[HOT-UPDATE] Credenciales actualizadas — cache de auth invalidado.');
+                console.log('[HOT-UPDATE] Credenciales actualizadas â€” cache de auth invalidado.');
             }
 
             res.json({ success: true, message: `${keysToSave.length} variables guardadas (se omitieron ${keys.length - keysToSave.length} protegidas)` });
@@ -4681,7 +4808,7 @@ Hemos recibido tu pago con éxito.
             const { data: dbSettings, error } = await query;
             if (error) throw error;
             
-            // Agrupar por key para dar prioridad al servicio específico
+            // Agrupar por key para dar prioridad al servicio especÃ­fico
             const selectedSettings: Record<string, string> = {};
             const settingOrigins: Record<string, string> = {};
             
@@ -4735,7 +4862,9 @@ Hemos recibido tu pago con éxito.
     app.get('/api/backoffice/openai/models', systemConfigAuth, async (req: any, res: any) => {
         try {
             const { getOpenAI } = await import("../../apis/openai/openaiHelper");
-            const dynamicOpenAI = await getOpenAI();
+            const projectId = resolveProjectId(req);
+            const serviceId = resolveServiceId(req);
+            const dynamicOpenAI = await getOpenAI(projectId || undefined, serviceId || undefined);
 
             let models: string[] = [];
 
@@ -4746,7 +4875,7 @@ Hemos recibido tu pago con éxito.
                         .map((m: any) => m.id)
                         .filter((id: string) => {
                             const cleanId = id.toLowerCase();
-                            // Excluir embeddings, audio, imágenes, moderaciones, etc.
+                            // Excluir embeddings, audio, imÃ¡genes, moderaciones, etc.
                             if (
                                 cleanId.includes('embed') ||
                                 cleanId.includes('whisper') ||
@@ -4798,31 +4927,31 @@ Hemos recibido tu pago con éxito.
             // Prioridad: 1. DB, 2. Env
             const assistantId = await depsHistoryHandler.getConfig(envKey, projectId, serviceId) || process.env[envKey];
 
-            console.log(`📡 [HOT-UPDATE] Actualizando prompt para Asistente ${idx} en base de datos para proyecto ${projectId}...`);
+            console.log(`ðŸ“¡ [HOT-UPDATE] Actualizando prompt para Asistente ${idx} en base de datos para proyecto ${projectId}...`);
             await depsHistoryHandler.saveSetting(settingKey, prompt, projectId, serviceId);
 
             // Sincronizar hacia OpenAI (Empujar cambio al dashboard de OpenAI)
             const { getOpenAI } = await import("../../apis/openai/openaiHelper");
-            const dynamicOpenAI = await getOpenAI();
+            const dynamicOpenAI = await getOpenAI(projectId || undefined, serviceId || undefined);
 
             if (assistantId && dynamicOpenAI) {
                 try {
-                    console.log(`📡 [SYNC] Empujando nuevo prompt hacia OpenAI Assistant: ${assistantId}`);
+                    console.log(`ðŸ“¡ [SYNC] Empujando nuevo prompt hacia OpenAI Assistant: ${assistantId}`);
                     await dynamicOpenAI.beta.assistants.update(assistantId, {
                         instructions: prompt
                     });
 
-                    // CRITICAL FIX: Después de actualizar instrucciones, volvemos a sincronizar las tools
-                    // para evitar que queden vacías si el update sobreescribió el objeto.
+                    // CRITICAL FIX: DespuÃ©s de actualizar instrucciones, volvemos a sincronizar las tools
+                    // para evitar que queden vacÃ­as si el update sobreescribiÃ³ el objeto.
                     const { syncAssistantTools } = await import("../../apis/openai/openaiHelper");
-                    await syncAssistantTools(assistantId);
+                    await syncAssistantTools(assistantId, projectId, serviceId);
 
-                    console.log(`✅ [SYNC] Prompt y Herramientas de Asistente ${idx} actualizados en OpenAI exitosamente.`);
+                    console.log(`âœ… [SYNC] Prompt y Herramientas de Asistente ${idx} actualizados en OpenAI exitosamente.`);
                 } catch (apiError: any) {
-                    console.error(`⚠️ [HOT-UPDATE-SYNC-ERROR] Falló sincronización con OpenAI para ${assistantId}:`, apiError.message);
+                    console.error(`âš ï¸ [HOT-UPDATE-SYNC-ERROR] FallÃ³ sincronizaciÃ³n con OpenAI para ${assistantId}:`, apiError.message);
                 }
             } else if (!dynamicOpenAI) {
-                console.warn(`⚠️ [HOT-UPDATE] No se pudo obtener instancia de OpenAI. El prompt se guardó solo localmente.`);
+                console.warn(`âš ï¸ [HOT-UPDATE] No se pudo obtener instancia de OpenAI. El prompt se guardÃ³ solo localmente.`);
             }
 
             res.json({
@@ -4851,7 +4980,7 @@ Hemos recibido tu pago con éxito.
             const distDocsPath = path.join(rootDir, 'dist', 'docs', docType);
             const altPath = path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..', 'docs', docType);
 
-            console.log(`📂 [Docs] Buscando (${docType}) en: ${docsPath}, ${distDocsPath}, ${altPath}`);
+            console.log(`ðŸ“‚ [Docs] Buscando (${docType}) en: ${docsPath}, ${distDocsPath}, ${altPath}`);
 
             let content = '';
             if (fs.existsSync(docsPath)) {
@@ -4868,16 +4997,16 @@ Hemos recibido tu pago con éxito.
                 return res.status(404).json({ success: false, error: `Archivo no encontrado. Intentado en: ${docsPath} y rutas alternativas.` });
             }
         } catch (error: any) {
-            console.error('❌ [Docs] Error:', error.message);
+            console.error('âŒ [Docs] Error:', error.message);
             res.status(500).json({ success: false, error: error.message });
         }
     });
 
-    // ─────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // LISTA NEGRA
-    // ─────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-    /** GET /api/backoffice/blacklist/status — ¿Está activa la integración? */
+    /** GET /api/backoffice/blacklist/status â€” Â¿EstÃ¡ activa la integraciÃ³n? */
     app.get('/api/backoffice/blacklist/status', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
@@ -4889,7 +5018,7 @@ Hemos recibido tu pago con éxito.
         }
     });
 
-    /** POST /api/backoffice/blacklist/activate — Activa la lista negra */
+    /** POST /api/backoffice/blacklist/activate â€” Activa la lista negra */
     app.post('/api/backoffice/blacklist/activate', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
@@ -4902,7 +5031,7 @@ Hemos recibido tu pago con éxito.
                 .from('settings')
                 .upsert(upsertData, { onConflict: 'project_id,service_id,key' });
             if (error) throw error;
-            // Invalidar caché
+            // Invalidar cachÃ©
             (depsHistoryHandler as any).settingsCache?.delete?.(`${projectId}:${serviceId || 'default'}:BLACKLIST_ACTIVE`);
             res.json({ success: true });
         } catch (e: any) {
@@ -4910,7 +5039,7 @@ Hemos recibido tu pago con éxito.
         }
     });
 
-    /** POST /api/backoffice/blacklist/deactivate — Desactiva y elimina todos los registros */
+    /** POST /api/backoffice/blacklist/deactivate â€” Desactiva y elimina todos los registros */
     app.post('/api/backoffice/blacklist/deactivate', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
@@ -4943,7 +5072,7 @@ Hemos recibido tu pago con éxito.
         }
     });
 
-    /** GET /api/backoffice/blacklist — Lista todas las entradas del proyecto */
+    /** GET /api/backoffice/blacklist â€” Lista todas las entradas del proyecto */
     app.get('/api/backoffice/blacklist', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
@@ -4986,7 +5115,7 @@ Hemos recibido tu pago con éxito.
         }
     });
 
-    /** POST /api/backoffice/blacklist — Upsert de una entrada */
+    /** POST /api/backoffice/blacklist â€” Upsert de una entrada */
     app.post('/api/backoffice/blacklist', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         try {
             const { chat_id, sin_bot, bloqueado_crm, notes } = req.body;
@@ -5016,7 +5145,7 @@ Hemos recibido tu pago con éxito.
         }
     });
 
-    /** DELETE /api/backoffice/blacklist/:chatId — Elimina una entrada */
+    /** DELETE /api/backoffice/blacklist/:chatId â€” Elimina una entrada */
     app.delete('/api/backoffice/blacklist/:chatId', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
@@ -5039,7 +5168,7 @@ Hemos recibido tu pago con éxito.
         }
     });
 
-    /** GET /api/backoffice/blacklist/check/:chatId — Verifica si un chat está en lista negra */
+    /** GET /api/backoffice/blacklist/check/:chatId â€” Verifica si un chat estÃ¡ en lista negra */
     app.get('/api/backoffice/blacklist/check/:chatId', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
@@ -5061,7 +5190,7 @@ Hemos recibido tu pago con éxito.
         }
     });
 
-    /** POST /api/backoffice/blacklist/toggle/:chatId — Agrega o quita de lista negra (toggle rápido desde header) */
+    /** POST /api/backoffice/blacklist/toggle/:chatId â€” Agrega o quita de lista negra (toggle rÃ¡pido desde header) */
     app.post('/api/backoffice/blacklist/toggle/:chatId', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
@@ -5108,11 +5237,11 @@ Hemos recibido tu pago con éxito.
         }
     });
 
-    // ─────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // NOTIFICACIONES
-    // ─────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-    /** GET /api/backoffice/notifications/status — ¿Está activa la integración? */
+    /** GET /api/backoffice/notifications/status â€” Â¿EstÃ¡ activa la integraciÃ³n? */
     app.get('/api/backoffice/notifications/status', backofficeAuth, async (req: any, res: any) => {
         try {
             res.json({ active: true });
@@ -5121,7 +5250,7 @@ Hemos recibido tu pago con éxito.
         }
     });
 
-    /** POST /api/backoffice/notifications/activate — Activa la integración de notificaciones */
+    /** POST /api/backoffice/notifications/activate â€” Activa la integraciÃ³n de notificaciones */
     app.post('/api/backoffice/notifications/activate', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         try {
             const projectId = depsHistoryHandler.PROJECT_IDENTIFIER;
@@ -5136,7 +5265,7 @@ Hemos recibido tu pago con éxito.
         }
     });
 
-    /** POST /api/backoffice/notifications/deactivate — Desactiva la integración y resetea contadores */
+    /** POST /api/backoffice/notifications/deactivate â€” Desactiva la integraciÃ³n y resetea contadores */
     app.post('/api/backoffice/notifications/deactivate', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         try {
             const projectId = depsHistoryHandler.PROJECT_IDENTIFIER;
@@ -5160,7 +5289,7 @@ Hemos recibido tu pago con éxito.
             if (settErr) throw settErr;
             (depsHistoryHandler as any).settingsCache?.delete?.(`${projectId}:NOTIFICATIONS_ACTIVE`);
 
-            // Notificar a clientes conectados que la integración se desactivó para limpiar badges
+            // Notificar a clientes conectados que la integraciÃ³n se desactivÃ³ para limpiar badges
             historyEvents.emit('notifications_deactivated', { projectId });
 
             res.json({ success: true });
@@ -5209,13 +5338,12 @@ Hemos recibido tu pago con éxito.
     });
 
     // REPORTES BOT
-    // ─────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /** GET /api/backoffice/reportes/status */
     app.get('/api/backoffice/reportes/status', backofficeAuth, async (req: any, res: any) => {
         try {
-            const active = await depsHistoryHandler.getSetting('REPORTES_ACTIVE');
-            res.json({ active: active === 'true' });
+            res.json({ success: true, active: true, native: true });
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });
         }
@@ -5224,13 +5352,7 @@ Hemos recibido tu pago con éxito.
     /** POST /api/backoffice/reportes/activate */
     app.post('/api/backoffice/reportes/activate', backofficeAuth, async (req: any, res: any) => {
         try {
-            const projectId = depsHistoryHandler.PROJECT_IDENTIFIER;
-            const { error } = await supabase
-                .from('settings')
-                .upsert({ project_id: projectId, key: 'REPORTES_ACTIVE', value: 'true' }, { onConflict: 'project_id,key' });
-            if (error) throw error;
-            (depsHistoryHandler as any).settingsCache?.delete?.(`${projectId}:REPORTES_ACTIVE`);
-            res.json({ success: true });
+            res.json({ success: true, active: true, native: true });
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });
         }
@@ -5239,19 +5361,13 @@ Hemos recibido tu pago con éxito.
     /** POST /api/backoffice/reportes/deactivate */
     app.post('/api/backoffice/reportes/deactivate', backofficeAuth, async (req: any, res: any) => {
         try {
-            const projectId = depsHistoryHandler.PROJECT_IDENTIFIER;
-            const { error } = await supabase
-                .from('settings')
-                .upsert({ project_id: projectId, key: 'REPORTES_ACTIVE', value: 'false' }, { onConflict: 'project_id,key' });
-            if (error) throw error;
-            (depsHistoryHandler as any).settingsCache?.delete?.(`${projectId}:REPORTES_ACTIVE`);
-            res.json({ success: true });
+            res.json({ success: true, active: true, native: true });
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });
         }
     });
 
-    /** GET /api/backoffice/reportes — Lista reportes del bot (tickets tipo Nuevo Lead) para este proyecto */
+    /** GET /api/backoffice/reportes â€” Lista reportes del bot (tickets tipo Nuevo Lead) para este proyecto */
     app.get('/api/backoffice/reportes', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = depsHistoryHandler.PROJECT_IDENTIFIER;
@@ -5261,16 +5377,175 @@ Hemos recibido tu pago con éxito.
                 .select('id, chat_id, titulo, tipo, descripcion, created_at, updated_at')
                 .eq('project_id', projectId)
                 .eq('tipo', 'Nuevo Lead')
-                .order('updated_at', { ascending: false })
+                .order('created_at', { ascending: false })
                 .limit(limit);
             if (error) throw error;
-            const reportes = (data || []).map((t: any) => ({ ...t, nombre: t.titulo }));
+            const reportes = (data || []).map((t: any) => ({
+                ...t,
+                nombre: t.titulo,
+                descripcion: getLatestLeadReportDescription(t.descripcion)
+            }));
             res.json({ success: true, reportes });
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });
         }
     });
 
+    /** GET /api/backoffice/reportes/export â€” Exporta solo tickets tipo Nuevo Lead */
+    app.get('/api/backoffice/reportes/export', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+
+            let query = supabase
+                .from('tickets')
+                .select('id, chat_id, titulo, tipo, estado, prioridad, descripcion, created_at, updated_at, service_id')
+                .eq('project_id', projectId)
+                .eq('tipo', 'Nuevo Lead')
+                .order('created_at', { ascending: false });
+
+            if (serviceId && serviceId !== 'default_service') {
+                query = query.or(`service_id.eq.${serviceId},service_id.eq.default_service,service_id.is.null`);
+            }
+
+            const { data, error } = await query;
+            if (error) throw error;
+
+            const workbook = new ExcelJS.Workbook();
+            workbook.creator = 'Bot-RialWay';
+            workbook.created = new Date();
+            workbook.modified = new Date();
+
+            const sheet = workbook.addWorksheet('Reportes de Leads', {
+                views: [{ state: 'frozen', ySplit: 1 }]
+            });
+
+            sheet.columns = [
+                { header: 'Fecha creacion', key: 'created_at', width: 22 },
+                { header: 'Ultima actualizacion', key: 'updated_at', width: 22 },
+                { header: 'Tipo', key: 'tipo', width: 16 },
+                { header: 'Estado', key: 'estado', width: 18 },
+                { header: 'Prioridad', key: 'prioridad', width: 14 },
+                { header: 'Lead / Nombre', key: 'titulo', width: 32 },
+                { header: 'Telefono', key: 'telefono', width: 18 },
+                { header: 'Resumen / Descripcion', key: 'descripcion', width: 90 }
+            ];
+
+            const headerRow = sheet.getRow(1);
+            headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+            headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F4C81' } };
+            headerRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+            headerRow.height = 24;
+
+            (data || []).forEach((ticket: any) => {
+                const chatId = ticket.chat_id || '';
+                const phone = String(chatId).replace(/\D/g, '');
+                const row = sheet.addRow({
+                    created_at: ticket.created_at ? new Date(ticket.created_at) : '',
+                    updated_at: ticket.updated_at ? new Date(ticket.updated_at) : '',
+                    tipo: ticket.tipo || '',
+                    estado: ticket.estado || '',
+                    prioridad: ticket.prioridad || '',
+                    titulo: ticket.titulo || chatId || 'Sin nombre',
+                    telefono: phone,
+                    descripcion: getLatestLeadReportDescription(ticket.descripcion)
+                });
+                row.alignment = { vertical: 'top', wrapText: true };
+            });
+
+            sheet.autoFilter = {
+                from: { row: 1, column: 1 },
+                to: { row: 1, column: sheet.columnCount }
+            };
+
+            sheet.eachRow((row, rowNumber) => {
+                row.eachCell((cell) => {
+                    cell.border = {
+                        top: { style: 'thin', color: { argb: 'FFD7DEE8' } },
+                        left: { style: 'thin', color: { argb: 'FFD7DEE8' } },
+                        bottom: { style: 'thin', color: { argb: 'FFD7DEE8' } },
+                        right: { style: 'thin', color: { argb: 'FFD7DEE8' } }
+                    };
+                    if (rowNumber > 1) {
+                        cell.alignment = { vertical: 'top', wrapText: true };
+                    }
+                });
+            });
+
+            sheet.getColumn('created_at').numFmt = 'dd/mm/yyyy hh:mm';
+            sheet.getColumn('updated_at').numFmt = 'dd/mm/yyyy hh:mm';
+
+            const buffer = await workbook.xlsx.writeBuffer();
+            const filename = `reportes_nuevo_lead_${new Date().toISOString().slice(0, 10)}.xlsx`;
+            res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.end(Buffer.from(buffer));
+        } catch (e: any) {
+            console.error('[Reportes] Error exportando XLSX:', e);
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+
+    /** GET /api/backoffice/waba-groups/capability */
+    app.get('/api/backoffice/waba-groups/capability', backofficeAuth, async (req: any, res: any) => {
+        const isPresentMetaValue = (value: any): boolean => {
+            if (value === null || value === undefined) return false;
+            const normalized = String(value).trim();
+            return normalized.length > 0 && normalized.toUpperCase() !== 'PENDING';
+        };
+
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+            const metaConfig = await depsHistoryHandler.getMetaOnboardingData(projectId, false, serviceId);
+
+            const whatsappToken = metaConfig?.whatsappToken || metaConfig?.access_token;
+            const whatsappNumberId = metaConfig?.whatsappNumberId || metaConfig?.phone_number_id;
+            const wabaId = metaConfig?.whatsappBusinessId || metaConfig?.waba_id;
+            const metaLinked = isPresentMetaValue(wabaId) && isPresentMetaValue(whatsappNumberId) && isPresentMetaValue(whatsappToken);
+
+            if (!metaLinked) {
+                return res.json({
+                    success: true,
+                    metaLinked: false,
+                    groupsEligible: false,
+                    reason: 'META_NOT_LINKED'
+                });
+            }
+
+            try {
+                await axios.get(`https://graph.facebook.com/v25.0/${whatsappNumberId}/groups`, {
+                    params: { limit: 1 },
+                    timeout: 7000,
+                    headers: { Authorization: `Bearer ${whatsappToken}` }
+                });
+
+                return res.json({
+                    success: true,
+                    metaLinked: true,
+                    groupsEligible: true,
+                    reason: 'GROUPS_API_AVAILABLE'
+                });
+            } catch (err: any) {
+                const metaError = err.response?.data?.error;
+                const metaCode = metaError?.code || null;
+                const metaMessage = metaError?.message || err.message || 'No se pudo validar Groups API.';
+
+                return res.json({
+                    success: true,
+                    metaLinked: true,
+                    groupsEligible: false,
+                    reason: metaCode === 131215 ? 'PHONE_NOT_ELIGIBLE' : 'GROUPS_API_UNAVAILABLE',
+                    metaCode,
+                    metaMessage
+                });
+            }
+        } catch (e: any) {
+            console.error('[WabaGroups] Error verificando capacidad Groups API:', e);
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
     /** GET /api/backoffice/waba-groups/status */
     app.get('/api/backoffice/waba-groups/status', backofficeAuth, async (req: any, res: any) => {
         try {
@@ -5321,10 +5596,10 @@ Hemos recibido tu pago con éxito.
                 return res.status(400).json({ success: false, error: 'Los contactos deben ser un array.' });
             }
             if (contacts.length > 8) {
-                return res.status(400).json({ success: false, error: 'Un grupo no puede tener más de 8 contactos.' });
+                return res.status(400).json({ success: false, error: 'Un grupo no puede tener mÃ¡s de 8 contactos.' });
             }
 
-            // Helpers para envío de invitación y creación en Meta
+            // Helpers para envÃ­o de invitaciÃ³n y creaciÃ³n en Meta
             const sendDirectWabaMessage = async (phone: string, text: string, whatsappNumberId: string, whatsappToken: string) => {
                 const cleanNumber = phone.replace(/\D/g, '');
                 let toFormat = cleanNumber;
@@ -5334,7 +5609,7 @@ Hemos recibido tu pago con éxito.
                     }
                 }
                 const url = `https://graph.facebook.com/v25.0/${whatsappNumberId}/messages`;
-                console.log(`[MetaGroupsAPI] Enviando mensaje de invitación a +${toFormat}...`);
+                console.log(`[MetaGroupsAPI] Enviando mensaje de invitaciÃ³n a +${toFormat}...`);
                 try {
                     const resMsg = await axios.post(url, {
                         messaging_product: "whatsapp",
@@ -5348,10 +5623,10 @@ Hemos recibido tu pago con éxito.
                             'Content-Type': 'application/json'
                         }
                     });
-                    console.log(`[MetaGroupsAPI] Mensaje de invitación enviado con éxito a +${toFormat}. ID: ${resMsg.data.messages?.[0]?.id || 'unknown'}`);
+                    console.log(`[MetaGroupsAPI] Mensaje de invitaciÃ³n enviado con Ã©xito a +${toFormat}. ID: ${resMsg.data.messages?.[0]?.id || 'unknown'}`);
                     return true;
                 } catch (err: any) {
-                    console.error(`[MetaGroupsAPI] Error al enviar invitación a +${toFormat}:`, err.response?.data || err.message);
+                    console.error(`[MetaGroupsAPI] Error al enviar invitaciÃ³n a +${toFormat}:`, err.response?.data || err.message);
                     return false;
                 }
             };
@@ -5377,14 +5652,14 @@ Hemos recibido tu pago con éxito.
                         }
                     });
                     groupId = resCreate.data.id;
-                    console.log(`[MetaGroupsAPI] Grupo creado con éxito en Meta WABA. ID: ${groupId}`);
+                    console.log(`[MetaGroupsAPI] Grupo creado con Ã©xito en Meta WABA. ID: ${groupId}`);
                 } catch (err: any) {
                     console.error(`[MetaGroupsAPI] Error al crear grupo en Meta WABA:`, err.response?.data || err.message);
                     throw err;
                 }
 
-                // Obtener enlace de invitación
-                console.log(`[MetaGroupsAPI] Solicitando enlace de invitación para el grupo ${groupId}...`);
+                // Obtener enlace de invitaciÃ³n
+                console.log(`[MetaGroupsAPI] Solicitando enlace de invitaciÃ³n para el grupo ${groupId}...`);
                 const inviteUrl = `https://graph.facebook.com/v25.0/${groupId}/invite_link`;
                 let inviteLink: string;
                 try {
@@ -5397,16 +5672,16 @@ Hemos recibido tu pago con éxito.
                         }
                     });
                     inviteLink = resInvite.data.invite_link;
-                    console.log(`[MetaGroupsAPI] Enlace de invitación obtenido para el grupo ${groupId}: ${inviteLink}`);
+                    console.log(`[MetaGroupsAPI] Enlace de invitaciÃ³n obtenido para el grupo ${groupId}: ${inviteLink}`);
                 } catch (err: any) {
-                    console.error(`[MetaGroupsAPI] Error al obtener el enlace de invitación para ${groupId}:`, err.response?.data || err.message);
+                    console.error(`[MetaGroupsAPI] Error al obtener el enlace de invitaciÃ³n para ${groupId}:`, err.response?.data || err.message);
                     throw err;
                 }
 
                 // Enviar invitaciones
                 if (groupContacts.length > 0) {
                     console.log(`[MetaGroupsAPI] Enviando invitaciones a ${groupContacts.length} contactos...`);
-                    const inviteMessage = `¡Hola! Te invitamos a unirte al grupo oficial de reportes de RialWay *"${groupName}"*. Para unirte, haz clic en el siguiente enlace de invitación: ${inviteLink}`;
+                    const inviteMessage = `Â¡Hola! Te invitamos a unirte al grupo oficial de reportes de RialWay *"${groupName}"*. Para unirte, haz clic en el siguiente enlace de invitaciÃ³n: ${inviteLink}`;
 
                     for (const contact of groupContacts) {
                         if (contact.phone) {
@@ -5418,7 +5693,7 @@ Hemos recibido tu pago con éxito.
                 return groupId;
             };
 
-            const metaConfig = await depsHistoryHandler.getMetaOnboardingData(projectId, true, serviceId);
+            const metaConfig = await depsHistoryHandler.getMetaOnboardingData(projectId, false, serviceId);
             let groupJid = null;
             let metaError: any = null;
 
@@ -5430,11 +5705,11 @@ Hemos recibido tu pago con éxito.
             }
 
             if (existingGroup && existingGroup.jid && !existingGroup.jid.includes('@g.us')) {
-                // Caso A: El grupo ya existía como grupo de Meta
+                // Caso A: El grupo ya existÃ­a como grupo de Meta
                 groupJid = existingGroup.jid;
                 if (metaConfig?.whatsappToken && metaConfig?.whatsappNumberId) {
                     try {
-                        // 1. Actualizar el subject si cambió
+                        // 1. Actualizar el subject si cambiÃ³
                         if (existingGroup.name !== name) {
                             console.log(`[MetaGroupsAPI] Actualizando subject del grupo Meta ${groupJid} a: ${name}`);
                             const updateUrl = `https://graph.facebook.com/v25.0/${groupJid}`;
@@ -5447,14 +5722,14 @@ Hemos recibido tu pago con éxito.
                                     'Content-Type': 'application/json'
                                 }
                             });
-                            console.log(`[MetaGroupsAPI] Subject de grupo Meta ${groupJid} actualizado con éxito.`);
+                            console.log(`[MetaGroupsAPI] Subject de grupo Meta ${groupJid} actualizado con Ã©xito.`);
                         }
 
-                        // 2. Enviar invitación a los contactos nuevos
+                        // 2. Enviar invitaciÃ³n a los contactos nuevos
                         const oldPhones = (existingGroup.contacts || []).map((c: any) => c.phone).filter(Boolean);
                         const newContacts = contacts.filter((c: any) => c.phone && !oldPhones.includes(c.phone));
                         if (newContacts.length > 0) {
-                            console.log(`[MetaGroupsAPI] Se detectaron ${newContacts.length} contactos nuevos. Obteniendo enlace de invitación...`);
+                            console.log(`[MetaGroupsAPI] Se detectaron ${newContacts.length} contactos nuevos. Obteniendo enlace de invitaciÃ³n...`);
                             const inviteUrl = `https://graph.facebook.com/v25.0/${groupJid}/invite_link`;
                             const resInvite = await axios.post(inviteUrl, {
                                 messaging_product: 'whatsapp'
@@ -5465,9 +5740,9 @@ Hemos recibido tu pago con éxito.
                                 }
                             });
                             const inviteLink = resInvite.data.invite_link;
-                            console.log(`[MetaGroupsAPI] Enlace de invitación obtenido para el grupo existente: ${inviteLink}`);
+                            console.log(`[MetaGroupsAPI] Enlace de invitaciÃ³n obtenido para el grupo existente: ${inviteLink}`);
 
-                            const inviteMessage = `¡Hola! Te invitamos a unirte al grupo oficial de reportes de RialWay *"${name}"*. Para unirte, haz clic en el siguiente enlace de invitación: ${inviteLink}`;
+                            const inviteMessage = `Â¡Hola! Te invitamos a unirte al grupo oficial de reportes de RialWay *"${name}"*. Para unirte, haz clic en el siguiente enlace de invitaciÃ³n: ${inviteLink}`;
                             for (const contact of newContacts) {
                                 await sendDirectWabaMessage(contact.phone, inviteMessage, metaConfig.whatsappNumberId, metaConfig.whatsappToken);
                             }
@@ -5479,7 +5754,7 @@ Hemos recibido tu pago con éxito.
                     console.warn(`[MetaGroupsAPI] No hay credenciales de Meta configuradas para actualizar el grupo Meta ${groupJid}.`);
                 }
             } else if (existingGroup && existingGroup.jid && existingGroup.jid.includes('@g.us')) {
-                // Caso B: El grupo ya existía como grupo de Baileys
+                // Caso B: El grupo ya existÃ­a como grupo de Baileys
                 groupJid = existingGroup.jid;
 
                 let sock: any = null;
@@ -5501,7 +5776,7 @@ Hemos recibido tu pago con éxito.
                             .filter(Boolean)
                             .map((num: string) => `${num}@s.whatsapp.net`);
 
-                        // Actualizar nombre si cambió
+                        // Actualizar nombre si cambiÃ³
                         if (existingGroup.name !== name) {
                             console.log(`[WabaGroups] Actualizando subject del grupo Baileys ${groupJid} a: ${name}`);
                             await sock.groupUpdateSubject(groupJid, name);
@@ -5529,8 +5804,8 @@ Hemos recibido tu pago con éxito.
                     }
                 }
             } else {
-                // Caso C: Es un grupo nuevo o el grupo existente no tenía JID
-                // Creación estrictamente con Meta WABA
+                // Caso C: Es un grupo nuevo o el grupo existente no tenÃ­a JID
+                // CreaciÃ³n estrictamente con Meta WABA
                 if (!metaConfig?.whatsappToken || !metaConfig?.whatsappNumberId) {
                     return res.status(400).json({
                         success: false,
@@ -5599,15 +5874,15 @@ Hemos recibido tu pago con éxito.
                         }
                     }
                 } else {
-                    // Grupo de Meta: revocar enlace de invitación
-                    const metaConfig = await depsHistoryHandler.getMetaOnboardingData(projectId, true, serviceId);
+                    // Grupo de Meta: revocar enlace de invitaciÃ³n
+                    const metaConfig = await depsHistoryHandler.getMetaOnboardingData(projectId, false, serviceId);
                     if (metaConfig?.whatsappToken) {
-                        console.log(`[MetaGroupsAPI] Revocando enlace de invitación para el grupo Meta ${existingGroup.jid}...`);
+                        console.log(`[MetaGroupsAPI] Revocando enlace de invitaciÃ³n para el grupo Meta ${existingGroup.jid}...`);
                         try {
                             await axios.delete(`https://graph.facebook.com/v25.0/${existingGroup.jid}/invite_link`, {
                                 headers: { 'Authorization': `Bearer ${metaConfig.whatsappToken}` }
                             });
-                            console.log(`[MetaGroupsAPI] Enlace de invitación revocado con éxito.`);
+                            console.log(`[MetaGroupsAPI] Enlace de invitaciÃ³n revocado con Ã©xito.`);
                         } catch (metaErr: any) {
                             console.warn(`[MetaGroupsAPI] Advertencia al revocar enlace del grupo Meta ${existingGroup.jid}:`, metaErr.response?.data || metaErr.message);
                         }
@@ -5622,7 +5897,7 @@ Hemos recibido tu pago con éxito.
         }
     });
 
-    /** POST /api/backoffice/chat/read/:chatId — Resetea unread_count a 0 para un chat */
+    /** POST /api/backoffice/chat/read/:chatId â€” Resetea unread_count a 0 para un chat */
     app.post('/api/backoffice/chat/read/:chatId', backofficeAuth, async (req: any, res: any) => {
         try {
             const { chatId } = req.params;
@@ -5652,11 +5927,11 @@ Hemos recibido tu pago con éxito.
     });
 };
 
-/** Procesa la importación de contactos desde Excel */
+/** Procesa la importaciÃ³n de contactos desde Excel */
 export const processImportExcel = async (req: any, res: any) => {
     const depsHistoryHandler = HistoryHandlerClass;
 
-    if (!req.file) return res.status(400).json({ success: false, error: 'No se subió ningún archivo' });
+    if (!req.file) return res.status(400).json({ success: false, error: 'No se subiÃ³ ningÃºn archivo' });
 
     const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
     const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
@@ -5668,7 +5943,7 @@ export const processImportExcel = async (req: any, res: any) => {
         const data = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]) as any[];
 
         if (!data || data.length === 0) {
-            return res.status(400).json({ success: false, error: 'El archivo está vacío' });
+            return res.status(400).json({ success: false, error: 'El archivo estÃ¡ vacÃ­o' });
         }
 
         const uniqueChatsMap = new Map<string, any>();
@@ -5701,7 +5976,7 @@ export const processImportExcel = async (req: any, res: any) => {
                 name = String(row.name || row.Name || row.nombre || row.Nombre || '').trim();
             }
 
-            // NORMALIZACIÓN Y FORMATO INTERNACIONAL: Quitar caracteres no numéricos y formatear (ej: 2914464733 -> 5492914464733)
+            // NORMALIZACIÃ“N Y FORMATO INTERNACIONAL: Quitar caracteres no numÃ©ricos y formatear (ej: 2914464733 -> 5492914464733)
             let phone = rawPhone.replace(/\D/g, '');
             if (!phone) continue;
 
@@ -5713,7 +5988,7 @@ export const processImportExcel = async (req: any, res: any) => {
                 phone = `549${phone.slice(2)}`;
             }
 
-            // Deduplicación en memoria para el archivo importado
+            // DeduplicaciÃ³n en memoria para el archivo importado
             const existing = uniqueChatsMap.get(phone);
             if (!existing || (!existing.name && name)) {
                 uniqueChatsMap.set(phone, {
@@ -5783,7 +6058,7 @@ export const processImportExcel = async (req: any, res: any) => {
         });
 
     } catch (error: any) {
-        console.error('❌ Error importando contactos:', error);
+        console.error('âŒ Error importando contactos:', error);
         return res.status(500).json({ success: false, error: error.message });
     }
 };
@@ -5796,7 +6071,7 @@ export const processCreateIndividualContact = async (req: any, res: any) => {
 
         let phone = String(rawPhone || '').replace(/\D/g, '').trim();
         if (!phone) {
-            return res.status(400).json({ success: false, error: 'Proporciona un número de teléfono válido.' });
+            return res.status(400).json({ success: false, error: 'Proporciona un nÃºmero de telÃ©fono vÃ¡lido.' });
         }
 
         if (phone.startsWith('0')) {
@@ -5864,7 +6139,7 @@ export const processCreateIndividualContact = async (req: any, res: any) => {
             }
         }
 
-        console.log(`✅ [create-individual] Contacto ${phone} (${name || 'Sin nombre'}) creado para proyecto ${targetProjectId}`);
+        console.log(`âœ… [create-individual] Contacto ${phone} (${name || 'Sin nombre'}) creado para proyecto ${targetProjectId}`);
 
         return res.json({
             success: true,
@@ -5892,9 +6167,9 @@ export const processDeleteChat = async (req: any, res: any) => {
             return res.status(500).json({ success: false, error: 'Base de datos no disponible.' });
         }
 
-        console.log(`🗑️ [DeleteChat] Solicitando eliminación del chat ${chatId} exclusivamente para el proyecto ${targetProjectId}...`);
+        console.log(`ðŸ—‘ï¸ [DeleteChat] Solicitando eliminaciÃ³n del chat ${chatId} exclusivamente para el proyecto ${targetProjectId}...`);
 
-        // 1. Eliminar mensajes pertenecientes únicamente a este chat y proyecto
+        // 1. Eliminar mensajes pertenecientes Ãºnicamente a este chat y proyecto
         const { error: msgErr } = await supabase
             .from('messages')
             .delete()
@@ -5914,7 +6189,7 @@ export const processDeleteChat = async (req: any, res: any) => {
                 .eq('project_id', targetProjectId);
         } catch (tErr) { /* ignore */ }
 
-        // 3. Eliminar chat únicamente para ESTE project_id (aislamiento estricto por proyecto)
+        // 3. Eliminar chat Ãºnicamente para ESTE project_id (aislamiento estricto por proyecto)
         const { error: chatErr } = await supabase
             .from('chats')
             .delete()
@@ -5926,7 +6201,7 @@ export const processDeleteChat = async (req: any, res: any) => {
             return res.status(500).json({ success: false, error: chatErr.message });
         }
 
-        console.log(`✅ [DeleteChat] Chat ${chatId} borrado con éxito del proyecto ${targetProjectId}.`);
+        console.log(`âœ… [DeleteChat] Chat ${chatId} borrado con Ã©xito del proyecto ${targetProjectId}.`);
 
         return res.json({
             success: true,

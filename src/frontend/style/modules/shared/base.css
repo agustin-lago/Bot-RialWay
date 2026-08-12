@@ -40,12 +40,12 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #0078D4;
+    background: rgba(0, 153, 255, 0.38);
     border-radius: 4px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #0099FF;
+    background: rgba(0, 153, 255, 0.38);
   }
 
   /* Scrollbar â€” light mode */
@@ -54,12 +54,12 @@
   }
 
   [data-theme="light"] ::-webkit-scrollbar-thumb {
-    background: #2563EB;
+    background: rgba(0, 153, 255, 0.38);
     border-radius: 4px;
   }
 
   [data-theme="light"] ::-webkit-scrollbar-thumb:hover {
-    background: #1D4ED8;
+    background: rgba(0, 153, 255, 0.38);
   }
 
   /* Password reveal eye icon â€” dark mode */

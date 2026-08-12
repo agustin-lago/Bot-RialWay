@@ -3,6 +3,7 @@ import { loadActiveClientModule } from "./clientModuleLoader";
 import { historyEvents } from "../db/historyHandler";
 
 let cachedModule: any = null;
+const moduleCache = new Map<string, any>();
 
 // Escuchar cambios de settings en tiempo real para invalidar el módulo en caché
 historyEvents.on("setting_changed", ({ key }) => {
@@ -12,15 +13,25 @@ historyEvents.on("setting_changed", ({ key }) => {
   }
 });
 
-export async function getActiveModule() {
-  if (!cachedModule) {
-    cachedModule = await loadActiveClientModule();
+export async function getActiveModule(projectId?: string | null, serviceId?: string | null) {
+  if (!projectId && !serviceId) {
+    if (!cachedModule) {
+      cachedModule = await loadActiveClientModule();
+    }
+    return cachedModule;
   }
-  return cachedModule;
+
+  const cacheKey = `${projectId || 'default_project'}:${serviceId || 'default_service'}`;
+  if (!moduleCache.has(cacheKey)) {
+    moduleCache.set(cacheKey, await loadActiveClientModule(projectId, serviceId));
+  }
+
+  return moduleCache.get(cacheKey);
 }
 
 export function invalidateModuleCache() {
   cachedModule = null;
+  moduleCache.clear();
 }
 
 /**
@@ -57,7 +68,7 @@ export async function executeClientTool(toolName: string, args: any, context: an
       }
   }
 
-  const activeModule = await getActiveModule();
+  const activeModule = await getActiveModule(context?.projectId || null, context?.serviceId || null);
 
   if (!activeModule) {
     throw new Error("No hay un módulo de cliente activo configurado en Supabase settings.");

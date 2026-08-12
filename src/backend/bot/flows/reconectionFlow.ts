@@ -59,17 +59,18 @@ export class ReconectionFlow {
     async start() {
         // Recuperar contexto dinámico del state
         const dynamicProjectId = this.state?.get ? this.state.get('dynamicProjectId') : (this.state?.dynamicProjectId || process.env.RAILWAY_PROJECT_ID);
+        const dynamicServiceId = this.state?.get ? this.state.get('dynamicServiceId') : (this.state?.dynamicServiceId || process.env.RAILWAY_SERVICE_ID);
         const targetAssistantId = this.state?.get 
             ? this.state.get('assignedAssistantId') 
-            : (this.state?.assignedAssistantId || await HistoryHandler.getConfig('ASSISTANT_ID', dynamicProjectId) || this.ASSISTANT_ID);
+            : (this.state?.assignedAssistantId || await HistoryHandler.getConfig('ASSISTANT_ID', dynamicProjectId, dynamicServiceId) || this.ASSISTANT_ID);
 
         // 1. Cargar mensajes de seguimiento dinámicamente si no están en process.env
-        const msj1 = await HistoryHandler.getConfig('msjSeguimiento1', dynamicProjectId) || "";
-        const msj2 = await HistoryHandler.getConfig('msjSeguimiento2', dynamicProjectId) || "";
-        const msj3 = await HistoryHandler.getConfig('msjSeguimiento3', dynamicProjectId) || "";
+        const msj1 = await HistoryHandler.getConfig('msjSeguimiento1', dynamicProjectId, dynamicServiceId) || "";
+        const msj2 = await HistoryHandler.getConfig('msjSeguimiento2', dynamicProjectId, dynamicServiceId) || "";
+        const msj3 = await HistoryHandler.getConfig('msjSeguimiento3', dynamicProjectId, dynamicServiceId) || "";
 
-        const t2 = await HistoryHandler.getConfig('timeOutSeguimiento2', dynamicProjectId);
-        const t3 = await HistoryHandler.getConfig('timeOutSeguimiento3', dynamicProjectId);
+        const t2 = await HistoryHandler.getConfig('timeOutSeguimiento2', dynamicProjectId, dynamicServiceId);
+        const t3 = await HistoryHandler.getConfig('timeOutSeguimiento3', dynamicProjectId, dynamicServiceId);
 
         // Intentar restaurar el estado previo si existe
         if (this.state && this.state.reconectionFlow) {
@@ -137,7 +138,7 @@ export class ReconectionFlow {
                     // console.log(`[ReconectionFlow] Enviando mensaje de reconexión a:`, jid);
                     await this.provider.sendText(jid, cleanMsg);
                     // Persistir en el historial del backoffice (vía Supabase)
-                    await HistoryHandler.saveMessage(this.ctx.from, 'assistant', cleanMsg, 'text', null, null, null, 'whatsapp', dynamicProjectId);
+                    await HistoryHandler.saveMessage(this.ctx.from, 'assistant', cleanMsg, 'text', null, null, null, 'whatsapp', dynamicProjectId, dynamicServiceId);
 
                     // Enviar los PDFs descargados
                     for (const pdfPath of pdfPaths) {
@@ -151,7 +152,7 @@ export class ReconectionFlow {
                             }
                             
                             // Persistir referencia al documento en el historial
-                            await HistoryHandler.saveMessage(this.ctx.from, 'assistant', "[Documento PDF]", 'document', null, null, null, 'whatsapp', dynamicProjectId);
+                            await HistoryHandler.saveMessage(this.ctx.from, 'assistant', "[Documento PDF]", 'document', null, null, null, 'whatsapp', dynamicProjectId, dynamicServiceId);
                             
                             // Limpieza del archivo temporal después de un breve delay para asegurar envío
                             setTimeout(() => {
@@ -185,7 +186,7 @@ export class ReconectionFlow {
             // Si no respondió, intentar obtener el resumen nuevamente desde el asistente
             console.log(`[ReconectionFlow] 🤖 Generando resumen con Asistente: ${targetAssistantId} | Proyecto: ${dynamicProjectId}`);
 
-            const resumen = await safeToAsk(targetAssistantId, "GET_RESUMEN", this.state, this.ctx.from, undefined, 5, false, dynamicProjectId, true) as string;
+            const resumen = await safeToAsk(targetAssistantId, "GET_RESUMEN", this.state, this.ctx.from, undefined, 5, false, dynamicProjectId, true, undefined, dynamicServiceId) as string;
             const data: any = extraerDatosResumen(resumen);
             data.resumenRaw = resumen;
             const tipo = data.tipo || "SI_RESUMEN";

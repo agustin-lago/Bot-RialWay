@@ -1,9 +1,10 @@
 /* global renderSectionTabs */
 (function() {
     window.__PERSISTENT_SECTION_HEADER = true;
+    window.__DESKTOP_SECTION_TABS_DISABLED = true;
 
     const SECTION_PATHS = {
-        messaging: ['/dashboard', '/conversaciones', '/contactos', '/reportes', '/conexion', '/webchat'],
+        messaging: ['/dashboard', '/conversaciones', '/contactos', '/reportes', '/conexion', '/conexion-chatbot', '/webchat'],
         integrations: ['/crm', '/crm-tareas', '/meta', '/mercado-libre', '/mercado-libre-productos', '/mercado-libre-bot', '/mercado-pago', '/lista-negra', '/webhooks', '/epc-cbu-cvu'],
     };
 
@@ -45,6 +46,14 @@
     window.updateSectionHeader = function(path = window.location.pathname, options = {}) {
         const root = document.getElementById('section-header-root');
         if (!root) return;
+
+        if (window.__DESKTOP_SECTION_TABS_DISABLED) {
+            clearDetachedMenus();
+            root.innerHTML = '';
+            root.hidden = true;
+            currentSection = null;
+            return;
+        }
 
         const section = getSectionForPath(path);
         if (!section || typeof window.renderSectionTabs !== 'function') {

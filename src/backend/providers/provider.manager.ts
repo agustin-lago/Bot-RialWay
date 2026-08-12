@@ -3,7 +3,7 @@ import fs from 'fs';
 import QRCode from 'qrcode';
 import { EVENTS } from "@builderbot/bot";
 import { isSessionInDb } from "./sessionSync";
-import { HistoryHandler } from '../db/historyHandler';
+import { HistoryHandler, historyEvents } from '../db/historyHandler';
 
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 
@@ -501,6 +501,14 @@ export const registerProviderEvents = (provider: any, isGroupProvider: boolean =
 
     provider.on('ready', () => {
         console.log(`✅ ${prefix} READY: El proveedor está conectado.`);
+        historyEvents.emit('whatsapp_line_changed', {
+            projectId: provider?.globalVendorArgs?.projectId || provider?.globalVendorArgs?.project_id || HistoryHandler.PROJECT_IDENTIFIER,
+            project_id: provider?.globalVendorArgs?.projectId || provider?.globalVendorArgs?.project_id || HistoryHandler.PROJECT_IDENTIFIER,
+            serviceId: provider?.globalVendorArgs?.serviceId || provider?.globalVendorArgs?.service_id || HistoryHandler.SERVICE_IDENTIFIER,
+            service_id: provider?.globalVendorArgs?.serviceId || provider?.globalVendorArgs?.service_id || HistoryHandler.SERVICE_IDENTIFIER,
+            provider: isGroupProvider ? 'baileys-groups' : 'baileys',
+            active: true
+        });
         const qrFilename = isGroupProvider ? 'bot.groups.qr.png' : 'bot.qr.png';
         const qrPath = path.join(process.cwd(), qrFilename);
         if (fs.existsSync(qrPath)) {
@@ -508,6 +516,19 @@ export const registerProviderEvents = (provider: any, isGroupProvider: boolean =
                 // Silently ignore if file doesn't exist
             }
         }
+    });
+
+    provider.on('status_change', (payload: any = {}) => {
+        historyEvents.emit('whatsapp_line_changed', {
+            projectId: provider?.globalVendorArgs?.projectId || provider?.globalVendorArgs?.project_id || HistoryHandler.PROJECT_IDENTIFIER,
+            project_id: provider?.globalVendorArgs?.projectId || provider?.globalVendorArgs?.project_id || HistoryHandler.PROJECT_IDENTIFIER,
+            serviceId: provider?.globalVendorArgs?.serviceId || provider?.globalVendorArgs?.service_id || HistoryHandler.SERVICE_IDENTIFIER,
+            service_id: provider?.globalVendorArgs?.serviceId || provider?.globalVendorArgs?.service_id || HistoryHandler.SERVICE_IDENTIFIER,
+            provider: isGroupProvider ? 'baileys-groups' : 'baileys',
+            active: payload.active === true,
+            connection: payload.connection || null,
+            reason: payload.reason || null
+        });
     });
 };
 
@@ -520,18 +541,25 @@ export const hasActiveSession = async (adapterProvider: any, groupProvider: any 
             if (!provider) return null;
             
             const isMeta = provider.constructor.name === 'MetaCloudProvider';
-            const isReady = !!(
-                (provider?.vendor?.authState?.creds?.registered || provider?.vendor?.ws?.isOpen) && (
-                    provider?.vendor?.authState?.creds?.me?.id || 
-                    provider?.vendor?.user?.id || 
-                    provider?.globalVendorArgs?.sock?.user?.id
-                )
+            const socketOpen = !!(
+                provider?.vendor?.ws?.isOpen ||
+                provider?.vendor?.ws?.readyState === 1 ||
+                provider?.vendor?.ws?.socket?._readyState === 1
             );
+            const hasIdentity = !!(
+                provider?.vendor?.authState?.creds?.me?.id ||
+                provider?.vendor?.user?.id ||
+                provider?.globalVendorArgs?.sock?.user?.id
+            );
+            const connectionState = provider?.connectionState || null;
+            const isReady = connectionState
+                ? (connectionState === 'open' && socketOpen && hasIdentity)
+                : (socketOpen && hasIdentity);
 
             if (isMeta) return { active: true, type: 'meta', message: 'Conectado via API' };
 
             // Si el motor fue apagado intencionalmente o no está inicializado, reportar Desconectado inmediatamente
-            if (provider.preventAutoStart || !provider.initialized) {
+            if (provider.preventAutoStart || !provider.initialized || connectionState === 'close' || connectionState === 'idle') {
                 return { active: false, type: 'baileys', message: 'Desconectado' };
             }
 

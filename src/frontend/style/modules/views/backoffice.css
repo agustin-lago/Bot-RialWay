@@ -2,7 +2,7 @@
   /* ───────────────────────────────────────────────────── */
   #sidebar {
     @apply flex flex-col flex-shrink-0 z-10 transition-colors duration-300;
-    width: 320px;
+    width: 360px;
     background: #111b21;
   }
 
@@ -46,6 +46,7 @@
   .search-wrapper {
     @apply flex items-center px-3 rounded-xl;
     background: rgba(255, 255, 255, 0.07);
+    min-width: 0;
   }
 
   .sidebar-search-wrapper {
@@ -63,6 +64,9 @@
 
   .search-input {
     @apply flex-1 bg-transparent border-0 py-2.5 text-sm outline-none text-primary-content;
+    min-width: 0;
+    width: 100%;
+    padding-right: 8px;
   }
 
   .search-input::placeholder {
@@ -2192,18 +2196,30 @@
     cursor: pointer;
     color: rgba(255, 255, 255, 0.8);
     z-index: 10;
-    transition: color 0.2s;
+    transition: color 0.2s, background 0.18s ease, transform 0.14s ease;
     background: transparent;
-    border-radius: 0 8px 0 0;
+    border-radius: 999px;
 }
 .msg-out .msg-dropdown-toggle {
     background: transparent;
+}
+.msg.user .msg-dropdown-toggle {
+    left: 8px;
+    right: auto;
+    border-radius: 999px;
+}
+.msg.assistant .msg-dropdown-toggle {
+    left: auto;
+    right: 8px;
+    border-radius: 999px;
 }
 .msg:hover .msg-dropdown-toggle {
     display: flex;
 }
 .msg-dropdown-toggle:hover {
     color: #fff;
+    background: rgba(255, 255, 255, 0.14);
+    transform: scale(0.96);
 }
 [data-theme="light"] .msg-dropdown-toggle {
     background: transparent;
@@ -2214,6 +2230,13 @@
 }
 [data-theme="light"] .msg-dropdown-toggle:hover {
     color: #000;
+    background: rgba(15, 23, 42, 0.08);
+}
+
+@media (max-width: 769px) {
+    .msg-dropdown-toggle {
+        display: none;
+    }
 }
 .msg-dropdown-menu {
     position: absolute;
@@ -2441,9 +2464,9 @@
 
 @media (min-width: 1025px) {
   #sidebar {
-    width: 480px;
-    flex-basis: 480px;
-    max-width: 480px;
+    width: 360px;
+    flex-basis: 360px;
+    max-width: 360px;
   }
 }
 

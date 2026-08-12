@@ -8,8 +8,8 @@ import { SystemLogger } from "../../utils/logger";
  * @param filePath - Local path to the audio file.
  * @returns The transcription of the audio.
  */
-export const transcribeAudioFile = async (filePath: string): Promise<string | null> => {
-  const openai = await getOpenAI();
+export const transcribeAudioFile = async (filePath: string, projectId?: string, serviceId?: string): Promise<string | null> => {
+  const openai = await getOpenAI(projectId, serviceId);
   if (!openai) {
     console.warn("⚠️ IA Desactivada: No se puede transcribir audio sin OPENAI_API_KEY.");
     return null;

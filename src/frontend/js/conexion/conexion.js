@@ -1,6 +1,144 @@
 /* global logout */
 let currentProjectId = window.railwayProjectId || 'default';
 let _conexionIntervals = [];
+let _qrSkeletonTimer = null;
+let _lastRenderedQrSource = null;
+let _qrRequestPendingUntil = 0;
+
+function isQrRequestPending() {
+    return _qrRequestPendingUntil > Date.now();
+}
+
+function markQrRequestPending() {
+    _qrRequestPendingUntil = Date.now() + 120000;
+}
+
+function clearQrRequestPending() {
+    _qrRequestPendingUntil = 0;
+}
+
+function getConexionServiceId() {
+    return window.railwayServiceId || undefined;
+}
+
+async function runBotCommand(command, chatId) {
+    const token = localStorage.getItem('backoffice_token');
+    const res = await fetch(`/api/backoffice/bot-command?token=${token}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            token,
+            command,
+            chatId,
+            projectId: currentProjectId,
+            serviceId: getConexionServiceId()
+        })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.error || 'No se pudo ejecutar el comando');
+    return data;
+}
+
+function setCommandButtonBusy(button, isBusy, busyText) {
+    if (!button) return;
+    if (isBusy) {
+        button.dataset.originalHtml = button.innerHTML;
+        button.disabled = true;
+        button.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${busyText || 'Ejecutando...'}`;
+    } else {
+        button.disabled = false;
+        if (button.dataset.originalHtml) button.innerHTML = button.dataset.originalHtml;
+        delete button.dataset.originalHtml;
+    }
+}
+
+
+function getQrElements() {
+    return {
+        section: document.getElementById('qr-section'),
+        title: document.getElementById('qr-section-title'),
+        skeleton: document.getElementById('qr-skeleton'),
+        img: document.getElementById('baileys-qr-img') || document.querySelector('.qr'),
+        empty: document.getElementById('qr-empty-message') || document.querySelector('.qr-error-msg'),
+        pairing: document.getElementById('pairing-code-container')
+    };
+}
+
+function setConnectionButtonsBusy(isBusy) {
+    const buttons = [document.getElementById('generate-qr-btn'), document.getElementById('generate-pairing-btn')];
+    buttons.forEach((button) => {
+        if (button) button.disabled = isBusy;
+    });
+    const loading = document.getElementById('generate-qr-loading');
+    if (loading && !isBusy) loading.style.display = 'none';
+}
+
+function showQrLoading(titleText) {
+    const { section, title, skeleton, img, empty, pairing } = getQrElements();
+    if (!section) return;
+    section.style.display = 'block';
+    if (title) title.textContent = titleText || 'Generando QR';
+    if (skeleton) skeleton.style.display = 'grid';
+    if (img) img.style.display = 'none';
+    if (empty) empty.style.display = 'none';
+    if (pairing) pairing.style.display = 'none';
+}
+
+function renderQrImage(source, titleText) {
+    clearQrRequestPending();
+    const qrSource = source || '/qr.png';
+    const { section, title, skeleton, img, empty, pairing } = getQrElements();
+    if (!section || !img) return;
+    section.style.display = 'block';
+    if (title) title.textContent = titleText || 'Escanea con WhatsApp';
+    if (pairing) pairing.style.display = 'none';
+
+    if (_lastRenderedQrSource === qrSource) {
+        if (_qrSkeletonTimer) return;
+        if (skeleton) skeleton.style.display = 'none';
+        if (empty && empty.style.display !== 'block') img.style.display = 'block';
+        return;
+    }
+
+    _lastRenderedQrSource = qrSource;
+    showQrLoading(titleText || 'Escanea con WhatsApp');
+    if (_qrSkeletonTimer) clearTimeout(_qrSkeletonTimer);
+    _qrSkeletonTimer = setTimeout(() => {
+        if (skeleton) skeleton.style.display = 'none';
+        if (empty) empty.style.display = 'none';
+        img.src = qrSource;
+        img.style.display = 'block';
+    }, 2000);
+}
+
+function renderPairingCode(code, titleText) {
+    const { section, title, skeleton, img, empty, pairing } = getQrElements();
+    if (!section || !pairing) return;
+    clearQrRequestPending();
+    if (_qrSkeletonTimer) clearTimeout(_qrSkeletonTimer);
+    _lastRenderedQrSource = null;
+    section.style.display = 'block';
+    if (title) title.textContent = titleText || 'Codigo de vinculacion';
+    if (skeleton) skeleton.style.display = 'none';
+    if (img) img.style.display = 'none';
+    if (empty) empty.style.display = 'none';
+    pairing.style.display = 'block';
+    pairing.innerHTML = '<div class="conexion-pairing-code-value"></div><p>Ingresa este codigo en WhatsApp cuando se solicite la vinculacion.</p>';
+    const value = pairing.querySelector('.conexion-pairing-code-value');
+    if (value) value.textContent = String(code || '');
+}
+
+function hideQrPresentation() {
+    const { section, skeleton, img, empty, pairing } = getQrElements();
+    if (_qrSkeletonTimer) clearTimeout(_qrSkeletonTimer);
+    _qrSkeletonTimer = null;
+    _lastRenderedQrSource = null;
+    if (section) section.style.display = 'none';
+    if (skeleton) skeleton.style.display = 'none';
+    if (img) img.style.display = 'none';
+    if (empty) empty.style.display = 'none';
+    if (pairing) pairing.style.display = 'none';
+}
 
 async function fetchStatus() {
     const token = localStorage.getItem('backoffice_token');
@@ -15,21 +153,19 @@ async function fetchStatus() {
         }
 
         const statusEl       = document.getElementById('session-status');
-        const qrSection      = document.getElementById('qr-section');
         const sessionInfo    = document.getElementById('session-info');
         const sessionError   = document.getElementById('session-error');
         const wsLinkContainer = document.getElementById('whatsapp-link-container');
         const groupContainer = document.getElementById('group-connection-container');
         const groupStatusEl  = document.getElementById('group-session-status');
         const startContainer = document.getElementById('baileys-start-container');
+        const statusSkeleton = document.getElementById('session-status-skeleton');
 
         if (!statusEl) return; // view desmontada
-
-        qrSection.style.display = 'none';
+        statusEl.style.display = '';
+        if (statusSkeleton) statusSkeleton.style.display = 'none';
         sessionInfo.style.display = 'none';
         wsLinkContainer.style.display = 'none';
-        groupContainer.style.display = 'none';
-        if (startContainer) startContainer.style.display = 'none';
         sessionError.innerHTML = '';
         sessionInfo.innerHTML = '';
 
@@ -109,9 +245,9 @@ async function fetchStatus() {
             const missing = !data.metaOnboarding.access_token ? 'Token' : (!data.metaOnboarding.phone_number_id || data.metaOnboarding.phone_number_id === 'PENDING' ? 'Phone ID' : 'Desconocido');
             sessionInfo.style.display = 'block';
             sessionInfo.innerHTML = `<div class="warning-box">Vinculación de Meta detectada pero incompleta (Falta: ${missing}). Usando Baileys como respaldo.</div>`;
-            renderProviderStatus(data.adapter, 'Baileys (Respaldo)');
+            renderProviderStatus(data.adapter, 'Baileys (Respaldo)', { preserveQr: Boolean(data.group && !data.group.active) });
         } else {
-            renderProviderStatus(data.adapter, 'Principal');
+            renderProviderStatus(data.adapter, 'Principal', { preserveQr: Boolean(data.group && !data.group.active) });
         }
 
         if (data.group) {
@@ -120,13 +256,15 @@ async function fetchStatus() {
                 groupStatusEl.textContent = '✅ Grupos: Baileys';
                 groupStatusEl.style.color = '#10b981';
                 if (startContainer) startContainer.style.display = 'none';
+                hideQrPresentation();
+                clearQrRequestPending();
+                setConnectionButtonsBusy(false);
             } else if (data.group.qr) {
                 groupStatusEl.textContent = '⏳ Grupos: Esperando vinculación';
                 groupStatusEl.style.color = '#f59e0b';
-                if (startContainer) startContainer.style.display = 'none';
-                qrSection.style.display = 'block';
-                const qrImg = document.querySelector('.qr');
-                if (qrImg) { qrImg.src = data.group.qrImage || '/bot.groups.qr.png'; qrImg.style.display = 'inline-block'; if (qrImg.nextElementSibling) qrImg.nextElementSibling.style.display = 'none'; }
+                if (startContainer) startContainer.style.display = 'block';
+                renderQrImage(data.group.qrImage || '/bot.groups.qr.png', 'Escanea con WhatsApp para grupos');
+                setConnectionButtonsBusy(false);
             } else {
                 groupStatusEl.textContent = '⏳ Grupos: ' + (data.group.message || 'Cargando...');
                 groupStatusEl.style.color = '#94a3b8';
@@ -134,7 +272,19 @@ async function fetchStatus() {
                     startContainer.style.display = 'block';
                     const btn = document.getElementById('generate-qr-btn');
                     if (btn) btn.innerHTML = `<i class="fas fa-qrcode"></i> Generar QR Grupos`;
+                    if (isQrRequestPending()) {
+                        showQrLoading('Generando QR de grupos');
+                        setConnectionButtonsBusy(true);
+                    } else {
+                        setConnectionButtonsBusy(false);
+                    }
                 }
+            }
+        } else if (groupContainer) {
+            groupContainer.style.display = 'block';
+            if (groupStatusEl) {
+                groupStatusEl.textContent = 'Grupos: No configurado';
+                groupStatusEl.style.color = '#94a3b8';
             }
         }
     } catch (e) {
@@ -146,88 +296,52 @@ async function fetchStatus() {
     }
 }
 
-function renderProviderStatus(status, label) {
+function renderProviderStatus(status, label, options = {}) {
     console.log('[renderProviderStatus] status:', status, 'label:', label);
-    const statusEl      = document.getElementById('session-status');
-    const qrSection     = document.getElementById('qr-section');
-    const sessionInfo   = document.getElementById('session-info');
+    const statusEl = document.getElementById('session-status');
+    const sessionInfo = document.getElementById('session-info');
     const startContainer = document.getElementById('baileys-start-container');
+    const preserveQr = options.preserveQr === true;
     if (!statusEl) return;
 
     if (status.active) {
-        statusEl.textContent = `✅ ${label}: ${status.message || 'Conectado'}`;
+        statusEl.textContent = label + ': ' + (status.message || 'Conectado');
         statusEl.style.color = '#10b981';
-        sessionInfo.style.display = 'block';
-        sessionInfo.innerHTML += `<div><strong>${label}:</strong> ${status.message || 'Operativo'}</div>`;
+        if (sessionInfo) {
+            sessionInfo.style.display = 'block';
+            sessionInfo.innerHTML += '<div class="conexion-provider-line"><strong>' + label + ':</strong><span>' + (status.message || 'Operativo') + '</span></div>';
+        }
         if (startContainer) startContainer.style.display = 'none';
-        const codeContainer = document.getElementById('pairing-code-container');
-        if (codeContainer) codeContainer.remove();
+        clearQrRequestPending();
+        if (!preserveQr) hideQrPresentation();
+        setConnectionButtonsBusy(false);
     } else if (status.pairingCode) {
-        statusEl.textContent = `⏳ ${label}: Esperando vinculación por código`;
+        statusEl.textContent = label + ': Esperando vinculacion por codigo';
         statusEl.style.color = '#f59e0b';
-        qrSection.style.display = 'block';
-        if (startContainer) startContainer.style.display = 'none';
-        
-        const qrImg = document.querySelector('.qr');
-        if (qrImg) {
-            qrImg.style.display = 'none';
-            if (qrImg.nextElementSibling) {
-                qrImg.nextElementSibling.style.display = 'none'; // Ocultar "Generando QR... por favor espera"
-            }
-        }
-        
-        let codeContainer = document.getElementById('pairing-code-container');
-        if (!codeContainer) {
-            codeContainer = document.createElement('div');
-            codeContainer.id = 'pairing-code-container';
-            codeContainer.className = 'mt-4 p-4 rounded-xl text-center';
-            codeContainer.style.background = 'rgba(0, 153, 255, 0.1)';
-            codeContainer.style.border = '2px dashed rgba(0, 153, 255, 0.3)';
-            const qrBox = qrSection.querySelector('.inline-block');
-            if (qrBox) {
-                const title = qrBox.querySelector('h3');
-                if (title) title.textContent = 'Código de vinculación para WhatsApp';
-                qrBox.appendChild(codeContainer);
-            }
-        }
-        codeContainer.innerHTML = `
-            <div style="font-size: 2.2rem; font-weight: 800; letter-spacing: 4px; color: #0099ff; font-family: monospace;">
-                ${status.pairingCode}
-            </div>
-            <p style="margin-top: 10px; font-size: 0.85rem; color: #4b5563;">
-                Ingresa este código en tu teléfono cuando se te solicite la vinculación.
-            </p>
-        `;
+        if (startContainer) startContainer.style.display = 'block';
+        renderPairingCode(status.pairingCode, 'Codigo de vinculacion para WhatsApp');
+        setConnectionButtonsBusy(false);
     } else if (status.qr) {
-        statusEl.textContent = `⏳ ${label}: Esperando vinculación`;
+        statusEl.textContent = label + ': Esperando vinculacion';
         statusEl.style.color = '#f59e0b';
-        qrSection.style.display = 'block';
-        if (startContainer) startContainer.style.display = 'none';
-        
-        const codeContainer = document.getElementById('pairing-code-container');
-        if (codeContainer) codeContainer.remove();
-        
-        const qrImg = document.querySelector('.qr');
-        if (qrImg) { 
-            qrImg.src = status.qrImage || '/qr.png'; 
-            qrImg.style.display = 'inline-block'; 
-            // Restaurar el título original
-            const qrBox = qrSection.querySelector('.inline-block');
-            if (qrBox) {
-                const title = qrBox.querySelector('h3');
-                if (title) title.textContent = 'Escaneá con WhatsApp';
-            }
-            if (qrImg.nextElementSibling) qrImg.nextElementSibling.style.display = 'none'; 
-        }
+        if (startContainer) startContainer.style.display = 'block';
+        renderQrImage(status.qrImage || '/qr.png', 'Escanea con WhatsApp');
+        setConnectionButtonsBusy(false);
     } else {
-        statusEl.textContent = `⏳ ${label}: ${status.message || 'Cargando...'}`;
+        statusEl.textContent = label + ': ' + (status.message || 'Cargando...');
         if (startContainer && !status.active) {
             startContainer.style.display = 'block';
             const btn = document.getElementById('generate-qr-btn');
-            if (btn) btn.innerHTML = `<i class="fas fa-qrcode"></i> Generar QR Baileys`;
+            if (btn) btn.innerHTML = '<i class="fas fa-qrcode"></i> Generar QR Baileys';
         }
-        const codeContainer = document.getElementById('pairing-code-container');
-        if (codeContainer) codeContainer.remove();
+        if (isQrRequestPending()) {
+            if (startContainer) startContainer.style.display = 'block';
+            showQrLoading(label.includes('Grupos') ? 'Generando QR de grupos' : 'Generando QR Baileys');
+            setConnectionButtonsBusy(true);
+        } else {
+            if (!preserveQr) hideQrPresentation();
+            setConnectionButtonsBusy(false);
+        }
     }
 }
 
@@ -254,7 +368,7 @@ window.initConexionView = function () {
     fetchStatus();
 
     // Intervalos de polling
-    _conexionIntervals.push(setInterval(fetchStatus,    15000));
+    _conexionIntervals.push(setInterval(fetchStatus,    5000));
     _conexionIntervals.push(setInterval(fetchBotStatus, 30000));
 
     // --- Toggle Bot Global ---
@@ -300,6 +414,60 @@ window.initConexionView = function () {
                 window.swalAlert("Error", "Error al solicitar el reinicio", "error");
                 reloadBtn.disabled = false;
                 reloadBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Reiniciar';
+            }
+        });
+    }
+
+    const syncCommandBtn = document.getElementById('bot-command-sync');
+    if (syncCommandBtn) {
+        syncCommandBtn.addEventListener('click', async () => {
+            setCommandButtonBusy(syncCommandBtn, true, 'Sincronizando...');
+            try {
+                const data = await runBotCommand('#ACTUALIZAR#');
+                window.swalAlert('Sincronizacion completada', `Sheets, RAG y tools actualizados. Asistentes sincronizados: ${data.assistantsSynced || 0}.`, 'success');
+            } catch (err) {
+                window.swalAlert('Error', err.message || 'No se pudo ejecutar #ACTUALIZAR#', 'error');
+            } finally {
+                setCommandButtonBusy(syncCommandBtn, false);
+            }
+        });
+    }
+
+    const commandChatInput = document.getElementById('bot-command-chat-id');
+    const resetCommandBtn = document.getElementById('bot-command-reset');
+    const newThreadCommandBtn = document.getElementById('bot-command-new-thread');
+    const getCommandChatId = () => (commandChatInput?.value || '').trim();
+
+    if (resetCommandBtn) {
+        resetCommandBtn.addEventListener('click', async () => {
+            const chatId = getCommandChatId();
+            if (!chatId) return window.swalAlert('Falta el contacto', 'Ingresa el telefono o chat ID antes de ejecutar #RESET#.', 'warning');
+            setCommandButtonBusy(resetCommandBtn, true, 'Reiniciando...');
+            try {
+                await runBotCommand('#RESET#', chatId);
+                window.swalAlert('Asistente reiniciado', 'El chat volvio a asistente1.', 'success');
+            } catch (err) {
+                window.swalAlert('Error', err.message || 'No se pudo ejecutar #RESET#', 'error');
+            } finally {
+                setCommandButtonBusy(resetCommandBtn, false);
+            }
+        });
+    }
+
+    if (newThreadCommandBtn) {
+        newThreadCommandBtn.addEventListener('click', async () => {
+            const chatId = getCommandChatId();
+            if (!chatId) return window.swalAlert('Falta el contacto', 'Ingresa el telefono o chat ID antes de ejecutar #HILO_NUEVO#.', 'warning');
+            const confirmed = await window.swalConfirm('Borrar historial?', 'Se eliminara todo el historial de mensajes para ese contacto y se iniciara un hilo limpio.');
+            if (!confirmed) return;
+            setCommandButtonBusy(newThreadCommandBtn, true, 'Borrando...');
+            try {
+                await runBotCommand('#HILO_NUEVO#', chatId);
+                window.swalAlert('Hilo nuevo iniciado', 'El historial fue eliminado y el chat volvio a asistente1.', 'success');
+            } catch (err) {
+                window.swalAlert('Error', err.message || 'No se pudo ejecutar #HILO_NUEVO#', 'error');
+            } finally {
+                setCommandButtonBusy(newThreadCommandBtn, false);
             }
         });
     }
@@ -369,11 +537,9 @@ window.initConexionView = function () {
         generateQrBtn.addEventListener('click', async () => {
             const isGroup = document.getElementById('group-connection-container')?.style.display !== 'none' &&
                             generateQrBtn.textContent.includes('Grupos');
-            generateQrBtn.style.display = 'none';
-            const generatePairingBtn = document.getElementById('generate-pairing-btn');
-            if (generatePairingBtn) generatePairingBtn.style.display = 'none';
-            const pairingPhoneInput = document.getElementById('pairing-phone-input');
-            if (pairingPhoneInput) pairingPhoneInput.style.display = 'none';
+            setConnectionButtonsBusy(true);
+            markQrRequestPending();
+            showQrLoading(isGroup ? 'Generando QR de grupos' : 'Generando QR Baileys');
             const loading = document.getElementById('generate-qr-loading');
             if (loading) loading.style.display = 'block';
             try {
@@ -387,49 +553,48 @@ window.initConexionView = function () {
                     setTimeout(fetchStatus, 1500);
                 } else {
                     const err = await res.json();
-                    window.swalAlert("Error", 'Error al iniciar generador de QR: ' + (err.error || 'error desconocido'), "error");
-                    generateQrBtn.style.display = 'inline-flex';
-                    if (generatePairingBtn) generatePairingBtn.style.display = 'inline-flex';
-                    if (pairingPhoneInput) pairingPhoneInput.style.display = 'block';
+                    window.swalAlert('Error', 'Error al iniciar generador de QR: ' + (err.error || 'error desconocido'), 'error');
+                    clearQrRequestPending();
+                    hideQrPresentation();
+                    setConnectionButtonsBusy(false);
                     if (loading) loading.style.display = 'none';
                 }
             } catch (e) {
                 console.error(e);
-                window.swalAlert("Error", 'Error al iniciar generador de QR', "error");
-                generateQrBtn.style.display = 'inline-flex';
-                if (generatePairingBtn) generatePairingBtn.style.display = 'inline-flex';
-                if (pairingPhoneInput) pairingPhoneInput.style.display = 'block';
+                window.swalAlert('Error', 'Error al iniciar generador de QR', 'error');
+                clearQrRequestPending();
+                hideQrPresentation();
+                setConnectionButtonsBusy(false);
                 const loading2 = document.getElementById('generate-qr-loading');
                 if (loading2) loading2.style.display = 'none';
             }
         });
     }
 
-    // --- Generar Código de Vinculación manual ---
+    // --- Generar Codigo de Vinculacion manual ---
     const generatePairingBtn = document.getElementById('generate-pairing-btn');
     const pairingPhoneInput = document.getElementById('pairing-phone-input');
     if (generatePairingBtn) {
         generatePairingBtn.addEventListener('click', async () => {
             const phoneNumber = pairingPhoneInput.value.trim();
             if (!phoneNumber) {
-                window.swalAlert("Atención", 'Por favor ingresa un número de teléfono válido (con código de país, ej: 5491122334455)', "warning");
+                window.swalAlert('Atencion', 'Por favor ingresa un numero de telefono valido (con codigo de pais, ej: 5491122334455)', 'warning');
                 return;
             }
-            
+
             const isGroup = document.getElementById('group-connection-container')?.style.display !== 'none' &&
                             generatePairingBtn.textContent.includes('Grupos');
-                            
-            generatePairingBtn.style.display = 'none';
-            if (generateQrBtn) generateQrBtn.style.display = 'none';
-            if (pairingPhoneInput) pairingPhoneInput.style.display = 'none';
-            
+
+            setConnectionButtonsBusy(true);
+            markQrRequestPending();
+            showQrLoading('Solicitando codigo de vinculacion');
             const loading = document.getElementById('generate-qr-loading');
             if (loading) {
                 loading.style.display = 'block';
                 const loadingText = loading.querySelector('p');
-                if (loadingText) loadingText.textContent = 'Solicitando código de vinculación... esto tardará unos segundos.';
+                if (loadingText) loadingText.textContent = 'Solicitando codigo de vinculacion... esto tardara unos segundos.';
             }
-            
+
             try {
                 const token = localStorage.getItem('backoffice_token');
                 const res = await fetch(`/api/backoffice/baileys/start?token=${token}`, {
@@ -441,25 +606,31 @@ window.initConexionView = function () {
                     setTimeout(fetchStatus, 1500);
                 } else {
                     const err = await res.json();
-                    window.swalAlert("Error", 'Error al iniciar vinculación: ' + (err.error || 'error desconocido'), "error");
-                    generatePairingBtn.style.display = 'inline-flex';
-                    if (generateQrBtn) generateQrBtn.style.display = 'inline-flex';
-                    if (pairingPhoneInput) pairingPhoneInput.style.display = 'block';
+                    window.swalAlert('Error', 'Error al iniciar vinculacion: ' + (err.error || 'error desconocido'), 'error');
+                    clearQrRequestPending();
+                    hideQrPresentation();
+                    setConnectionButtonsBusy(false);
                     if (loading) loading.style.display = 'none';
                 }
             } catch (e) {
                 console.error(e);
-                window.swalAlert("Error", 'Error al iniciar vinculación', "error");
-                generatePairingBtn.style.display = 'inline-flex';
-                if (generateQrBtn) generateQrBtn.style.display = 'inline-flex';
-                if (pairingPhoneInput) pairingPhoneInput.style.display = 'block';
+                window.swalAlert('Error', 'Error al iniciar vinculacion', 'error');
+                clearQrRequestPending();
+                hideQrPresentation();
+                setConnectionButtonsBusy(false);
                 if (loading) loading.style.display = 'none';
             }
         });
     }
 };
 
+window.refreshConexionStatus = fetchStatus;
+
 window.destroyConexionView = function () {
     _conexionIntervals.forEach(clearInterval);
     _conexionIntervals = [];
+    if (_qrSkeletonTimer) clearTimeout(_qrSkeletonTimer);
+    _qrSkeletonTimer = null;
+    _lastRenderedQrSource = null;
+    clearQrRequestPending();
 };

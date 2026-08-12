@@ -1,4 +1,4 @@
-import { typing } from "./presence";
+﻿import { typing } from "./presence";
 import { HistoryHandler } from "../db/historyHandler";
 import { EVENTS } from "@builderbot/bot";
 import { getArgentinaDatetimeString } from "../utils/ArgentinaTime";
@@ -173,7 +173,7 @@ export class AiManager {
             console.log(`[AiManager] 🗑️ Borrando todo el historial de chat para el contacto ${chatId}`);
             
             // Borrar el historial de la base de datos (mensajes)
-            await HistoryHandler.clearChatHistory(chatId, dynamicProjectId);
+            await HistoryHandler.clearChatHistory(chatId, dynamicProjectId, dynamicServiceId);
             
             // Resetear el agente asignado a asistente1
             await HistoryHandler.setAssignedAgent(chatId, 'asistente1', dynamicProjectId, dynamicServiceId);
@@ -326,7 +326,7 @@ export class AiManager {
                     dynamicServiceId
                 );
 
-            const timeoutCierreValue = await HistoryHandler.getConfig('timeOutCierre') || 5;
+            const timeoutCierreValue = await HistoryHandler.getConfig('timeOutCierre', dynamicProjectId, dynamicServiceId) || 5;
             const setTime = Number(timeoutCierreValue) * 60 * 1000;
             reset(ctx, gotoFlow, setTime);
             return state;

@@ -184,7 +184,7 @@ export class LocalHistoryStore {
 
     static async updateContactDetails(
         chatId: string,
-        details: Partial<LocalChat> & { ticket_title?: string },
+        details: Partial<LocalChat> & { ticket_title?: string, ticket_description?: string },
         projectId: string
     ): Promise<boolean> {
         const chats = this.getChats(projectId);
@@ -201,7 +201,7 @@ export class LocalHistoryStore {
                 details.crm_status = null;
             }
 
-            const { ticket_title: ticketTitle, ...chatDetails } = details as any;
+            const { ticket_title: ticketTitle, ticket_description: ticketDescription, ...chatDetails } = details as any;
             chats[idx] = { ...chats[idx], ...chatDetails };
             this.saveChats(projectId, chats);
 
@@ -232,11 +232,11 @@ export class LocalHistoryStore {
             }
 
             const tickets = this.getTicketsList(projectId);
-            const activeTicketIdx = tickets.findIndex(t => t.chat_id === chatId && t.estado !== 'Cerrado');
+            const activeTicketIdx = tickets.findIndex(t => t.chat_id === chatId && t.tipo === 'Nuevo Lead' && t.estado !== 'Cerrado');
 
             if (activeTicketIdx !== -1) {
-                if (details.notes !== undefined) {
-                    tickets[activeTicketIdx].descripcion = details.notes;
+                if (ticketDescription !== undefined || details.notes !== undefined) {
+                    tickets[activeTicketIdx].descripcion = ticketDescription ?? details.notes ?? '';
                 }
                 if (originalCrmStatus) {
                     tickets[activeTicketIdx].estado = originalCrmStatus;
@@ -254,7 +254,7 @@ export class LocalHistoryStore {
                     project_id: projectId,
                     chat_id: chatId,
                     titulo: ticketTitle || `Lead: ${chats[idx].name || chatId}`,
-                    descripcion: details.notes || 'Lead detectado automáticamente',
+                    descripcion: ticketDescription ?? details.notes ?? 'Lead detectado automáticamente',
                     estado: initialStatus,
                     prioridad: 'Media',
                     tipo: 'Nuevo Lead',

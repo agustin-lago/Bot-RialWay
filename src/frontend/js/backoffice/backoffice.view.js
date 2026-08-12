@@ -36,11 +36,11 @@ window.backofficeView = {
                             <button type="button" id="unread-filter-unread" class="unread-filter-btn" onclick="toggleUnreadFilter(true)">No le&iacute;dos</button>
                         </div>
                         <div class="filter-wrapper">
-                            <select id="filter-tag" style="display:none;"><option value="">Todas las etiquetas</option></select>
+                            <select id="filter-tag" style="display:none;"><option value="">Etiquetas</option></select>
                             <div class="tag-filter-split">
                                 <button class="tag-filter-main" onclick="_toggleTagFilter(event)">
                                     <i class="fas fa-tags"></i>
-                                    <span id="tag-filter-label">Todas las etiquetas</span>
+                                    <span id="tag-filter-label">Etiquetas</span>
                                 </button>
                                 <button class="tag-filter-chevron" onclick="_toggleTagFilter(event)">
                                     <i class="fas fa-chevron-down" id="tag-filter-chevron-icon"></i>

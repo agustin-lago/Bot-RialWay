@@ -320,13 +320,14 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
         try {
             // Recuperar contexto dinámico del state o de la DB (RAILWAY_PROJECT_ID)
             const dynamicProjectId = state.get('dynamicProjectId') || process.env.RAILWAY_PROJECT_ID;
+            const dynamicServiceId = state.get('dynamicServiceId') || process.env.RAILWAY_SERVICE_ID;
 
             // Fetch dynamic configs
-            const ASSISTANT_ID = await HistoryHandler.getConfig('ASSISTANT_ID', dynamicProjectId) || '';
-            const ID_GRUPO_RESUMEN = await HistoryHandler.getConfig('ID_GRUPO_RESUMEN', dynamicProjectId) || '';
-            const ID_GRUPO_RESUMEN_2 = await HistoryHandler.getConfig('ID_GRUPO_RESUMEN_2', dynamicProjectId) || '';
-            const sheetId = await HistoryHandler.getConfig('SHEET_ID_RESUMEN', dynamicProjectId);
-            const sheetRange = await HistoryHandler.getConfig('SHEET_RESUMEN_RANGE', dynamicProjectId);
+            const ASSISTANT_ID = await HistoryHandler.getConfig('ASSISTANT_ID', dynamicProjectId, dynamicServiceId) || '';
+            const ID_GRUPO_RESUMEN = await HistoryHandler.getConfig('ID_GRUPO_RESUMEN', dynamicProjectId, dynamicServiceId) || '';
+            const ID_GRUPO_RESUMEN_2 = await HistoryHandler.getConfig('ID_GRUPO_RESUMEN_2', dynamicProjectId, dynamicServiceId) || '';
+            const sheetId = await HistoryHandler.getConfig('SHEET_ID_RESUMEN', dynamicProjectId, dynamicServiceId);
+            const sheetRange = await HistoryHandler.getConfig('SHEET_RESUMEN_RANGE', dynamicProjectId, dynamicServiceId);
             // const msjCierre = await HistoryHandler.getConfig('msjCierre', dynamicProjectId) || '';
 
             const targetAssistantId = state.get('assignedAssistantId') || ASSISTANT_ID;
@@ -334,7 +335,7 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
             console.log(`[idleFlow] 🤖 Generando resumen con Asistente: ${targetAssistantId} | Proyecto: ${dynamicProjectId}`);
 
             // Obtener el resumen del asistente de OpenAI con reintentos y reporte de errores
-            const resumen = await safeToAsk(targetAssistantId, "GET_RESUMEN", state, userId, errorReporter, 5, false, dynamicProjectId, true) as string;
+            const resumen = await safeToAsk(targetAssistantId, "GET_RESUMEN", state, userId, errorReporter, 5, false, dynamicProjectId, true, undefined, dynamicServiceId) as string;
 
             if (!resumen) {
                 console.warn("No se pudo obtener el resumen.");
@@ -365,7 +366,7 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
                     console.log(`[idleFlow] 📝 Actualizando contacto ${userId} en CRM. Project: ${dynamicProjectId}`);
                     
                     // Intentar obtener notas previas para no sobreescribir (evitar data loss)
-                    const chatData = await HistoryHandler.getChat(userId, dynamicProjectId);
+                    const chatData = await HistoryHandler.getChat(userId, dynamicProjectId, dynamicServiceId);
                     const previousNotes = chatData?.notes ? `${chatData.notes}\n\n---\n\n` : '';
                     
                     // Formateamos el resumen para que sea legible en las notas del CRM
@@ -386,7 +387,7 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
                         updateData.crm_status = await HistoryHandler.mapStatusToId(cleanStatus, dynamicProjectId);
                     }
 
-                    const updateResult = await HistoryHandler.updateContactDetails(userId, updateData, dynamicProjectId);
+                    const updateResult = await HistoryHandler.updateContactDetails(userId, updateData, dynamicProjectId, dynamicServiceId);
                     
                     if (!updateResult.success) {
                         console.error(`❌ Error actualizando contacto en CRM:`, updateResult.error);
@@ -539,6 +540,7 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
             // Asegurar reset incluso en error
             const userId = ctx.from;
             const dynamicProjectId = state.get('dynamicProjectId') || process.env.RAILWAY_PROJECT_ID;
+            const dynamicServiceId = state.get('dynamicServiceId') || process.env.RAILWAY_SERVICE_ID;
             await HistoryHandler.setAssignedAgent(userId, 'asistente1', dynamicProjectId);
             return endFlow();
         }

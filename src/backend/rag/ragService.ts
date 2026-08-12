@@ -156,9 +156,9 @@ export async function indexDocumentForRAG(projectId: string, fileId: string, fil
 }
 
 // Función de consulta RAG para ser llamada durante la conversación o via Tool
-export async function searchKnowledgeBase(projectId: string, query: string, topK = 5): Promise<string> {
+export async function searchKnowledgeBase(projectId: string, query: string, topK = 5, serviceId?: string | null): Promise<string> {
     const supabase = HistoryHandler.getSupabase();
-    const openai = await getOpenAIClient(projectId);
+    const openai = await getOpenAIClient(projectId, serviceId || undefined);
     if (!supabase || !openai || !query || !query.trim()) return '';
 
     try {
@@ -184,7 +184,15 @@ export async function searchKnowledgeBase(projectId: string, query: string, topK
             return '';
         }
 
-        const resultsText = data.map((item: any) => `[Fuente: ${item.file_name}]\n${item.content}`).join('\n\n---\n\n');
+        const scopedData = serviceId
+            ? data.filter((item: any) => !item.service_id || item.service_id === serviceId)
+            : data;
+
+        if (!scopedData || scopedData.length === 0) {
+            return '';
+        }
+
+        const resultsText = scopedData.map((item: any) => `[Fuente: ${item.file_name}]\n${item.content}`).join('\n\n---\n\n');
         return resultsText;
     } catch (err: any) {
         console.error('❌ [RAG] Error consultando base de conocimientos:', err?.message || err);

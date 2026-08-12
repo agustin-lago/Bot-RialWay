@@ -11,7 +11,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
     <script>(function () { var v = '?v=2';['link[rel*="icon"]', 'link[rel="apple-touch-icon"]'].forEach(function (s) { document.querySelectorAll(s).forEach(function (e) { e.href = e.href.split('?')[0] + v; }); }); }());</script>
     <link rel="stylesheet" href="/style/vendor/fontawesome/css/all.min.css">
-    <link rel="stylesheet" href="/style/tailwind.css?v=17">
+    <link rel="stylesheet" href="/style/tailwind.css?v=21">
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script>
@@ -169,16 +169,16 @@
         /* Posicionar punto de notificacion sobre el icono en sidebar colapsado */
         .nav-sidebar.collapsed .nav-item>.nav-link>.nav-dot {
             position: absolute;
-            top: 8px;
+            top: 10px;
             left: auto;
-            right: 10px;
+            right: 15px;
             margin-left: 0;
         }
 
         .nav-sidebar.collapsed .nav-item>.nav-link>#badge-notifications-count {
             position: absolute;
             top: 6px;
-            left: 25px;
+            left: 34px;
             margin-left: 0;
             padding: 1px 4px;
             font-size: 0.6rem;
@@ -188,7 +188,7 @@
     </style>
 </head>
 
-<body class="flex h-screen overflow-hidden font-body" style="height: 100dvh;">
+<body class="flex h-screen overflow-hidden font-body sidebar-collapsed" style="height: 100dvh;">
 
     <!-- Fondo -->
     <div class="bg-page"></div>
@@ -202,11 +202,6 @@
             <i class="fas fa-bars"></i>
         </button>
         <span class="nav-brand-logo mobile-brand-logo">
-            <span class="nav-brand-details mobile-brand-details">
-                <span class="nav-brand-name" title="{{PROJECT_NAME}}">{{PROJECT_NAME}}</span>
-                <span class="nav-brand-sub" title="Copiar ID de proyecto"
-                    onclick="navigator.clipboard.writeText('{{PROJECT_ID}}').then(() => showToast('ID de proyecto copiado', 'success')).catch(err => console.error(err))">{{PROJECT_ID}}</span>
-            </span>
             <i class="fas fa-brain"></i>
         </span>
     </header>
@@ -214,18 +209,28 @@
     <!-- Navbar lateral -->
     <nav id="navbar" class="nav-sidebar collapsed" style="z-index:30;">
         <div class="nav-sidebar-header nav-sidebar-header-static">
-            <span class="nav-sidebar-brain" title="{{PROJECT_NAME}}">
-                <i class="fas fa-brain"></i>
-            </span>
+            <button id="sidebar-toggle-btn" class="nav-sidebar-toggle" type="button" aria-label="Expandir menu" aria-expanded="false">
+                <i class="fas fa-chevron-right"></i>
+            </button>
+            <div class="nav-brand">
+                <span class="nav-brand-logo" title="{{PROJECT_NAME}}">
+                    <i class="fas fa-brain"></i>
+                    <span class="nav-brand-text">
+                        <span class="nav-brand-title">Neurolinks</span>
+                        <span class="nav-brand-subtitle">Backoffice</span>
+                    </span>
+                </span>
+            </div>
         </div>
 
         <div class="nav-sidebar-scroll">
             <ul class="nav-list">
-                <li class="nav-item" id="nav-messaging-btn">
-                    <a href="#" class="nav-link" onclick="event.preventDefault(); navigateToLastSectionRoute('messaging')">
+                <li class="nav-item nav-dropdown" id="nav-messaging-btn">
+                    <a href="#" class="nav-link" onclick="toggleSidebarDropdown(event, 'nav-messaging-btn')">
                         <i class="fas fa-mobile-screen-button"></i>
                         <span class="nav-label">Gestion</span>
                         <span class="nav-dot" id="dot-messaging" style="display: none;"></span>
+                        <i class="fas fa-chevron-down nav-dropdown-icon"></i>
                     </a>
                     <ul class="nav-dropdown-menu">
                         <li class="nav-item"><span class="nav-link nav-dropdown-title">Gestion</span></li>
@@ -234,11 +239,12 @@
 
                 <li class="nav-sep" role="separator"></li>
 
-                <li class="nav-item" id="nav-integraciones-btn">
-                    <a href="#" class="nav-link" onclick="event.preventDefault(); navigateToLastSectionRoute('integrations')">
+                <li class="nav-item nav-dropdown" id="nav-integraciones-btn">
+                    <a href="#" class="nav-link" onclick="toggleSidebarDropdown(event, 'nav-integraciones-btn')">
                         <i class="fas fa-puzzle-piece"></i>
                         <span class="nav-label">Integraciones</span>
                         <span class="nav-dot" id="dot-integraciones" style="display: none;"></span>
+                        <i class="fas fa-chevron-down nav-dropdown-icon"></i>
                     </a>
                     <ul class="nav-dropdown-menu">
                         <li class="nav-item"><span class="nav-link nav-dropdown-title">Integraciones</span></li>
@@ -268,15 +274,6 @@
                     <li class="nav-item"><span class="nav-link nav-dropdown-title">Soporte</span></li>
                 </ul>
             </li>
-            <li class="nav-item" id="nav-usuarios-btn" data-route="/usuarios">
-                <a href="#" class="nav-link" onclick="event.preventDefault(); navigate('/usuarios')">
-                    <i class="fas fa-user-plus"></i>
-                    <span class="nav-label">Nuevo Usuario</span>
-                </a>
-                <ul class="nav-dropdown-menu">
-                    <li class="nav-item"><span class="nav-link nav-dropdown-title">Nuevo Usuario</span></li>
-                </ul>
-            </li>
             <li class="nav-item" id="nav-theme-btn">
                 <div class="nav-link nav-theme-row" onclick="toggleTheme()">
                     <i id="theme-mode-icon" class="fas fa-sun"></i>
@@ -296,38 +293,72 @@
                     <li class="nav-item"><span class="nav-link nav-dropdown-title">Configuracion</span></li>
                 </ul>
             </li>
-            <li class="nav-item">
-                <a href="https://clientesneurolinks.com/portal/dashboard" class="nav-link" target="_blank"
-                    rel="noopener">
-                    <i class="fas fa-arrow-left"></i>
-                    <span class="nav-label">Volver a mi portal</span>
-                </a>
-                <ul class="nav-dropdown-menu">
-                    <li class="nav-item"><span class="nav-link nav-dropdown-title">Volver a mi portal</span></li>
-                </ul>
-            </li>
-            <li class="nav-item nav-item-logout">
-                <a href="#" class="nav-link" onclick="event.preventDefault(); logout()">
-                    <i class="fas fa-power-off"></i>
-                    <span class="nav-label">Salir</span>
-                </a>
-                <ul class="nav-dropdown-menu">
-                    <li class="nav-item"><span class="nav-link nav-dropdown-title">Salir</span></li>
-                </ul>
-            </li>
         </ul>
     </nav>
 
     <!-- Mount point para views dinamicas -->
     <div id="view-root" class="flex flex-1 flex-col overflow-hidden relative" style="z-index:10;">
+        <header class="desktop-topbar no-print" aria-label="Acciones principales">
+            <div class="desktop-topbar-left">
+                <div class="desktop-line-selector" id="desktop-line-selector">
+                    <button type="button" class="desktop-line-selector-btn is-loading" id="desktop-line-selector-btn" onclick="toggleDesktopLineMenu(event)" aria-label="Linea vinculada" aria-expanded="false">
+                        <i class="fab fa-whatsapp"></i>
+                        <span id="desktop-line-selector-label">Cargando linea</span>
+                        <i class="fas fa-chevron-down desktop-line-selector-chevron"></i>
+                    </button>
+                    <div class="desktop-line-menu" id="desktop-line-menu" role="menu" aria-label="Lineas vinculadas">
+                        <div class="desktop-line-menu-status" id="desktop-line-menu-status">
+                            <span class="desktop-line-menu-empty">Cargando linea...</span>
+                        </div>
+                        <button type="button" class="desktop-line-menu-item" role="menuitem" onclick="showAddLineSoon(event)">
+                            <i class="fas fa-plus"></i>
+                            <span>Agregar linea</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="desktop-topbar-spacer" aria-hidden="true"></div>
+            <div class="desktop-topbar-actions">
+                <button type="button" class="desktop-topbar-btn" id="desktop-notifications-btn" onclick="openNotificationsModal(event)" aria-label="Notificaciones" title="Notificaciones">
+                    <i class="fas fa-bell"></i>
+                    <span class="unread-badge desktop-topbar-badge" id="desktop-badge-notifications-count" style="display:none;">0</span>
+                </button>
+                <button type="button" class="desktop-topbar-btn" id="desktop-support-btn" onclick="openSupportWidget(event)" aria-label="Soporte" title="Soporte">
+                    <i class="fas fa-headset"></i>
+                    <span class="nav-dot desktop-topbar-dot" id="desktop-dot-support-widget" data-dot-sync="sw-badge" style="display:none;"></span>
+                </button>
+                <button type="button" class="desktop-topbar-btn" id="desktop-theme-btn" onclick="toggleTheme()" aria-label="Cambiar tema" title="Cambiar tema">
+                    <i id="desktop-theme-icon" class="fas fa-sun"></i>
+                </button>
+                <button type="button" class="desktop-project-avatar" id="desktop-project-avatar" data-project-name="{{PROJECT_NAME}}" title="{{PROJECT_NAME}}" aria-label="Menu de cuenta" aria-expanded="false" onclick="toggleDesktopAccountMenu(event)">
+                    <span>{{PROJECT_NAME}}</span>
+                </button>
+                <div class="desktop-account-menu" id="desktop-account-menu" role="menu" aria-label="Menu de cuenta">
+                    <button type="button" class="desktop-account-menu-item" role="menuitem" onclick="navigateFromDesktopAccount('/usuarios')">
+                        <i class="fas fa-user-plus"></i>
+                        <span>Nuevo usuario</span>
+                    </button>
+                    <button type="button" class="desktop-account-menu-item" id="desktop-system-config-account-item" role="menuitem" onclick="navigateFromDesktopAccount('/system-config')" style="display:none;">
+                        <i class="fas fa-gears"></i>
+                        <span>Configuracion</span>
+                    </button>
+                    <button type="button" class="desktop-account-menu-item desktop-account-menu-item-danger" role="menuitem" onclick="logout()">
+                        <i class="fas fa-power-off"></i>
+                        <span>Cerrar sesion</span>
+                    </button>
+                </div>
+            </div>
+        </header>
         <div id="section-header-root" class="no-print" hidden></div>
         <div id="view-content-root" class="flex flex-1 overflow-hidden relative"></div>
     </div>
 
+    <script src="/js/core/navigation-config.js?v=10"></script>
     <script src="/js/crm/crm-common.js?v=8"></script>
+    <script src="/js/core/navigation-router.js?v=1"></script>
     <script src="/js/core/section-header.js"></script>
     <script src="/js/core/neural-bg.js"></script>
-    <script src="/app.js?v=7"></script>
+    <script src="/app.js?v=8"></script>
 </body>
 
 </html>

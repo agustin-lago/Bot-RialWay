@@ -18,9 +18,9 @@ import { idleFlow } from "./idleFlow";
 
 // El timeout se calcula dinámicamente dentro de la acción
 
-export async function getAddressFromCoordinates(lat: number, lng: number, projectId: string | null = null) {
+export async function getAddressFromCoordinates(lat: number, lng: number, projectId: string | null = null, serviceId: string | null = null) {
     const { HistoryHandler } = await import("~/db/historyHandler");
-    const apiKey = await HistoryHandler.getConfig('GOOGLE_MAPS_API_KEY', projectId) || '';
+    const apiKey = await HistoryHandler.getConfig('GOOGLE_MAPS_API_KEY', projectId, serviceId) || '';
     console.log('API KEY utilizada:', apiKey);
     console.log('Parámetros recibidos:', lat, lng);
     const client = new Client({});
@@ -46,9 +46,11 @@ export async function getAddressFromCoordinates(lat: number, lng: number, projec
 export const locationFlow = addKeyword(EVENTS.LOCATION).addAction(
     async (ctx, { flowDynamic, provider, gotoFlow, state }) => {
         const { HistoryHandler } = await import("~/db/historyHandler");
-        const dynamicProjectId = state?.get ? state.get('dynamicProjectId') : null;
+        const botPhoneNumber = provider?.globalVendorArgs?.phone_number_id || (ctx.to ? ctx.to.replace(/\D/g, '') : null);
+        const dynamicProjectId = await HistoryHandler.getProjectIdByRecipient(botPhoneNumber) || (state?.get ? state.get('dynamicProjectId') : null) || HistoryHandler.PROJECT_IDENTIFIER;
+        const dynamicServiceId = await HistoryHandler.getServiceIdByRecipient(botPhoneNumber) || (state?.get ? state.get('dynamicServiceId') : null) || HistoryHandler.SERVICE_IDENTIFIER;
         
-        const timeoutCierreValue = await HistoryHandler.getConfig('timeOutCierre', dynamicProjectId) || 45;
+        const timeoutCierreValue = await HistoryHandler.getConfig('timeOutCierre', dynamicProjectId, dynamicServiceId) || 45;
         const setTime = Number(timeoutCierreValue) * 60 * 1000;
         reset(ctx, gotoFlow, setTime);
         console.log("📍 Ubicación recibida:", ctx.message);
@@ -57,7 +59,7 @@ export const locationFlow = addKeyword(EVENTS.LOCATION).addAction(
         if (latitude && longitude) {
             console.log('Llamando a getAddressFromCoordinates con:', latitude, longitude);
             try {
-                const mapsData = await getAddressFromCoordinates(latitude, longitude, dynamicProjectId);
+                const mapsData = await getAddressFromCoordinates(latitude, longitude, dynamicProjectId, dynamicServiceId);
                 if (mapsData && mapsData.results && mapsData.results.length > 0) {
                     const result = mapsData.results[0];
                     const formatted = result.formatted_address;
@@ -104,9 +106,6 @@ export const locationFlow = addKeyword(EVENTS.LOCATION).addAction(
 
                     // Guardar en la base de datos para que el asistente tenga el historial en siguientes turnos
                     try {
-                        const botPhoneNumber = ctx.provider?.globalVendorArgs?.phone_number_id || (ctx.to ? ctx.to.replace(/\D/g, '') : null);
-                        const dynamicProjectId = await HistoryHandler.getProjectIdByRecipient(botPhoneNumber) || HistoryHandler.PROJECT_IDENTIFIER;
-                        const dynamicServiceId = await HistoryHandler.getServiceIdByRecipient(botPhoneNumber) || HistoryHandler.SERVICE_IDENTIFIER;
                         await HistoryHandler.saveMessage(
                             ctx.from,
                             'user',

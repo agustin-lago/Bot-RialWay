@@ -325,6 +325,60 @@ function closeMessageMenus() {
     });
 }
 
+function initMessageLongPressMenu() {
+    const container = document.getElementById('messages');
+    if (!container || container.dataset.longPressBound === 'true') return;
+    container.dataset.longPressBound = 'true';
+
+    let timer = null;
+    let startX = 0;
+    let startY = 0;
+    let targetMsg = null;
+
+    const clearTimer = () => {
+        if (timer) clearTimeout(timer);
+        timer = null;
+        targetMsg = null;
+    };
+
+    container.addEventListener('touchstart', (event) => {
+        if (window.innerWidth > 769) return;
+        if (event.target.closest('button, a, input, textarea, .msg-dropdown-menu, .msg-reaction-badge')) return;
+        const msg = event.target.closest('.msg');
+        if (!msg || !container.contains(msg)) return;
+        const touch = event.touches && event.touches[0];
+        if (!touch) return;
+        startX = touch.clientX;
+        startY = touch.clientY;
+        targetMsg = msg;
+        timer = setTimeout(() => {
+            const msgId = targetMsg?.dataset?.id;
+            if (msgId && window.toggleMsgDropdown) {
+                if (event.cancelable) event.preventDefault();
+                window.toggleMsgDropdown(msgId);
+            }
+            clearTimer();
+        }, 520);
+    }, { passive: false });
+
+    container.addEventListener('touchmove', (event) => {
+        if (!timer) return;
+        const touch = event.touches && event.touches[0];
+        if (!touch) return;
+        if (Math.abs(touch.clientX - startX) > 12 || Math.abs(touch.clientY - startY) > 12) clearTimer();
+    }, { passive: true });
+
+    container.addEventListener('touchend', clearTimer, { passive: true });
+    container.addEventListener('touchcancel', clearTimer, { passive: true });
+    container.addEventListener('contextmenu', (event) => {
+        if (window.innerWidth > 769) return;
+        const msg = event.target.closest('.msg');
+        if (!msg || !container.contains(msg)) return;
+        event.preventDefault();
+        if (window.toggleMsgDropdown) window.toggleMsgDropdown(msg.dataset.id);
+    });
+}
+
 function getMessagePreviewText(message) {
     if (!message) return '';
     const type = message.type || 'text';
@@ -786,7 +840,7 @@ function renderFilterDropdown() {
     if (!select) return; // Si no existe el filtro en el HTML, no hacer nada
 
     const currentValue = select.value;
-    select.innerHTML = '<option value="">Todas las etiquetas</option>' +
+    select.innerHTML = '<option value="">Etiquetas</option>' +
         _boBotTags.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
     select.value = currentValue;
 }
@@ -1394,6 +1448,7 @@ function renderMessages() {
     container.innerHTML = html;
     newIds.forEach(id => _seenMessageIds.add(id));
     container.scrollTop = wasAtBottom ? container.scrollHeight : prevScrollTop;
+    initMessageLongPressMenu();
     loadCachedMedia();
     loadFileSizes();
 }

@@ -92,27 +92,28 @@ function safeParseJson(jsonStr: string | undefined): any {
  * Esto evita tener que configurar manualmente el Dashboard.
  */
 export async function syncAssistantTools(assistantId: string, projectId: string | null = null, serviceId: string | null = null): Promise<boolean> {
-    const openai = await getOpenAI();
-    if (!openai || !assistantId) return false;
-
     try {
         const { HistoryHandler } = await import("../../db/historyHandler");
         const targetProjectId = projectId || HistoryHandler.PROJECT_IDENTIFIER;
-        let toolsJson = await HistoryHandler.getSetting('OPENAI_TOOLS_DEFINITION', targetProjectId, serviceId);
+        const targetServiceId = serviceId || HistoryHandler.SERVICE_IDENTIFIER;
+        const openai = await getOpenAI(targetProjectId, targetServiceId);
+        if (!openai || !assistantId) return false;
+
+        let toolsJson = await HistoryHandler.getSetting('OPENAI_TOOLS_DEFINITION', targetProjectId, targetServiceId);
 
         if (!toolsJson) {
             console.log("[openaiHelper] No se detectó OPENAI_TOOLS_DEFINITION. Verificando DB_TABLES para autogeneración...");
-            const dbTablesStr = await HistoryHandler.getSetting('DB_TABLES', targetProjectId, serviceId);
+            const dbTablesStr = await HistoryHandler.getSetting('DB_TABLES', targetProjectId, targetServiceId);
 
             if (dbTablesStr && dbTablesStr.trim() !== "") {
                 try {
                     const { autoUpdateBotAbilities } = await import("./toolGenerator");
                     const tableNames = dbTablesStr.split(',').map(t => t.trim());
                     console.log(`[openaiHelper] 🤖 Intentando autogenerar tools para tablas: ${dbTablesStr}`);
-                    await autoUpdateBotAbilities(tableNames, targetProjectId, serviceId || undefined);
+                    await autoUpdateBotAbilities(tableNames, targetProjectId, targetServiceId || undefined);
 
                     // Re-intentar obtener la definición recién generada
-                    toolsJson = await HistoryHandler.getSetting('OPENAI_TOOLS_DEFINITION', targetProjectId, serviceId);
+                    toolsJson = await HistoryHandler.getSetting('OPENAI_TOOLS_DEFINITION', targetProjectId, targetServiceId);
                 } catch (genError: any) {
                     console.error("[openaiHelper] ❌ Error en autogeneración de tools:", genError.message);
                 }
@@ -135,7 +136,7 @@ export async function syncAssistantTools(assistantId: string, projectId: string 
         const assistantsKeys = ['ASSISTANT_ID', 'ASSISTANT_2', 'ASSISTANT_3', 'ASSISTANT_4', 'ASSISTANT_5'];
         let assistantIndex = '1';
         for (const envKey of assistantsKeys) {
-            const val = await HistoryHandler.getSetting(envKey, targetProjectId, serviceId);
+            const val = await HistoryHandler.getSetting(envKey, targetProjectId, targetServiceId);
             if (val === assistantId) {
                 if (envKey === 'ASSISTANT_ID') assistantIndex = '1';
                 else assistantIndex = envKey.replace('ASSISTANT_', '');
@@ -145,7 +146,7 @@ export async function syncAssistantTools(assistantId: string, projectId: string 
 
         // 2. Obtener el prompt específico del asistente correspondiente
         const promptKey = assistantIndex === '1' ? 'ASSISTANT_PROMPT' : `ASSISTANT_PROMPT_${assistantIndex}`;
-        const prompt = await HistoryHandler.getSetting(promptKey, targetProjectId, serviceId);
+        const prompt = await HistoryHandler.getSetting(promptKey, targetProjectId, targetServiceId);
 
         // 3. Filtrar herramientas: Solo incluimos la herramienta si su nombre lógico se menciona en el prompt
         let filteredTools = tools;
@@ -226,7 +227,7 @@ export const askWithFunctions = async (assistantId: string, message: string, sta
         }
         
         // Obtener CLIENT_SLUG para formatear contexto de cliente
-        const slug = await HistoryHandler.getConfig('CLIENT_SLUG', projectId);
+        const slug = await HistoryHandler.getConfig('CLIENT_SLUG', targetProjectId, chatServiceId);
         const cleanSlug = String(slug || '').trim().toLowerCase();
 
         if (cleanSlug === 'aquavita') {
@@ -279,8 +280,6 @@ export const askWithFunctions = async (assistantId: string, message: string, sta
         const currentDatetimeArg = getArgentinaDatetimeString();
         const contactNameInfo = chatData?.name ? `\nNombre de Contacto: ${chatData.name}` : '';
 
-
-
         // Cargar contexto temporal (pre-contexto) desde state y desde chats.metadata en la DB
         let preContextData: any = {};
         if (state && typeof state.get === 'function') {
@@ -332,7 +331,7 @@ INSTRUCCIÓN CRÍTICA DE IDENTIDAD DE JUGADOR:
 - Notas del CRM: ${chatData?.notes || 'Sin notas'}`;
         }
 
-        messages[0].content += `\n\nFecha/Hora Actual (Argentina): ${currentDatetimeArg}\nID de Usuario: ${userId}${contactNameInfo}\nProject ID: ${projectId}${leadContext}`;
+        messages[0].content += `\n\nFecha/Hora Actual (Argentina): ${currentDatetimeArg}\nID de Usuario: ${userId}${contactNameInfo}\nProject ID: ${targetProjectId}${leadContext}`;
 
         // Inyectar el último resultado de base de datos si existe en la base de datos
         if (lastDbResult) {
@@ -342,7 +341,7 @@ INSTRUCCIÓN CRÍTICA DE IDENTIDAD DE JUGADOR:
         // Inyectar contexto RAG de documentos de Supabase si existe coincidencia semántica
         // 3. Preparar Herramientas (Tools)
         let tools: any[] = [];
-        const toolsJson = await HistoryHandler.getSetting('OPENAI_TOOLS_DEFINITION', projectId);
+        const toolsJson = await HistoryHandler.getSetting('OPENAI_TOOLS_DEFINITION', targetProjectId, chatServiceId);
         if (toolsJson) {
             try {
                 const rawTools = safeParseJson(toolsJson);
@@ -395,7 +394,7 @@ INSTRUCCIÓN CRÍTICA DE IDENTIDAD DE JUGADOR:
 
         while (continueLoop && attempts < 10) {
             attempts++;
-            const openaiModel = await HistoryHandler.getConfig('OPENAI_MODEL') || "gpt-4o-mini";
+            const openaiModel = await HistoryHandler.getConfig('OPENAI_MODEL', targetProjectId, chatServiceId) || "gpt-4o-mini";
             const completion = await openai.chat.completions.create({
                 model: openaiModel,
                 messages: messages,
@@ -420,7 +419,7 @@ INSTRUCCIÓN CRÍTICA DE IDENTIDAD DE JUGADOR:
                     if (funcName === "query_database") {
                         const { tabla, dato } = args as any;
                         // Usar el projectId dinámico para validar las tablas permitidas de los clientes.
-                        const dbTablesStr = await HistoryHandler.getConfig('DB_TABLES', projectId) || "";
+                        const dbTablesStr = await HistoryHandler.getConfig('DB_TABLES', targetProjectId, chatServiceId) || "";
                         const allowedTables = dbTablesStr.split(',').map(t => t.trim());
 
                         if (!allowedTables.includes(tabla)) {
@@ -431,13 +430,13 @@ INSTRUCCIÓN CRÍTICA DE IDENTIDAD DE JUGADOR:
                             toolResult = await executeDbQuery(sql);
 
                             // Persistir el resultado para que esté disponible en futuros turnos del contexto
-                            await HistoryHandler.updateLastDbResult(userId, toolResult, projectId ?? undefined);
+                            await HistoryHandler.updateLastDbResult(userId, toolResult, targetProjectId ?? undefined, chatServiceId);
                         }
                     } else if (funcName === "search_knowledge_base" || funcName === "file_search") {
                         try {
                             const query = args.query || args.busqueda || args.q || "";
                             const { searchKnowledgeBase } = await import("../../rag/ragService.js");
-                            toolResult = await searchKnowledgeBase(projectId || "default", query, 5);
+                            toolResult = await searchKnowledgeBase(targetProjectId || "default", query, 5, chatServiceId);
                             if (!toolResult) toolResult = "No se encontró información relevante en la base de conocimientos.";
                         } catch (ragToolErr: any) {
                             toolResult = "Error consultando la base de conocimientos: " + ragToolErr.message;
@@ -449,7 +448,8 @@ INSTRUCCIÓN CRÍTICA DE IDENTIDAD DE JUGADOR:
                             const context = {
                                 state,
                                 ctx: { from: userId },
-                                projectId
+                                projectId: targetProjectId,
+                                serviceId: chatServiceId
                             };
                             console.log(`[ChatCompletion] Enrutando tool call '${funcName}' al router de cliente...`);
                             const routerRes = await executeClientTool(funcName, args, context);

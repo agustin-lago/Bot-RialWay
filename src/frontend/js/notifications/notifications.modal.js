@@ -1,265 +1,577 @@
 /* global showToast, updateNotificationDots */
 /* eslint-disable no-undef */
 
-window.openNotificationsModal = async function() {
-    // 1. Ensure modal markup exists in document body
-    let overlay = document.getElementById('notif-modal-overlay');
-    if (!overlay) {
-        overlay = document.createElement('div');
-        overlay.id = 'notif-modal-overlay';
-        overlay.style = `
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(15, 23, 42, 0.45);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-            z-index: 99999;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-            animation: notif-fade-in 0.2s ease-out;
-        `;
-        overlay.innerHTML = `
-            <style>
-                @keyframes notif-fade-in {
-                    from { opacity: 0; }
-                    to { opacity: 1; }
-                }
-                @keyframes notif-pop-in {
-                    from { transform: scale(0.95); opacity: 0; }
-                    to { transform: scale(1); opacity: 1; }
-                }
-                .notif-modal-content {
-                    background: var(--card-bg, #ffffff);
-                    border: 1px solid var(--card-border-color, rgba(0,0,0,0.1));
-                    width: 100%;
-                    max-width: 650px;
-                    max-height: clamp(400px, 80vh, 700px);
-                    border-radius: 20px;
-                    display: flex;
-                    flex-direction: column;
-                    box-shadow: 0 20px 50px rgba(0,0,0,0.3);
-                    animation: notif-pop-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-                    overflow: hidden;
-                    color: var(--text-main, #1e293b);
-                }
-                [data-theme="dark"] .notif-modal-content {
-                    background: #0B132B;
-                    border-color: rgba(255,255,255,0.08);
-                    color: #f8fafc;
-                }
-                .notif-modal-header {
-                    padding: 20px 24px;
-                    border-bottom: 1px solid var(--card-border-color, rgba(0,0,0,0.08));
-                    display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                    flex-shrink: 0;
-                }
-                [data-theme="dark"] .notif-modal-header {
-                    border-color: rgba(255,255,255,0.08);
-                }
-                .notif-modal-body {
-                    padding: 20px 24px;
-                    overflow-y: auto;
-                    flex: 1;
-                    min-height: 0;
-                    display: flex;
-                    flex-direction: column;
-                    gap: 12px;
-                }
-                .notif-card {
-                    padding: 16px;
-                    border-radius: 12px;
-                    border: 1px solid var(--card-border-color, rgba(0,0,0,0.06));
-                    background: var(--bg-secondary, #f8fafc);
-                    display: flex;
-                    gap: 14px;
-                    align-items: flex-start;
-                    transition: all 0.2s;
-                }
-                [data-theme="dark"] .notif-card {
-                    background: rgba(255,255,255,0.02);
-                    border-color: rgba(255,255,255,0.05);
-                }
-                .notif-card.unread {
-                    border-left: 4px solid #ef4444;
-                    background: var(--card-bg, #ffffff);
-                }
-                [data-theme="dark"] .notif-card.unread {
-                    background: rgba(239, 68, 68, 0.03);
-                }
-            </style>
-            <div class="notif-modal-content" onclick="event.stopPropagation()">
-                <div class="notif-modal-header">
-                    <div style="display:flex; align-items:center; gap:12px;">
-                        <span style="width:40px; height:40px; border-radius:12px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.2); display:flex; align-items:center; justify-content:center; color:#ef4444;">
-                            <i class="fas fa-bell" style="font-size:1.15rem;"></i>
-                        </span>
-                        <div>
-                            <h3 style="margin:0; font-size:1.1rem; font-weight:700;">Errores de Envío (Meta API)</h3>
-                            <p style="margin:2px 0 0; font-size:0.75rem; color:var(--text-muted, #64748b);">Novedades de la integración con WhatsApp</p>
-                        </div>
-                    </div>
-                    <div style="display:flex; gap:8px; align-items:center;">
-                        <button id="notif-modal-mark-all" onclick="window._notifModalMarkAll()" class="filter-pill active" style="display:none; cursor:pointer; padding:6px 12px; font-size:0.75rem; border-radius:8px; font-weight:600;">
-                            <i class="fas fa-check-double" style="margin-right:4px;"></i> Marcar leídas
-                        </button>
-                        <button onclick="window.closeNotificationsModal()" class="btn-icon-wa" style="width:32px; height:32px; border-radius:8px; background:rgba(0,0,0,0.05); color:var(--text-muted);" onmouseenter="this.style.background='rgba(0,0,0,0.1)'" onmouseleave="this.style.background='rgba(0,0,0,0.05)'">
-                            <i class="fas fa-times"></i>
-                        </button>
-                    </div>
-                </div>
-                <div class="notif-modal-body" id="notif-modal-list">
-                    <div style="text-align:center; padding:30px; color:var(--text-muted);">
-                        <i class="fas fa-circle-notch fa-spin"></i> Cargando...
-                    </div>
-                </div>
-            </div>
-        `;
-        overlay.onclick = window.closeNotificationsModal;
-        document.body.appendChild(overlay);
-    } else {
-        overlay.style.display = 'flex';
-        // Reset contents
-        document.getElementById('notif-modal-list').innerHTML = `
-            <div style="text-align:center; padding:30px; color:var(--text-muted);">
-                <i class="fas fa-circle-notch fa-spin"></i> Cargando...
-            </div>
-        `;
+window.notificationsWidget = (() => {
+    let _isOpen = false;
+    let _lastNotifications = [];
+    let _isLoading = false;
+
+    function _esc(str) {
+        return String(str || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
-    // 2. Load and render notifications
-    const token = localStorage.getItem('backoffice_token') || '';
-    try {
-        const res = await fetch(`/api/backoffice/notifications?token=${encodeURIComponent(token)}&limit=40`);
-        const result = await res.json();
-        if (!result || !result.success) throw new Error(result.error);
+    function _getToken() {
+        return localStorage.getItem('backoffice_token') || '';
+    }
 
-        const listEl = document.getElementById('notif-modal-list');
-        const markAllBtn = document.getElementById('notif-modal-mark-all');
-        const notifications = result.data || [];
+    function _setTriggerState(active) {
+        document.getElementById('desktop-notifications-btn')?.classList.toggle('active', active);
+        document.getElementById('nav-notifications-btn')?.classList.toggle('active', active);
+    }
 
-        if (notifications.length === 0) {
-            listEl.innerHTML = `
-                <div style="text-align:center; padding:48px 16px; color:var(--text-muted);">
-                    <div style="width:54px; height:54px; border-radius:50%; background:rgba(34,197,94,0.1); border:1px solid rgba(34,197,94,0.2); display:inline-flex; align-items:center; justify-content:center; margin-bottom:12px; color:#22c55e;">
-                        <i class="fas fa-circle-check" style="font-size:1.5rem;"></i>
+    function _injectHTML() {
+        if (document.getElementById('notifications-widget-container')) return;
+
+        const container = document.createElement('div');
+        container.id = 'notifications-widget-container';
+        container.innerHTML = `
+        <style>
+            #nw-root {
+                position: fixed;
+                bottom: 24px;
+                right: 24px;
+                z-index: 99999;
+                font-family: inherit;
+                pointer-events: none;
+            }
+            #nw-popover {
+                position: absolute;
+                bottom: 0;
+                right: 0;
+                width: 380px;
+                height: 600px;
+                max-height: calc(100vh - 100px);
+                max-width: calc(100vw - 48px);
+                background: #ffffff;
+                border-radius: 16px;
+                box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                opacity: 0;
+                pointer-events: none;
+                transform: translateY(20px);
+                transition: opacity 0.3s, transform 0.3s;
+                border: 1px solid rgba(0,0,0,0.08);
+                color: #1e293b;
+            }
+            html[data-theme="dark"] #nw-popover {
+                background: #0A2036;
+                border-color: rgba(255,255,255,0.1);
+                color: #f8fafc;
+            }
+            #nw-popover.nw-show {
+                opacity: 1;
+                pointer-events: auto;
+                transform: translateY(0);
+            }
+            .nw-widget-controls {
+                position: absolute;
+                top: 10px;
+                right: 10px;
+                z-index: 20;
+                display: flex;
+                gap: 6px;
+            }
+            .nw-widget-action {
+                width: 28px;
+                height: 28px;
+                border: none;
+                border-radius: 8px;
+                background: rgba(22, 54, 84, 0.72);
+                color: #ffffff;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                transition: transform 0.14s ease;
+            }
+            .nw-widget-action[disabled] {
+                opacity: 0.45;
+                cursor: default;
+                pointer-events: none;
+            }
+            .nw-widget-action:hover {
+                transform: scale(0.97);
+            }
+            html[data-theme="dark"] .nw-widget-action {
+                background: rgba(148, 163, 184, 0.28);
+                color: #f8fafc;
+            }
+            .nw-header {
+                min-height: 104px;
+                padding: 24px 58px 20px 20px;
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                flex-shrink: 0;
+                background: #0099FF;
+                color: #ffffff;
+            }
+            html[data-theme="dark"] .nw-header {
+                background: #102A43;
+            }
+            .nw-header-icon {
+                width: 42px;
+                height: 42px;
+                border-radius: 12px;
+                background: rgba(255,255,255,0.16);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                flex-shrink: 0;
+            }
+            .nw-header-title {
+                margin: 0;
+                font-size: 1.08rem;
+                line-height: 1.2;
+                font-weight: 800;
+                color: #ffffff;
+            }
+            .nw-header-sub {
+                margin: 3px 0 0;
+                font-size: 0.78rem;
+                line-height: 1.35;
+                opacity: 0.88;
+            }
+            .nw-body {
+                flex: 1;
+                min-height: 0;
+                overflow-y: auto;
+                padding: 18px 20px 20px;
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+                background: #ffffff;
+            }
+            .nw-body {
+                scrollbar-width: thin;
+                scrollbar-color: rgba(0,153,255,0.42) transparent;
+            }
+            .nw-body::-webkit-scrollbar {
+                width: 6px;
+                height: 6px;
+            }
+            .nw-body::-webkit-scrollbar-track {
+                background: transparent;
+            }
+            .nw-body::-webkit-scrollbar-thumb {
+                border-radius: 999px;
+                background: rgba(0,153,255,0.42);
+            }
+            .nw-body::-webkit-scrollbar-thumb:hover {
+                background: rgba(0,153,255,0.42);
+            }
+            html[data-theme="dark"] .nw-body {
+                background: #0A2036;
+            }
+            .nw-card {
+                padding: 14px;
+                border-radius: 12px;
+                border: 1px solid rgba(15,23,42,0.08);
+                background: #f8fafc;
+                display: flex;
+                gap: 12px;
+                align-items: flex-start;
+            }
+            .nw-card.nw-clickable {
+                cursor: pointer;
+                transition: transform 0.14s ease, border-color 0.18s ease, background 0.18s ease, opacity 0.18s ease;
+            }
+            .nw-card.nw-clickable:hover {
+                transform: scale(0.995);
+                border-color: rgba(0,153,255,0.28);
+            }
+            .nw-card.nw-new {
+                animation: nw-slide-in 0.24s ease both;
+            }
+            .nw-card.is-read {
+                opacity: 0.58;
+                filter: saturate(0.72);
+            }
+            .nw-card.is-read .nw-card-icon {
+                background: rgba(100,116,139,0.1);
+                color: #64748b;
+            }
+            @keyframes nw-slide-in {
+                from { opacity: 0; transform: translateY(-8px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+            html[data-theme="dark"] .nw-card {
+                background: rgba(255,255,255,0.035);
+                border-color: rgba(255,255,255,0.08);
+            }
+            .nw-card.unread {
+                border-left: 4px solid #ef4444;
+            }
+            .nw-card-icon {
+                width: 32px;
+                height: 32px;
+                border-radius: 8px;
+                background: rgba(239,68,68,0.1);
+                color: #ef4444;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                flex-shrink: 0;
+                margin-top: 2px;
+            }
+            .nw-card-main {
+                flex: 1;
+                min-width: 0;
+            }
+            .nw-card-head {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                gap: 8px;
+            }
+            .nw-card-title {
+                margin: 0;
+                font-size: 0.86rem;
+                line-height: 1.25;
+                font-weight: 800;
+                color: #0f172a;
+            }
+            html[data-theme="dark"] .nw-card-title {
+                color: #f8fafc;
+            }
+            .nw-card-date,
+            .nw-card-desc,
+            .nw-empty-text {
+                color: #64748b;
+            }
+            html[data-theme="dark"] .nw-card-date,
+            html[data-theme="dark"] .nw-card-desc,
+            html[data-theme="dark"] .nw-empty-text {
+                color: #94a3b8;
+            }
+            .nw-card-date {
+                font-size: 0.68rem;
+                white-space: nowrap;
+            }
+            .nw-card-desc {
+                margin: 4px 0 8px;
+                font-size: 0.78rem;
+                line-height: 1.45;
+            }
+            .nw-card-tags {
+                display: flex;
+                gap: 6px;
+                align-items: center;
+                flex-wrap: wrap;
+            }
+            .nw-tag {
+                font-size: 0.6rem;
+                border-radius: 5px;
+                padding: 2px 7px;
+                font-weight: 800;
+                text-transform: uppercase;
+                border: 1px solid rgba(0,153,255,0.22);
+                background: rgba(0,153,255,0.1);
+                color: #0099FF;
+            }
+            .nw-tag-danger {
+                border-color: rgba(239,68,68,0.22);
+                background: rgba(239,68,68,0.1);
+                color: #ef4444;
+            }
+            .nw-tag-muted {
+                border-color: rgba(100,116,139,0.18);
+                background: rgba(100,116,139,0.08);
+                color: #64748b;
+            }
+            html[data-theme="dark"] .nw-tag-muted {
+                color: #94a3b8;
+            }
+            .nw-mark-btn {
+                width: 28px;
+                height: 28px;
+                border-radius: 7px;
+                border: 1px solid rgba(34,197,94,0.18);
+                color: #22c55e;
+                background: rgba(34,197,94,0.1);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                flex-shrink: 0;
+                transition: transform 0.14s ease;
+            }
+            .nw-mark-btn:hover {
+                transform: scale(0.97);
+            }
+            .nw-empty {
+                text-align: center;
+                padding: 48px 16px;
+            }
+            .nw-empty-icon {
+                width: 54px;
+                height: 54px;
+                border-radius: 50%;
+                background: rgba(34,197,94,0.1);
+                border: 1px solid rgba(34,197,94,0.2);
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                margin-bottom: 12px;
+                color: #22c55e;
+            }
+            .nw-empty-title {
+                margin: 0 0 4px;
+                color: #0f172a;
+                font-weight: 800;
+            }
+            html[data-theme="dark"] .nw-empty-title {
+                color: #f8fafc;
+            }
+            @media (max-width: 640px) {
+                #nw-root {
+                    inset: 12px;
+                    bottom: 12px;
+                    right: 12px;
+                }
+                #nw-popover {
+                    width: 100%;
+                    height: 100%;
+                    max-width: none;
+                    max-height: none;
+                }
+            }
+        </style>
+        <div id="nw-root">
+            <div id="nw-popover">
+                <div class="nw-widget-controls">
+                    <button class="nw-widget-action" id="nw-mark-all-btn" onclick="notificationsWidget.markAll(event)" title="Marcar todas como le&iacute;das" aria-label="Marcar todas como le&iacute;das">
+                        <i class="fas fa-check-double"></i>
+                    </button>
+                    <button class="nw-widget-action" onclick="notificationsWidget.close(event)" title="Cerrar">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="nw-header">
+                    <span class="nw-header-icon"><i class="fas fa-bell"></i></span>
+                    <div>
+                        <h3 class="nw-header-title">Notificaciones</h3>
+                        <p class="nw-header-sub">Novedades del sistema</p>
                     </div>
-                    <h4 style="margin:0 0 4px; color:var(--text-main); font-weight:700;">¡Sin novedades de error!</h4>
-                    <p style="margin:0; font-size:0.8rem; max-width:280px; margin-inline:auto;">Meta API está procesando todos los envíos con éxito.</p>
+                </div>
+                <div class="nw-body" id="nw-list">
+                    <div class="nw-empty">
+                        <div class="nw-empty-icon"><i class="fas fa-bell" style="font-size:1.3rem;"></i></div>
+                        <h4 class="nw-empty-title">Sin notificaciones</h4>
+                        <p class="nw-empty-text" style="margin:0; font-size:0.8rem; max-width:280px; margin-inline:auto;">Las novedades del sistema aparecer&aacute;n ac&aacute;.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        `;
+        document.body.appendChild(container);
+    }
+
+    function init() {
+        if (!_getToken()) return;
+        _injectHTML();
+    }
+
+    async function open() {
+        init();
+        const popover = document.getElementById('nw-popover');
+        if (!popover) return;
+
+        if (window.supportWidget && typeof window.supportWidget.closeWidget === 'function') {
+            window.supportWidget.closeWidget();
+        }
+
+        _isOpen = true;
+        popover.classList.add('nw-show');
+        _setTriggerState(true);
+        await load();
+    }
+
+    function close(e) {
+        if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        _isOpen = false;
+        document.getElementById('nw-popover')?.classList.remove('nw-show');
+        _setTriggerState(false);
+    }
+
+    function toggleOpen() {
+        if (_isOpen) {
+            close();
+            return;
+        }
+        open();
+    }
+
+    async function load() {
+        const listEl = document.getElementById('nw-list');
+        if (!listEl) return;
+
+        if (!_lastNotifications.length) {
+            render([]);
+        }
+
+        const token = _getToken();
+        if (_isLoading) return;
+        _isLoading = true;
+        try {
+            const res = await fetch(`/api/backoffice/notifications?token=${encodeURIComponent(token)}&limit=40`);
+            const result = await res.json();
+            if (!result || !result.success) throw new Error(result.error || 'Error al cargar notificaciones');
+
+            const notifications = result.data || [];
+            const previousIds = new Set(_lastNotifications.map(n => String(n.id)));
+            _lastNotifications = notifications;
+            render(notifications, { previousIds });
+        } catch (e) {
+            console.error(e);
+            if (_lastNotifications.length) return;
+            listEl.innerHTML = `
+                <div style="text-align:center; padding:30px; color:#ef4444;">
+                    <i class="fas fa-triangle-exclamation" style="font-size:1.5rem; margin-bottom:8px;"></i>
+                    <p style="margin:0; font-size:0.85rem;">Error al cargar notificaciones de sistema.</p>
                 </div>
             `;
-            if (markAllBtn) markAllBtn.style.display = 'none';
+        } finally {
+            _isLoading = false;
+        }
+    }
+
+    function render(notifications, options = {}) {
+        const listEl = document.getElementById('nw-list');
+        if (!listEl) return;
+
+        if (!notifications.length) {
+            const markAllBtn = document.getElementById('nw-mark-all-btn');
+            if (markAllBtn) {
+                markAllBtn.disabled = true;
+                markAllBtn.dataset.ids = '';
+            }
+            listEl.innerHTML = `
+                <div class="nw-empty">
+                    <div class="nw-empty-icon"><i class="fas fa-bell" style="font-size:1.3rem;"></i></div>
+                    <h4 class="nw-empty-title">Sin notificaciones</h4>
+                    <p class="nw-empty-text" style="margin:0; font-size:0.8rem; max-width:280px; margin-inline:auto;">Las novedades del sistema aparecer&aacute;n ac&aacute;.</p>
+                </div>
+            `;
             return;
         }
 
-        const hasUnread = notifications.some(n => !n.read);
-        if (markAllBtn) markAllBtn.style.display = hasUnread ? 'inline-block' : 'none';
+        const unreadIds = notifications.filter(n => !n.read).map(n => n.id);
+        const markAllBtn = document.getElementById('nw-mark-all-btn');
+        if (markAllBtn) {
+            markAllBtn.disabled = unreadIds.length === 0;
+            markAllBtn.dataset.ids = unreadIds.join(',');
+        }
 
         listEl.innerHTML = notifications.map(n => {
             const dateStr = new Date(n.created_at).toLocaleString('es-AR', {
-                day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+                day: '2-digit',
+                month: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
             });
-            const unreadClass = !n.read ? 'unread' : '';
             const errCode = n.metadata?.error_code || 'META';
             const isBulk = n.metadata?.is_bulk === true;
-
-            const typeBadge = isBulk 
-                ? `<span style="font-size:0.62rem; background:rgba(239,68,68,0.1); color:#ef4444; border:1px solid rgba(239,68,68,0.2); padding:1px 6px; border-radius:4px; font-weight:700; text-transform:uppercase;">Envío Masivo</span>`
-                : `<span style="font-size:0.62rem; background:rgba(0,153,255,0.1); color:#0099FF; border:1px solid rgba(0,153,255,0.2); padding:1px 6px; border-radius:4px; font-weight:700; text-transform:uppercase;">Chat Individual</span>`;
+            const typeBadge = isBulk
+                ? '<span class="nw-tag nw-tag-danger">Env&iacute;o Masivo</span>'
+                : '<span class="nw-tag">Chat Individual</span>';
 
             return `
-                <div class="notif-card ${unreadClass}">
-                    <div style="width:32px; height:32px; border-radius:8px; background:rgba(239,68,68,0.08); display:flex; align-items:center; justify-content:center; flex-shrink:0; color:#ef4444; margin-top:2px;">
-                        <i class="fas fa-circle-exclamation" style="font-size:0.95rem;"></i>
-                    </div>
-                    <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-                            <h4 style="margin:0; font-size:0.88rem; font-weight:700; color:var(--text-main);">${window._escNotif(n.title)}</h4>
-                            <span style="font-size:0.7rem; color:var(--text-muted);">${dateStr}</span>
+                <div class="nw-card ${!n.read ? 'unread' : 'is-read'} nw-clickable ${options.previousIds && !options.previousIds.has(String(n.id)) ? 'nw-new' : ''}" onclick="notificationsWidget.markSingle('${_esc(n.id)}')">
+                    <div class="nw-card-icon"><i class="fas fa-circle-exclamation" style="font-size:0.95rem;"></i></div>
+                    <div class="nw-card-main">
+                        <div class="nw-card-head">
+                            <h4 class="nw-card-title">${_esc(n.title)}</h4>
+                            <span class="nw-card-date">${dateStr}</span>
                         </div>
-                        <p style="margin:2px 0 6px; font-size:0.8rem; color:var(--text-muted); line-height:1.45;">${window._escNotif(n.description)}</p>
-                        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                        <p class="nw-card-desc">${_esc(n.description)}</p>
+                        <div class="nw-card-tags">
                             ${typeBadge}
-                            <span style="font-size:0.62rem; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-muted); padding:1px 6px; border-radius:4px; font-weight:700;">CÓDIGO ${errCode}</span>
+                            <span class="nw-tag nw-tag-muted">C&oacute;digo ${_esc(errCode)}</span>
                         </div>
                     </div>
                     ${!n.read ? `
-                        <button onclick="window._notifModalMarkSingle('${n.id}')" class="btn-icon-wa" title="Marcar como leída" style="width:28px; height:28px; border-radius:6px; color:#22c55e; background:rgba(34,197,94,0.1); margin-top:2px; flex-shrink:0;">
+                        <button onclick="event.stopPropagation(); notificationsWidget.markSingle('${_esc(n.id)}')" class="nw-mark-btn" title="Marcar como le&iacute;da">
                             <i class="fas fa-check" style="font-size:0.8rem;"></i>
                         </button>
                     ` : ''}
                 </div>
             `;
         }).join('');
-
-        // Auto-mark notifications as read immediately after opening the modal
-        if (hasUnread) {
-            const unreadIds = notifications.filter(n => !n.read).map(n => n.id);
-            await fetch(`/api/backoffice/notifications/read?token=${encodeURIComponent(token)}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ids: unreadIds })
-            });
-            if (typeof updateNotificationDots === 'function') {
-                updateNotificationDots();
-            }
-        }
-    } catch (e) {
-        console.error(e);
-        document.getElementById('notif-modal-list').innerHTML = `
-            <div style="text-align:center; padding:30px; color:#ef4444;">
-                <i class="fas fa-triangle-exclamation" style="font-size:1.5rem; margin-bottom:8px;"></i>
-                <p style="margin:0; font-size:0.85rem;">Error al cargar notificaciones de sistema.</p>
-            </div>
-        `;
     }
-};
 
-window.closeNotificationsModal = function() {
-    const overlay = document.getElementById('notif-modal-overlay');
-    if (overlay) overlay.style.display = 'none';
-};
-
-window._notifModalMarkSingle = async function(id) {
-    const token = localStorage.getItem('backoffice_token') || '';
-    try {
+    async function markIds(ids, options = {}) {
+        const token = _getToken();
+        const idSet = new Set(ids.map(String));
+        _lastNotifications = _lastNotifications.map(n => idSet.has(String(n.id)) ? { ...n, read: true } : n);
+        render(_lastNotifications);
         await fetch(`/api/backoffice/notifications/read?token=${encodeURIComponent(token)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ids: [id] })
+            body: JSON.stringify({ ids })
         });
-        if (typeof showToast === 'function') showToast('Notificación leída', 'success');
-        // Refresh modal list
-        window.openNotificationsModal();
-    } catch (e) {
-        console.error(e);
+        if (!options.silent && typeof showToast === 'function') showToast('Notificaci\u00f3n le\u00edda', 'success');
+        if (typeof updateNotificationDots === 'function') updateNotificationDots();
+        if (options.refresh !== false) await load();
     }
-};
 
-window._notifModalMarkAll = async function() {
-    const token = localStorage.getItem('backoffice_token') || '';
-    try {
-        const res = await fetch(`/api/backoffice/notifications?token=${encodeURIComponent(token)}&limit=100`);
-        const result = await res.json();
-        const unreadIds = (result.data || []).filter(n => !n.read).map(n => n.id);
-        
-        if (unreadIds.length > 0) {
-            await fetch(`/api/backoffice/notifications/read?token=${encodeURIComponent(token)}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ids: unreadIds })
-            });
+    async function markSingle(id) {
+        const current = _lastNotifications.find(n => String(n.id) === String(id));
+        if (current && current.read) return;
+        try {
+            await markIds([id], { silent: true });
+        } catch (e) {
+            console.error(e);
         }
-        if (typeof showToast === 'function') showToast('Todas leídas', 'success');
-        window.openNotificationsModal();
-    } catch (e) {
-        console.error(e);
     }
+
+    async function markAll(e) {
+        if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        const ids = (document.getElementById('nw-mark-all-btn')?.dataset.ids || '')
+            .split(',')
+            .filter(Boolean);
+        if (!ids.length) return;
+        try {
+            await markIds(ids, { silent: true });
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    return {
+        init,
+        open,
+        close,
+        toggleOpen,
+        load,
+        markSingle,
+        markAll,
+        isOpen: () => _isOpen
+    };
+})();
+
+window.openNotificationsModal = function(e) {
+    if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    window.notificationsWidget.init();
+    window.notificationsWidget.toggleOpen();
 };
 
-window._escNotif = function(str) {
-    return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+window.closeNotificationsModal = function(e) {
+    window.notificationsWidget.close(e);
 };

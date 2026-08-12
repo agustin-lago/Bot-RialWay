@@ -25,10 +25,13 @@ export const welcomeFlowTxt = addKeyword<BaileysProvider, MemoryDB>(EVENTS.WELCO
         }
 
         const { HistoryHandler } = await import("~/db/historyHandler");
+        const botPhoneNumber = provider?.globalVendorArgs?.phone_number_id || (ctx.to ? ctx.to.replace(/\D/g, '') : null);
+        const dynamicProjectId = await HistoryHandler.getProjectIdByRecipient(botPhoneNumber) || HistoryHandler.PROJECT_IDENTIFIER;
+        const dynamicServiceId = await HistoryHandler.getServiceIdByRecipient(botPhoneNumber) || HistoryHandler.SERVICE_IDENTIFIER;
 
         console.log(`📩 Mensaje recibido de :${userId}`);
 
-        const timeoutCierreValue = await HistoryHandler.getConfig('timeOutCierre') || 45;
+        const timeoutCierreValue = await HistoryHandler.getConfig('timeOutCierre', dynamicProjectId, dynamicServiceId) || 45;
         const setTime = Number(timeoutCierreValue) * 60 * 1000;
         reset(ctx, gotoFlow, setTime);
 
