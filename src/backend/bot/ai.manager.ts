@@ -2,7 +2,7 @@ import { typing } from "./presence";
 import { HistoryHandler } from "../db/historyHandler";
 import { EVENTS } from "@builderbot/bot";
 import { getArgentinaDatetimeString } from "../utils/ArgentinaTime";
-import { safeToAsk } from "../apis/openai/openaiHelper";
+import { safeToAsk, syncAssistantTools } from "../apis/openai/openaiHelper";
 import { AssistantResponseProcessor } from "../apis/openai/AssistantResponseProcessor";
 import { stop, reset } from "./timeOut";
 import { updateMain } from "../apis/google/updateMain";
@@ -272,16 +272,22 @@ export class AiManager {
             // Comandos Globales y Sheet Update
             if (body === "#ACTUALIZAR#") {
                 try {
-                    console.log('📡 [SYNC] Sincronizando datos de Google y Prompt de OpenAI...');
-                    await updateMain();
+                    console.log(`📡 [SYNC] Sincronizando hojas de Google, base de datos RAG y herramientas para proyecto: ${dynamicProjectId}, servicio: ${dynamicServiceId}...`);
+                    await updateMain(dynamicProjectId, dynamicServiceId);
                     
-                    // Sincronización del Prompt del asistente (Desde DB/Local)
-                    console.log('✅ [SYNC] Datos actualizados. El prompt se cargará desde la base de datos en la próxima consulta.');
+                    const currentAssistantMap = await this.getAssistantMap(dynamicProjectId);
+                    const currentAssistantId = currentAssistantMap[assigned] || this.assistantId;
 
-                    await flowDynamic([{ body: "🔄 Datos actualizados desde Google y Assistant Prompt sincronizado (Hot-update)." }]);
+                    if (currentAssistantId) {
+                        console.log(`📡 [SYNC] Sincronizando herramientas con el asistente de OpenAI (${currentAssistantId})...`);
+                        await syncAssistantTools(currentAssistantId, dynamicProjectId, dynamicServiceId);
+                    }
+
+                    console.log('✅ [SYNC] Todo actualizado correctamente.');
+                    await flowDynamic([{ body: "🔄 Sincronización completada con éxito:\n1. Base de datos de Google Sheets actualizada.\n2. Documentos RAG re-indexados.\n3. Herramientas y funciones del asistente de OpenAI actualizadas." }]);
                 } catch (err: any) {
                     console.error("[AiManager] Error en #ACTUALIZAR#:", err.message);
-                    await flowDynamic([{ body: "❌ Error al actualizar datos operativos." }]);
+                    await flowDynamic([{ body: "❌ Error al actualizar los datos operativos y el RAG." }]);
                 }
                 return state;
             }
