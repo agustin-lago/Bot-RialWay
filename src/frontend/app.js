@@ -4,7 +4,6 @@
 
 const ROUTES = {
     '/backoffice':               '/js/backoffice/backoffice.view.js',
-    '/notifications':            '/js/notifications/notifications.view.js',
     '/dashboard':                '/js/dashboard/dashboard.view.js',
     '/conexion':                 '/js/conexion/conexion.view.js',
     '/crm':                      '/js/crm/crm.view.js',
@@ -62,6 +61,20 @@ window.openSupportWidget = async function(e) {
     }
 };
 
+window.openNotificationsModal = async function(e) {
+    if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    if (typeof window.closeMessagingFlyout === 'function') window.closeMessagingFlyout();
+    if (typeof window.closeIntegracionesFlyout === 'function') window.closeIntegracionesFlyout();
+    if (typeof window.closeAjustesFlyout === 'function') window.closeAjustesFlyout();
+    await loadViewScript('/js/notifications/notifications.modal.js');
+    if (typeof window.openNotificationsModal === 'function') {
+        window.openNotificationsModal();
+    }
+};
+
 function getViewName(scriptPath) {
     // '/js/views/crm-tareas.view.js' -> 'crmTareasView'
     const base = scriptPath.split('/').pop().replace('.view.js', '');
@@ -94,10 +107,6 @@ function highlightActiveNav(path) {
     document.querySelectorAll('#nav-ajustes-btn .nav-dropdown-link[data-route]').forEach(item => {
         item.classList.toggle('active', item.getAttribute('data-route') === path);
     });
-
-    // Notificaciones active
-    const notifBtn = document.getElementById('nav-notifications-btn');
-    if (notifBtn) notifBtn.classList.toggle('active', path === '/notifications');
 
     // Expandir y activar sub-dropdown de Mercado Libre si corresponde
     const meliSub = document.getElementById('nav-mercado-libre-sub');
