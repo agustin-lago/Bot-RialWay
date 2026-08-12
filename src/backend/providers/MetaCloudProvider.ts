@@ -655,7 +655,41 @@ class MetaCloudProvider extends ProviderClass {
      * Envía mensajes a través de la API oficial de Meta
      */
     public async sendMessage(number: string, message: string, options: any = {}): Promise<any> {
-        const { phone_number_id, access_token } = this.config;
+        let phone_number_id = this.config.phone_number_id;
+        let access_token = this.config.access_token;
+
+        try {
+            const { HistoryHandler } = await import('../db/historyHandler');
+            const targetProjectId = options?.projectId || HistoryHandler.PROJECT_IDENTIFIER;
+            let targetServiceId = options?.serviceId;
+
+            if (!targetServiceId && number) {
+                const jid = number.includes('@') ? number.split('@')[0] : number;
+                const supabase = HistoryHandler.getSupabase();
+                if (supabase) {
+                    const { data: chatData } = await supabase
+                        .from('chats')
+                        .select('service_id')
+                        .eq('id', jid)
+                        .eq('project_id', targetProjectId)
+                        .maybeSingle();
+                    
+                    if (chatData?.service_id) {
+                        targetServiceId = chatData.service_id;
+                    }
+                }
+            }
+
+            if (targetServiceId && targetServiceId !== 'default_service') {
+                const tenantOnboarding = await HistoryHandler.getMetaOnboardingData(targetProjectId, false, targetServiceId);
+                if (tenantOnboarding?.whatsappToken && tenantOnboarding?.phoneNumberId) {
+                    access_token = tenantOnboarding.whatsappToken;
+                    phone_number_id = tenantOnboarding.phoneNumberId;
+                }
+            }
+        } catch (e: any) {
+            console.error('[MetaCloudProvider] Error resolviendo credenciales dinámicas en sendMessage:', e.message);
+        }
 
         if (!phone_number_id || !access_token) {
             console.error('❌ [MetaCloudProvider] Error: Falta phone_number_id o access_token en la configuración');

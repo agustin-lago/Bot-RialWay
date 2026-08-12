@@ -12,6 +12,7 @@ import { getOpenAI } from "../../apis/openai/openaiHelper";
 import { getAdapterProvider, getGroupProvider } from "../../providers/instances";
 import { upload } from "../../middleware/upload";
 import { getIdsByHost } from '../utils/routingResolver';
+import { getVisibleServiceIds } from '../utils/databaseSync';
 
 // Invalidar visibility cache cuando cambia cualquier setting de visibilidad via Realtime
 const VISIBILITY_KEYS = ['WHATSAPP_VISIBLE', 'INSTAGRAM_VISIBLE', 'MESSENGER_VISIBLE', 'CRM_VISIBLE', 'SYSTEM_CONFIG_VISIBLE'];
@@ -129,6 +130,7 @@ export const processSendMessage = async (
     file: any
 ) => {
     const projectId = req.query.projectId || (req.body && req.body.projectId) || req.headers['x-project-id'] || (req.auth && req.auth.projectId) || null;
+    const serviceId = req.query.serviceId || (req.body && req.body.serviceId) || req.headers['x-service-id'] || (req.auth && req.auth.serviceId) || null;
     const adapterProvider = getAdapterProvider();
     const depsHistoryHandler = HistoryHandlerClass;
     const openaiMain = await getOpenAI();
@@ -161,7 +163,15 @@ export const processSendMessage = async (
 
         console.log(`[BACKOFFICE] Procesando envío para ${chatId}...`);
         
-        // El guardado se movió después del envío para capturar el ID real y evitar duplicados
+        // Resolver el serviceId específico de este chat
+        let targetServiceId = serviceId;
+        if (!targetServiceId) {
+            const chatObj = await depsHistoryHandler.getChat(chatId, projectId);
+            if (chatObj && chatObj.service_id) {
+                targetServiceId = chatObj.service_id;
+            }
+        }
+        if (!targetServiceId) targetServiceId = 'default_service';
 
         // 3. Inyectar en thread OpenAI (silencioso)
         depsHistoryHandler.getThreadId(chatId).then((threadId: string | null) => {
@@ -178,7 +188,7 @@ export const processSendMessage = async (
             const isGroup = chatId.includes('@g.us');
             const providerToSend = (isGroup && groupProvider) ? groupProvider : adapterProvider;
             
-            console.log(`[BACKOFFICE] Enviando via ${providerToSend.constructor.name} a ${chatId}`);
+            console.log(`[BACKOFFICE] Enviando via ${providerToSend.constructor.name} a ${chatId} (Service: ${targetServiceId})`);
 
             const jid = chatId.includes('@') ? chatId : `${chatId}@s.whatsapp.net`;
             let providerResponse: any = null;
@@ -189,35 +199,35 @@ export const processSendMessage = async (
                     if (typeof (providerToSend as any).sendSticker === 'function') {
                         providerResponse = await (providerToSend as any).sendSticker(jid, absolutePath);
                     } else {
-                        providerResponse = await providerToSend.sendMessage(jid, '', { media: absolutePath, type: 'sticker' });
+                        providerResponse = await providerToSend.sendMessage(jid, '', { media: absolutePath, type: 'sticker', serviceId: targetServiceId, projectId });
                     }
                 } else if (finalType === 'image') {
                     if (typeof providerToSend.sendImage === 'function') {
                         providerResponse = await providerToSend.sendImage(jid, absolutePath, message || '');
                     } else {
-                        providerResponse = await providerToSend.sendMessage(jid, message || '', { media: absolutePath });
+                        providerResponse = await providerToSend.sendMessage(jid, message || '', { media: absolutePath, serviceId: targetServiceId, projectId });
                     }
                 } else if (finalType === 'video') {
                     if (typeof (providerToSend as any).sendVideo === 'function') {
                         providerResponse = await (providerToSend as any).sendVideo(jid, absolutePath, message || '');
                     } else {
-                        providerResponse = await providerToSend.sendMessage(jid, message || '', { media: absolutePath });
+                        providerResponse = await providerToSend.sendMessage(jid, message || '', { media: absolutePath, serviceId: targetServiceId, projectId });
                     }
                 } else if (finalType === 'audio') {
                     if (typeof (providerToSend as any).sendAudio === 'function') {
                         providerResponse = await (providerToSend as any).sendAudio(jid, absolutePath, message || file.originalname);
                     } else {
-                        providerResponse = await providerToSend.sendMessage(jid, message || '', { media: { url: absolutePath, mimetype: file.mimetype } });
+                        providerResponse = await providerToSend.sendMessage(jid, message || '', { media: { url: absolutePath, mimetype: file.mimetype }, serviceId: targetServiceId, projectId });
                     }
                 } else {
                     if (typeof (providerToSend as any).sendFile === 'function') {
                         providerResponse = await (providerToSend as any).sendFile(jid, absolutePath, message || file.originalname);
                     } else {
-                        providerResponse = await providerToSend.sendMessage(jid, message || '', { media: absolutePath, fileName: file.originalname });
+                        providerResponse = await providerToSend.sendMessage(jid, message || '', { media: absolutePath, fileName: file.originalname, serviceId: targetServiceId, projectId });
                     }
                 }
             } else {
-                providerResponse = await providerToSend.sendMessage(jid, message, {});
+                providerResponse = await providerToSend.sendMessage(jid, message, { serviceId: targetServiceId, projectId });
             }
 
             // 5. GUARDAR EN HISTORIAL (Ahora con ID para evitar duplicados con el ECHO)
@@ -228,7 +238,7 @@ export const processSendMessage = async (
             const { trackSentMessage } = await import('../../providers/provider.manager');
             trackSentMessage(externalId);
 
-            await depsHistoryHandler.saveMessage(chatId, 'assistant', finalContent, finalType, undefined, undefined, externalId, 'whatsapp', projectId);
+            await depsHistoryHandler.saveMessage(chatId, 'assistant', finalContent, finalType, undefined, undefined, externalId, 'whatsapp', projectId, targetServiceId);
             await depsHistoryHandler.updateLastHumanMessage(chatId, projectId);
             await depsHistoryHandler.toggleBot(chatId, false, projectId);
 
@@ -237,7 +247,7 @@ export const processSendMessage = async (
             console.error('[BACKOFFICE] Error enviando a Whatsapp:', waError);
             
             // Si falló el envío, igual guardamos pero sin ID externo para que al menos quede el log local, marcado como 'failed'
-            await depsHistoryHandler.saveMessage(chatId, 'assistant', finalContent, finalType, undefined, undefined, null, 'whatsapp', projectId, undefined, undefined, 'failed');
+            await depsHistoryHandler.saveMessage(chatId, 'assistant', finalContent, finalType, undefined, undefined, null, 'whatsapp', projectId, targetServiceId, undefined, 'failed');
 
             res.json({ 
                 success: true, 
@@ -838,7 +848,8 @@ export const registerBackofficeRoutes = (app: any) => {
         
         const projectId = resolveProjectId(req);
         const serviceId = resolveServiceId(req);
-        const chats = await depsHistoryHandler.listChats(limit, offset, search, tag, assignedTo, platform, projectId, serviceId);
+        const visibleServices = await getVisibleServiceIds(projectId, serviceId);
+        const chats = await depsHistoryHandler.listChats(limit, offset, search, tag, assignedTo, platform, projectId, visibleServices.join(','));
         res.json(chats);
     });
 
@@ -1081,7 +1092,8 @@ export const registerBackofficeRoutes = (app: any) => {
         const offset = parseInt(req.query.offset as string) || 0;
         const projectId = resolveProjectId(req);
         const serviceId = resolveServiceId(req);
-        const messages = await depsHistoryHandler.getMessages(req.params.chatId, limit, offset, projectId, serviceId);
+        const visibleServices = await getVisibleServiceIds(projectId, serviceId);
+        const messages = await depsHistoryHandler.getMessages(req.params.chatId, limit, offset, projectId, visibleServices.join(','));
         res.json(messages);
     });
 
@@ -1788,7 +1800,9 @@ export const registerBackofficeRoutes = (app: any) => {
         const offset = parseInt(req.query.offset as string) || 0;
         const chatId = req.query.chatId as string;
         const projectId = resolveProjectId(req);
-        const result = await depsHistoryHandler.listTickets(limit, offset, estado, tipo, chatId, id, projectId);
+        const serviceId = resolveServiceId(req);
+        const visibleServices = await getVisibleServiceIds(projectId, serviceId);
+        const result = await depsHistoryHandler.listTickets(limit, offset, estado, tipo, chatId, id, projectId, visibleServices.join(','));
         res.json(result);
     });
 
@@ -1885,7 +1899,9 @@ export const registerBackofficeRoutes = (app: any) => {
     app.get('/api/backoffice/crm/tasks', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req);
-            const tasks = await depsHistoryHandler.getTasksDashboard(projectId);
+            const serviceId = resolveServiceId(req);
+            const visibleServices = await getVisibleServiceIds(projectId, serviceId);
+            const tasks = await depsHistoryHandler.getTasksDashboard(projectId, visibleServices.join(','));
             res.json(tasks);
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });
@@ -1896,7 +1912,9 @@ export const registerBackofficeRoutes = (app: any) => {
         const limit = parseInt(req.query.limit as string) || 50;
         const offset = parseInt(req.query.offset as string) || 0;
         const projectId = resolveProjectId(req);
-        const result = await depsHistoryHandler.listEditedLeads(limit, offset, projectId);
+        const serviceId = resolveServiceId(req);
+        const visibleServices = await getVisibleServiceIds(projectId, serviceId);
+        const result = await depsHistoryHandler.listEditedLeads(limit, offset, projectId, visibleServices.join(','));
         res.json(result);
     });
 
@@ -4237,6 +4255,45 @@ Hemos recibido tu pago con éxito.
         }
     });
 
+    app.get('/api/backoffice/project-services', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const services = await depsHistoryHandler.getAllProjectServices(projectId);
+            
+            const { data: slugData } = await supabase
+                .from('settings')
+                .select('service_id, key, value')
+                .eq('project_id', projectId)
+                .in('key', ['CLIENT_SLUG', 'BOT_NAME', 'PHONE_NUMBER_ID']);
+            
+            const serviceMetadata: Record<string, any> = {};
+            services.forEach(s => {
+                serviceMetadata[s] = {
+                    id: s,
+                    name: s === 'default_service' ? 'Servicio Principal' : s,
+                    phone: ''
+                };
+            });
+            
+            slugData?.forEach((item: any) => {
+                const sId = item.service_id || 'default_service';
+                if (!serviceMetadata[sId]) {
+                    serviceMetadata[sId] = { id: sId, name: sId, phone: '' };
+                }
+                if (item.key === 'CLIENT_SLUG' || item.key === 'BOT_NAME') {
+                    serviceMetadata[sId].name = item.value;
+                } else if (item.key === 'PHONE_NUMBER_ID') {
+                    serviceMetadata[sId].phone = item.value;
+                }
+            });
+            
+            res.json({ success: true, services: Object.values(serviceMetadata) });
+        } catch (error: any) {
+            console.error('Error al obtener servicios del proyecto:', error.message);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
     app.get('/api/backoffice/settings', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
@@ -4789,14 +4846,29 @@ Hemos recibido tu pago con éxito.
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
             const serviceId = resolveServiceId(req);
+            const visibleServices = await getVisibleServiceIds(projectId, serviceId);
             
-            const hasSheetsSetting = await depsHistoryHandler.getSetting('SHEET_ID_UPDATE', projectId, serviceId);
-            const hasDocsSetting = await depsHistoryHandler.getSetting('DOCX_ID_UPDATE', projectId, serviceId);
+            let hasTables = false;
+            let hasRag = false;
+            
+            for (const sId of visibleServices) {
+                const hasSheetsSetting = await depsHistoryHandler.getSetting('SHEET_ID_UPDATE', projectId, sId);
+                const hasDocsSetting = await depsHistoryHandler.getSetting('DOCX_ID_UPDATE', projectId, sId);
+                if (hasSheetsSetting && hasSheetsSetting !== 'default' && hasSheetsSetting !== 'PENDING') {
+                    hasTables = true;
+                }
+                if (hasDocsSetting && hasDocsSetting !== 'default' && hasDocsSetting !== 'PENDING') {
+                    hasRag = true;
+                }
+            }
+
+            const isSuperAdmin = await depsHistoryHandler.getSetting('SUPER_ADMIN_MODE', projectId, serviceId);
 
             res.json({
                 success: true,
-                hasTables: !!hasSheetsSetting && hasSheetsSetting !== 'default' && hasSheetsSetting !== 'PENDING',
-                hasRag: !!hasDocsSetting && hasDocsSetting !== 'default' && hasDocsSetting !== 'PENDING'
+                hasTables,
+                hasRag,
+                isSuperAdmin: isSuperAdmin === 'true'
             });
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });
@@ -4808,13 +4880,22 @@ Hemos recibido tu pago con éxito.
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
             const serviceId = resolveServiceId(req);
+            const visibleServices = await getVisibleServiceIds(projectId, serviceId);
 
             const { getTablesMetadata } = await import('../utils/databaseSync.js');
-            const tables = await getTablesMetadata(projectId, serviceId);
+            
+            let allTables: any[] = [];
+            for (const sId of visibleServices) {
+                const tables = await getTablesMetadata(projectId, sId);
+                tables.forEach((t: any) => {
+                    t.serviceId = sId;
+                });
+                allTables = allTables.concat(tables);
+            }
 
             res.json({
                 success: true,
-                tables
+                tables: allTables
             });
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });
@@ -4938,13 +5019,22 @@ Hemos recibido tu pago con éxito.
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
             const serviceId = resolveServiceId(req);
+            const visibleServices = await getVisibleServiceIds(projectId, serviceId);
 
             const { getRagDocsMetadata } = await import('../utils/databaseSync.js');
-            const docs = await getRagDocsMetadata(projectId, serviceId);
+            
+            let allDocs: any[] = [];
+            for (const sId of visibleServices) {
+                const docs = await getRagDocsMetadata(projectId, sId);
+                docs.forEach((d: any) => {
+                    d.serviceId = sId;
+                });
+                allDocs = allDocs.concat(docs);
+            }
 
             res.json({
                 success: true,
-                docs
+                docs: allDocs
             });
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });

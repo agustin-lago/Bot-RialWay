@@ -409,6 +409,15 @@ window.systemConfigView = {
                                 <span class="slider"><i class="fas fa-times"></i><i class="fas fa-check"></i></span>
                             </label>
                         </div>
+                        <div class="variable-group">
+                            <h3>SUPER_ADMIN_MODE</h3>
+                            <p class="description">Habilitar consola Super-Administrador (Multi-CRM para este proyecto).</p>
+                            <input type="hidden" name="SUPER_ADMIN_MODE" id="SUPER_ADMIN_MODE" value="false">
+                            <label class="switch mt-1">
+                                <input type="checkbox" onchange="_cfgToggle('SUPER_ADMIN_MODE',this.checked)">
+                                <span class="slider"><i class="fas fa-times"></i><i class="fas fa-check"></i></span>
+                            </label>
+                        </div>
                     </div>
 
                     <!-- Prompts ocultos -->

@@ -93,7 +93,8 @@ export class HistoryHandler {
         'SHEET_ID_RESUMEN', 'SHEET_ID_UPDATE', 'DOCX_ID_UPDATE', 'GOOGLE_CALENDAR_ID',
         'ADMIN_USER', 'ADMIN_PASS', 'WHATSAPP_VISIBLE', 'INSTAGRAM_VISIBLE', 'MESSENGER_VISIBLE', 'CRM_FIELDS_CONFIG',
         'CLIENT_SLUG', 'AQUAVITA_SWS_BASE_URL', 'AQUAVITA_SWS_USERNAME', 'AQUAVITA_SWS_PASSWORD',
-        'GANAMOSNET_USER', 'GANAMOSNET_PASS', 'CASEPC_USER', 'CASEPC_PASS'
+        'GANAMOSNET_USER', 'GANAMOSNET_PASS', 'CASEPC_USER', 'CASEPC_PASS',
+        'SUPER_ADMIN_MODE', 'SUPER_ADMIN_VISIBLE_SERVICES'
     ];
 
     static readonly FIXED_KEYS = [
@@ -1893,7 +1894,12 @@ export class HistoryHandler {
                 // Prefer explicitly passed serviceId, then fall back to process.env
                 const currentServiceId = serviceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || this.SERVICE_IDENTIFIER;
                 if (currentServiceId && currentServiceId !== 'default_service') {
-                    query = query.or(`service_id.eq.${currentServiceId},service_id.eq.default_service,service_id.is.null`);
+                    if (currentServiceId.includes(',')) {
+                        const servicesList = currentServiceId.split(',').map(s => s.trim()).filter(Boolean);
+                        query = query.in('service_id', [...servicesList, 'default_service']);
+                    } else {
+                        query = query.or(`service_id.eq.${currentServiceId},service_id.eq.default_service,service_id.is.null`);
+                    }
                 }
 
                 if (matchingChatIds !== null) {
@@ -2041,7 +2047,12 @@ export class HistoryHandler {
                 .eq('project_id', targetProjectId);
 
             if (currentServiceId && currentServiceId !== 'default_service') {
-                query = query.eq('service_id', currentServiceId);
+                if (currentServiceId.includes(',')) {
+                    const servicesList = currentServiceId.split(',').map(s => s.trim()).filter(Boolean);
+                    query = query.in('service_id', servicesList);
+                } else {
+                    query = query.eq('service_id', currentServiceId);
+                }
             }
 
             const { data, error } = await query
@@ -2475,7 +2486,7 @@ export class HistoryHandler {
     /**
      * Lista los tickets del proyecto
      */
-    static async listTickets(limit: number = 50, offset: number = 0, estado?: string, _tipo?: string, _chatId?: string, ticketId?: string, projectId?: string | null) {
+    static async listTickets(limit: number = 50, offset: number = 0, estado?: string, _tipo?: string, _chatId?: string, ticketId?: string, projectId?: string | null, serviceId?: string | null) {
         const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
         if (process.env.STORAGE_MODE === "local") {
             const res = await LocalHistoryStore.listTickets(limit, offset, estado, _tipo, _chatId, ticketId, currentProjectId);
@@ -2487,9 +2498,14 @@ export class HistoryHandler {
                 .select('*')
                 .eq('project_id', currentProjectId);
 
-            const currentServiceId = process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || this.SERVICE_IDENTIFIER;
+            const currentServiceId = serviceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || this.SERVICE_IDENTIFIER;
             if (currentServiceId && currentServiceId !== 'default_service') {
-                query = query.eq('service_id', currentServiceId);
+                if (currentServiceId.includes(',')) {
+                    const servicesList = currentServiceId.split(',').map(s => s.trim()).filter(Boolean);
+                    query = query.in('service_id', [...servicesList, 'default_service']);
+                } else {
+                    query = query.or(`service_id.eq.${currentServiceId},service_id.eq.default_service,service_id.is.null`);
+                }
             }
 
             if (ticketId && ticketId !== 'null' && ticketId !== 'undefined' && ticketId !== '') {
@@ -2764,18 +2780,28 @@ export class HistoryHandler {
     /**
      * Lista los leads que tienen datos de CRM (editados y marcados explicitamente como leads)
      */
-    static async listEditedLeads(limit: number = 50, offset: number = 0, projectId?: string | null) {
+    static async listEditedLeads(limit: number = 50, offset: number = 0, projectId?: string | null, serviceId?: string | null) {
         const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
         if (process.env.STORAGE_MODE === "local") {
             return LocalHistoryStore.listEditedLeads(limit, offset, currentProjectId);
         }
         try {
-            // Filtramos para obtener chats marcados como leads O que tengan algún estado CRM/etiquetas
-            // Esto permite gestionar contactos que aún no son "leads" oficiales pero necesitan seguimiento.
-            const { data, error } = await supabase
+            const currentServiceId = serviceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || this.SERVICE_IDENTIFIER;
+            let query = supabase
                 .from('chats')
                 .select('*, chat_tags(tag_id, tags(*))')
-                .eq('project_id', currentProjectId)
+                .eq('project_id', currentProjectId);
+
+            if (currentServiceId && currentServiceId !== 'default_service') {
+                if (currentServiceId.includes(',')) {
+                    const servicesList = currentServiceId.split(',').map(s => s.trim()).filter(Boolean);
+                    query = query.in('service_id', [...servicesList, 'default_service']);
+                } else {
+                    query = query.or(`service_id.eq.${currentServiceId},service_id.eq.default_service,service_id.is.null`);
+                }
+            }
+
+            const { data, error } = await query
                 .or('is_lead.eq.true,crm_status.not.is.null')
                 .order('last_message_at', { ascending: false })
                 .range(offset, offset + limit - 1);
@@ -2793,7 +2819,7 @@ export class HistoryHandler {
     /**
      * Obtiene los leads con tareas próximas (hoy + 5 días)
      */
-    static async getTasksDashboard(projectId?: string | null) {
+    static async getTasksDashboard(projectId?: string | null, serviceId?: string | null) {
         const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
         if (process.env.STORAGE_MODE === "local") {
             const chats = LocalHistoryStore.getChats(currentProjectId);
@@ -2822,11 +2848,22 @@ export class HistoryHandler {
             fiveDaysLater.setDate(today.getDate() + 5);
             fiveDaysLater.setHours(23, 59, 59, 999);
 
-            const { data, error } = await supabase
+            const currentServiceId = serviceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || this.SERVICE_IDENTIFIER;
+            let query = supabase
                 .from('chats')
                 .select('id, name, type, crm_status, crm_due_date')
                 .eq('project_id', currentProjectId)
-                .eq('is_lead', true)
+                .eq('is_lead', true);
+
+            if (currentServiceId && currentServiceId !== 'default_service') {
+                if (currentServiceId.includes(',')) {
+                    const servicesList = currentServiceId.split(',').map(s => s.trim()).filter(Boolean);
+                    query = query.in('service_id', [...servicesList, 'default_service']);
+                } else {
+                    query = query.or(`service_id.eq.${currentServiceId},service_id.eq.default_service,service_id.is.null`);
+                }
+            }
+            const { data, error } = await query
                 .not('crm_due_date', 'is', null)
                 .lte('crm_due_date', fiveDaysLater.toISOString())
                 .order('crm_due_date', { ascending: true });
@@ -3246,6 +3283,28 @@ export class HistoryHandler {
                         }, { onConflict: 'phone_number_id' });
                 }
             }
+        }
+    }
+
+    static async getAllProjectServices(projectId: string): Promise<string[]> {
+        if (!supabase) return ['default_service'];
+        try {
+            // Consultar todos los service_id únicos para el project_id en settings y chats
+            const { data, error } = await supabase
+                .from('settings')
+                .select('service_id')
+                .eq('project_id', projectId);
+
+            if (error) throw error;
+
+            const services = (data || [])
+                .map((item: any) => item.service_id)
+                .filter((val: any, idx: number, self: any[]) => val && val !== 'null' && val !== 'generic' && self.indexOf(val) === idx);
+
+            return services.length > 0 ? services : ['default_service'];
+        } catch (e: any) {
+            console.error('[HistoryHandler] Error en getAllProjectServices:', e.message);
+            return ['default_service'];
         }
     }
 

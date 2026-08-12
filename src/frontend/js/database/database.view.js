@@ -16,6 +16,11 @@ window.databaseView = (() => {
     let _activeDoc = null; // RagDocMeta: { docId, docName }
     let _docText = '';
 
+    // State Super Admin
+    let _isSuperAdmin = false;
+    let _allServicesList = [];
+    let _visibleServicesSet = new Set();
+
     // HTML Structure
     function getHTML() {
         return `
@@ -38,6 +43,9 @@ window.databaseView = (() => {
                     </button>
                     <button onclick="databaseView._switchTab('rag')" id="btn-tab-rag" class="filter-pill" style="border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 8px;">
                         <i class="fas fa-brain"></i> Documentos RAG
+                    </button>
+                    <button onclick="databaseView._switchTab('multicrm')" id="btn-tab-multicrm" class="filter-pill" style="border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-weight: 600; display: none; align-items: center; gap: 8px;">
+                        <i class="fas fa-network-wired"></i> Multi-CRM
                     </button>
                 </div>
             </div>
@@ -109,6 +117,24 @@ window.databaseView = (() => {
                         </div>
                     </div>
 
+                    <!-- Panel Multi-CRM -->
+                    <div id="panel-multicrm" style="display: none; flex-direction: column; height: 100%; width: 100%;">
+                        <div style="padding: 16px; border-bottom: 1px solid var(--card-border-color); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; flex-wrap: wrap; gap: 12px;">
+                            <div>
+                                <h2 style="margin: 0; font-size: 1.1rem; font-weight: 700; color: var(--text-main);">Configuración de Consola Unificada (Multi-CRM)</h2>
+                                <p style="margin: 2px 0 0; font-size: 0.75rem; color: var(--text-muted);">Seleccioná qué instancias de CRM/Servicios deseas visualizar y administrar en este panel consolidado</p>
+                            </div>
+                            <button onclick="databaseView._saveMultiCrmConfig()" id="btn-save-multicrm" class="filter-pill active" style="cursor: pointer; padding: 8px 16px; border-radius: 10px; font-weight: bold; background: var(--accent); color: white;">
+                                <i class="fas fa-floppy-disk"></i> Guardar Cambios
+                            </button>
+                        </div>
+                        <div style="flex: 1; padding: 20px; overflow-y: auto;">
+                            <div id="multicrm-services-list" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;">
+                                <!-- Dynamic service cards injected here -->
+                            </div>
+                        </div>
+                    </div>
+
                 </div>
             </div>
 
@@ -146,6 +172,12 @@ window.databaseView = (() => {
             if (result.success) {
                 _hasTables = result.hasTables;
                 _hasRag = result.hasRag;
+                _isSuperAdmin = result.isSuperAdmin || false;
+
+                const btnMultiCrm = document.getElementById('btn-tab-multicrm');
+                if (btnMultiCrm) {
+                    btnMultiCrm.style.display = _isSuperAdmin ? 'flex' : 'none';
+                }
             }
         } catch (e) {
             console.error(e);
@@ -161,24 +193,41 @@ window.databaseView = (() => {
         
         const btnTables = document.getElementById('btn-tab-tables');
         const btnRag = document.getElementById('btn-tab-rag');
+        const btnMultiCrm = document.getElementById('btn-tab-multicrm');
         const panelTables = document.getElementById('panel-tables');
         const panelRag = document.getElementById('panel-rag');
+        const panelMultiCrm = document.getElementById('panel-multicrm');
         const sidebarTitle = document.getElementById('sidebar-title');
+        const sidebarItemsList = document.getElementById('sidebar-items-list');
 
         if (tabId === 'tables') {
             btnTables.classList.add('active');
             btnRag.classList.remove('active');
+            if (btnMultiCrm) btnMultiCrm.classList.remove('active');
             panelTables.style.display = 'flex';
             panelRag.style.display = 'none';
+            if (panelMultiCrm) panelMultiCrm.style.display = 'none';
             sidebarTitle.innerHTML = `<i class="fas fa-table" style="color: var(--accent);"></i> Tablas Disponibles`;
             await _loadTablesList();
-        } else {
+        } else if (tabId === 'rag') {
             btnTables.classList.remove('active');
             btnRag.classList.add('active');
+            if (btnMultiCrm) btnMultiCrm.classList.remove('active');
             panelTables.style.display = 'none';
             panelRag.style.display = 'flex';
+            if (panelMultiCrm) panelMultiCrm.style.display = 'none';
             sidebarTitle.innerHTML = `<i class="fas fa-brain" style="color: var(--accent);"></i> Documentos RAG`;
             await _loadDocsList();
+        } else if (tabId === 'multicrm') {
+            btnTables.classList.remove('active');
+            btnRag.classList.remove('active');
+            if (btnMultiCrm) btnMultiCrm.classList.add('active');
+            panelTables.style.display = 'none';
+            panelRag.style.display = 'none';
+            if (panelMultiCrm) panelMultiCrm.style.display = 'flex';
+            sidebarTitle.innerHTML = `<i class="fas fa-network-wired" style="color: var(--accent);"></i> Multi-CRM`;
+            sidebarItemsList.innerHTML = `<div style="padding:16px; font-size:0.8rem; color:var(--text-muted); text-align:center;">Configuración de vista unificada de servicios</div>`;
+            await _loadMultiCrmList();
         }
     }
 
@@ -560,6 +609,81 @@ window.databaseView = (() => {
     }
 
 
+    async function _loadMultiCrmList() {
+        const container = document.getElementById('multicrm-services-list');
+        container.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:40px; color:var(--text-muted);"><i class="fas fa-circle-notch fa-spin fa-2x"></i><p style="margin-top:10px;">Cargando servicios del proyecto...</p></div>`;
+        
+        try {
+            const servicesRes = await fetch(`/api/backoffice/project-services?token=${_token}`);
+            const servicesData = await servicesRes.json();
+            if (!servicesData.success) throw new Error(servicesData.error);
+            _allServicesList = servicesData.services || [];
+
+            const settingsRes = await fetch(`/api/backoffice/settings?token=${_token}`);
+            const settingsData = await settingsRes.json();
+            
+            const visibleServicesStr = settingsData.SUPER_ADMIN_VISIBLE_SERVICES || '';
+            const visibleServicesList = visibleServicesStr.split(',').map((s) => s.trim()).filter(Boolean);
+            _visibleServicesSet = new Set(visibleServicesList);
+
+            container.innerHTML = _allServicesList.map((service) => {
+                const isChecked = _visibleServicesSet.has(service.id) ? 'checked' : '';
+                return `
+                    <div style="background: var(--bg-secondary); border: 1px solid var(--card-border-color); border-radius: 12px; padding: 16px; display: flex; align-items: flex-start; gap: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.02); text-align: left;">
+                        <label class="switch" style="flex-shrink: 0; margin-top: 4px;">
+                            <input type="checkbox" onchange="databaseView._toggleServiceVisibility('${service.id}', this.checked)" ${isChecked}>
+                            <span class="slider"><i class="fas fa-times"></i><i class="fas fa-check"></i></span>
+                        </label>
+                        <div style="flex:1; min-width:0;">
+                            <h4 style="margin:0; font-size:0.9rem; font-weight:700; color:var(--text-main); text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">${_esc(service.name)}</h4>
+                            <p style="margin:4px 0 0; font-size:0.75rem; color:var(--text-muted); font-family:monospace;">ID: ${service.id}</p>
+                            ${service.phone ? `<p style="margin:2px 0 0; font-size:0.75rem; color:var(--text-muted);"><i class="fab fa-whatsapp" style="color:#25d366;"></i> ${service.phone}</p>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        } catch (e) {
+            console.error(e);
+            container.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:40px; color:#ef4444;"><i class="fas fa-triangle-exclamation fa-2x"></i><p style="margin-top:10px;">Error al cargar configuración de Multi-CRM.</p></div>`;
+        }
+    }
+
+    function _toggleServiceVisibility(serviceId, isChecked) {
+        if (isChecked) {
+            _visibleServicesSet.add(serviceId);
+        } else {
+            _visibleServicesSet.delete(serviceId);
+        }
+    }
+
+    async function _saveMultiCrmConfig() {
+        const loader = document.getElementById('workspace-loading');
+        if (loader) loader.style.display = 'flex';
+
+        const visibleStr = Array.from(_visibleServicesSet).join(',');
+
+        try {
+            const res = await fetch(`/api/backoffice/save-setting?token=${_token}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    key: 'SUPER_ADMIN_VISIBLE_SERVICES',
+                    value: visibleStr
+                })
+            });
+
+            const result = await res.json();
+            if (!result.success) throw new Error(result.error);
+
+            showToast && showToast('Configuración Multi-CRM guardada con éxito', 'success');
+        } catch (e) {
+            console.error(e);
+            showToast && showToast('Error al guardar configuración', 'error');
+        } finally {
+            if (loader) loader.style.display = 'none';
+        }
+    }
+
     // UTILS
     function _esc(str) {
         return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -585,6 +709,8 @@ window.databaseView = (() => {
         _toggleSelectAllRows,
         _onRowSelect,
         _selectActiveDoc,
-        _saveDocText
+        _saveDocText,
+        _toggleServiceVisibility,
+        _saveMultiCrmConfig
     };
 })();

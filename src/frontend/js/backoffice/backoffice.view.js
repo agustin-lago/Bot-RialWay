@@ -42,6 +42,13 @@ window.backofficeView = {
                     </div>
                 </div>
 
+                <!-- Selector de CRM consolidado (Multi-CRM) -->
+                <div id="multi-crm-selector-container" style="display:none; padding:8px 16px; border-bottom:1px solid var(--border); background:var(--bg-header);">
+                    <select id="multi-crm-service-filter" onchange="filterChatsByService(this.value)" style="width:100%; padding:6px 10px; border-radius:8px; background:var(--bg-secondary); border:1px solid var(--border); color:var(--text-main); font-size:0.8rem; font-weight:600; outline:none; cursor:pointer;">
+                        <option value="all">Ver Todos los CRMs</option>
+                    </select>
+                </div>
+
                 <!-- Unread filter container -->
                 <div id="unread-filter-container" style="display:none; align-items:center; justify-content:space-between; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--bg-header);">
                     <span style="font-size:0.82rem; font-weight:600; color:var(--text-muted); font-family:'Montserrat',sans-serif; display:flex; align-items:center; gap:6px;">

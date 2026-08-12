@@ -33,12 +33,52 @@ let isSending = false;
 let _mediaRecorder = null;
 let _audioChunks = [];
 let _isRecording = false;
+let _isSuperAdminMode = false;
+let _projectServices = [];
+let _activeServiceFilter = 'all';
+
+async function initSuperAdminMode(settings) {
+    _isSuperAdminMode = settings.SUPER_ADMIN_MODE === 'true';
+    if (!_isSuperAdminMode) return;
+
+    try {
+        const res = await fetch(`/api/backoffice/project-services?token=${token}`);
+        const data = await res.json();
+        if (data.success && Array.isArray(data.services)) {
+            _projectServices = data.services;
+            
+            const filterContainer = document.getElementById('multi-crm-selector-container');
+            if (filterContainer) {
+                filterContainer.style.display = 'block';
+            }
+            
+            const selectEl = document.getElementById('multi-crm-service-filter');
+            if (selectEl) {
+                const currentValue = selectEl.value || 'all';
+                selectEl.innerHTML = '<option value="all">Ver Todos los CRMs</option>' +
+                    _projectServices.map(s => `<option value="${s.id}">${s.name} (${s.phone || 'Sin línea'})</option>`).join('');
+                selectEl.value = currentValue;
+            }
+        }
+    } catch (e) {
+        console.error('[Multi-CRM] Error cargando servicios del proyecto:', e);
+    }
+}
+
+window.filterChatsByService = function(val) {
+    _activeServiceFilter = val;
+    fetchChats(true);
+};
 
 async function initCRMData() {
     try {
         const resSettings = await fetch(`/api/backoffice/settings?token=${token}`);
         if (!resSettings.ok) return;
         const settings = await resSettings.json();
+
+        if (typeof initSuperAdminMode === 'function') {
+            await initSuperAdminMode(settings);
+        }
 
         const colSettingValue = settings.CRM_COLUMNS;
         if (colSettingValue) {
@@ -312,7 +352,9 @@ async function fetchChats(refresh = false) {
     _fetchChatsController = new AbortController();
     try {
         const platformParam = currentPlatform === 'all' ? '' : `&platform=${currentPlatform}`;
-        const serviceParam = window.railwayServiceId ? `&serviceId=${window.railwayServiceId}` : '';
+        const serviceParam = _isSuperAdminMode && _activeServiceFilter !== 'all'
+            ? `&serviceId=${_activeServiceFilter}`
+            : (window.railwayServiceId ? `&serviceId=${window.railwayServiceId}` : '');
         const url = `/api/backoffice/chats?token=${token}&limit=${CHAT_LIMIT}&offset=${chatOffset}&search=${encodeURIComponent(query)}&tag=${tagFilter}${platformParam}${serviceParam}`;
         const res = await fetch(url, { signal: _fetchChatsController.signal });
         if (res.status === 401) {
@@ -455,9 +497,12 @@ function renderChatList(listToRender = chats) {
     const prevScrollTop = list.scrollTop;
 
     let filteredList = listToRender;
+    if (_isSuperAdminMode && _activeServiceFilter !== 'all') {
+        filteredList = filteredList.filter(c => c.service_id === _activeServiceFilter);
+    }
     if (_notificationsActive && _showOnlyUnreadChats) {
         // Mantener chats no leídos O el chat activo actual que se está atendiendo
-        filteredList = listToRender.filter(c => (c.unread_count || 0) > 0 || c.id === activeChatId);
+        filteredList = filteredList.filter(c => (c.unread_count || 0) > 0 || c.id === activeChatId);
     }
 
     // Calcular unread total de la lista master (chats)
@@ -529,6 +574,14 @@ function renderChatList(listToRender = chats) {
             crmStatusHtml = `<span class="crm-status-badge" style="font-size: 0.65rem; background: rgba(99, 102, 241, 0.1); color: var(--accent); padding: 2px 6px; border-radius: 6px; font-weight: 700; margin-top: 4px; display: inline-block; border: 1px solid rgba(99, 102, 241, 0.2); line-height: 1.2;">${statusLabel}</span>`;
         }
 
+        let serviceBadgeHtml = '';
+        if (_isSuperAdminMode && _projectServices.length > 0) {
+            const svc = _projectServices.find(s => s.id === chat.service_id);
+            if (svc) {
+                serviceBadgeHtml = `<span class="service-badge" style="font-size:0.65rem; background:rgba(0,153,255,0.1); color:#0099ff; padding:2px 6px; border-radius:6px; font-weight:700; margin-top:4px; display:inline-block; border:1px solid rgba(0,153,255,0.2); line-height:1.2; margin-right:4px;">${svc.name}</span>`;
+            }
+        }
+
         return `
             <div class="chat-item ${activeChatId === chat.id ? 'active' : ''}" onclick="selectChat('${chat.id}')">
                 <div class="chat-avatar" style="background:${bg};">
@@ -543,7 +596,10 @@ function renderChatList(listToRender = chats) {
                             </div>
                             <span style="font-size:0.7rem; opacity:0.5; color:var(--text-muted); font-weight:normal; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${chat.id.split('@')[0]}</span>
                             ${tagsHtml}
-                            ${crmStatusHtml}
+                            <div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:4px;">
+                                ${serviceBadgeHtml}
+                                ${crmStatusHtml}
+                            </div>
                         </div>
                         <div style="display:flex; flex-direction:column; align-items:flex-end; gap:2px; flex-shrink:0;">
                             ${statusBadge}
