@@ -428,26 +428,55 @@ window.systemConfigView = {
                 </form>
             </main>
         </div>
+             <style>
+            .cm-search-match {
+                background-color: rgba(234, 179, 8, 0.3) !important;
+                border-bottom: 2px solid #eab308;
+                border-radius: 2px;
+            }
+            .cm-search-match-active {
+                background-color: rgba(234, 179, 8, 0.7) !important;
+                outline: 1.5px solid #ffffff;
+                box-shadow: 0 0 6px rgba(255,255,255,0.6);
+                border-radius: 2px;
+            }
+        </style>
 
         <!-- Panel overlay -->
         <div id="panel-overlay" class="panel-overlay" onclick="togglePromptPanel()"></div>
-
+ 
         <!-- Panel de prompts -->
         <div id="prompt-panel" class="prompt-panel">
-
-            <div class="prompt-panel-header">
-                <div class="prompt-panel-title-group">
+ 
+            <div class="prompt-panel-header" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                <div class="prompt-panel-title-group" style="flex-shrink: 0;">
                     <h3 class="prompt-panel-title">
                         <i class="fas fa-file-code prompt-panel-title-icon"></i>
                         Editor de Prompts
                     </h3>
                     <p class="prompt-panel-subtitle">Instrucciones del asistente seleccionado</p>
                 </div>
+
+                <!-- SEARCH BAR -->
+                <div class="prompt-search-container" style="display: flex; align-items: center; gap: 8px; background: #0A0F1D; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--card-border-color); flex: 1; max-width: 320px; margin: 0 16px;">
+                    <i class="fas fa-search" style="color: var(--text-muted); font-size: 0.85rem;"></i>
+                    <input type="text" id="prompt-search-input" placeholder="Buscar en el prompt..." style="background: transparent; border: none; outline: none; color: #E2E8F0; font-size: 0.85rem; width: 100%; padding: 0;" />
+                    <span id="prompt-search-counter" style="color: var(--text-muted); font-size: 0.75rem; white-space: nowrap; font-weight: 600; display: none;">0 / 0</span>
+                    <div id="prompt-search-nav" style="display: none; align-items: center; gap: 8px;">
+                        <button type="button" id="prompt-search-prev-btn" style="background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 2px; font-size: 0.8rem; display: flex; align-items: center; transition: color 0.2s;" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-muted)'" title="Anterior (Shift+Enter)">
+                            <i class="fas fa-chevron-up"></i>
+                        </button>
+                        <button type="button" id="prompt-search-next-btn" style="background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 2px; font-size: 0.8rem; display: flex; align-items: center; transition: color 0.2s;" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-muted)'" title="Siguiente (Enter)">
+                            <i class="fas fa-chevron-down"></i>
+                        </button>
+                    </div>
+                </div>
+
                 <button type="button" class="prompt-close-btn" onclick="togglePromptPanel()" aria-label="Cerrar">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
-
+ 
             <!-- Tabs de asistentes -->
             <div class="prompt-assistant-tabs" id="prompt-assistant-tabs">
                 <button class="prompt-tab active" onclick="_selectPromptTab(this, 1)">
@@ -510,6 +539,8 @@ window.systemConfigView = {
             await loadViewScript('https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js');
             await loadViewScript('https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/markdown/markdown.min.js');
         }
+        // Cargar addon de búsqueda
+        await loadViewScript('https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/addon/search/searchcursor.min.js');
         await loadViewScript('/js/system-config/system-config.js');
         if (typeof window.initSystemConfigView === 'function') window.initSystemConfigView();
     },
