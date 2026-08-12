@@ -1,4 +1,4 @@
-﻿
+
 import { createClient } from "@supabase/supabase-js";
 import { EventEmitter } from "events";
 import dotenv from "dotenv";
@@ -200,7 +200,8 @@ export class HistoryHandler {
         'SHEET_ID_RESUMEN', 'SHEET_ID_UPDATE', 'DOCX_ID_UPDATE', 'GOOGLE_CALENDAR_ID',
         'ADMIN_USER', 'ADMIN_PASS', 'WHATSAPP_VISIBLE', 'INSTAGRAM_VISIBLE', 'MESSENGER_VISIBLE', 'CRM_FIELDS_CONFIG',
         'CLIENT_SLUG', 'AQUAVITA_SWS_BASE_URL', 'AQUAVITA_SWS_USERNAME', 'AQUAVITA_SWS_PASSWORD',
-        'GANAMOSNET_USER', 'GANAMOSNET_PASS', 'CASEPC_USER', 'CASEPC_PASS'
+        'GANAMOSNET_USER', 'GANAMOSNET_PASS', 'CASEPC_USER', 'CASEPC_PASS',
+        'SUPER_ADMIN_MODE', 'SUPER_ADMIN_VISIBLE_SERVICES'
     ];
 
     static readonly FIXED_KEYS = [
@@ -316,6 +317,7 @@ export class HistoryHandler {
                     reply_to TEXT,
                     reply_preview JSONB,
                     raw_payload JSONB,
+                    status TEXT DEFAULT 'sent',
                     created_at TIMESTAMPTZ DEFAULT NOW(),
                     FOREIGN KEY (chat_id, project_id) REFERENCES chats(id, project_id) ON UPDATE CASCADE ON DELETE CASCADE
                 );
@@ -598,6 +600,13 @@ export class HistoryHandler {
                             console.log(`🔧 Agregando columna external_id a messages...`);
                             await supabase.rpc('exec_sql', { query: `ALTER TABLE messages ADD COLUMN IF NOT EXISTS external_id TEXT;` });
                             await supabase.rpc('exec_sql', { query: `CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_external_id ON messages (external_id);` });
+                        }
+
+                        // Migración para status en mensajes
+                        const { error: statusColErr } = await supabase.from('messages').select('status').limit(1);
+                        if (statusColErr && statusColErr.code === '42703') {
+                            console.log(`🔧 Agregando columna status a messages...`);
+                            await supabase.rpc('exec_sql', { query: `ALTER TABLE messages ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'sent';` });
                         }
 
                         // Migración para assigned_to
@@ -1098,10 +1107,11 @@ export class HistoryHandler {
     /**
      * Guarda un mensaje en la base de datos
      */
-    static async saveMessage(rawChatId: string, role: 'user' | 'assistant' | 'system', content: string, type: string = 'text', contactName: string | null = null, userId: string | null = null, external_id: string | null = null, platformType?: 'whatsapp' | 'webchat' | 'instagram' | 'messenger', forcedProjectId?: string, forcedServiceId?: string, rawPayload?: any) {
+    static async saveMessage(rawChatId: string, role: 'user' | 'assistant' | 'system', content: string, type: string = 'text', contactName: string | null = null, userId: string | null = null, external_id: string | null = null, platformType?: 'whatsapp' | 'webchat' | 'instagram' | 'messenger', forcedProjectId?: string, forcedServiceId?: string, rawPayload?: any, status?: string) {
         const chatId = this.normalizeId(rawChatId);
         const currentProjectId = forcedProjectId || this.PROJECT_IDENTIFIER;
         const currentServiceId = forcedServiceId || this.SERVICE_IDENTIFIER;
+        const messageStatus = status || 'sent';
 
         // Registrar en cache si es respuesta del bot/operador para evitar falsas intervenciones manuales
         if (role === 'assistant' && content) {
@@ -1128,8 +1138,8 @@ export class HistoryHandler {
         }
 
         if (process.env.STORAGE_MODE === "local") {
-            const msg = await LocalHistoryStore.saveMessage(chatId, role, content, type, contactName, userId, external_id, currentProjectId, currentServiceId, rawPayload);
-            historyEvents.emit('message_saved', { chatId, projectId: currentProjectId, role, content, type });
+            const msg = await LocalHistoryStore.saveMessage(chatId, role, content, type, contactName, userId, external_id, currentProjectId, currentServiceId, rawPayload, messageStatus);
+            historyEvents.emit('message_saved', { chatId, projectId: currentProjectId, role, content, type, status: messageStatus });
             return [msg] as any;
         }
         if (contactName === '[-]') contactName = null;
@@ -1248,7 +1258,7 @@ export class HistoryHandler {
                     const shouldEnrichExisting = (!existing.external_id && external_id) || !!replyTo || !!replyPreview || !!safeRawPayload;
                     if (shouldEnrichExisting) {
                         if (!existing.external_id && external_id) {
-                            console.log(`[HistoryHandler] ðŸ”„ Vinculando ID externo a mensaje existente: ${existing.id} -> ${external_id}`);
+                            console.log(`[HistoryHandler] 🔄 Vinculando ID externo a mensaje existente: ${existing.id} -> ${external_id}`);
                         }
                         const updatePayload: any = {};
                         if (!existing.external_id && external_id) updatePayload.external_id = external_id;
@@ -1293,7 +1303,8 @@ export class HistoryHandler {
                 reply_to: replyTo,
                 reply_preview: replyPreview,
                 raw_payload: safeRawPayload,
-                created_at: msgData.created_at
+                created_at: msgData.created_at,
+                status: messageStatus
             };
             let { error: insertError, data: insertedMsg } = await supabase.from('messages').insert(insertPayload).select();
 
@@ -1351,6 +1362,7 @@ export class HistoryHandler {
                 type: emittedMessage.type || type,
                 created_at: emittedMessage.created_at || new Date().toISOString(),
                 external_id: emittedMessage.external_id || external_id || null,
+                status: emittedMessage.status || messageStatus,
                 reply_to: emittedMessage.reply_to || replyTo,
                 reply_preview: emittedMessage.reply_preview || replyPreview,
                 project_id: currentProjectId,
@@ -1363,6 +1375,28 @@ export class HistoryHandler {
 
         } catch (err) {
             console.error('[HistoryHandler] Error en saveMessage:', err);
+        }
+    }
+
+    /**
+     * Actualiza el estado de un mensaje (ej. 'failed', 'delivered', 'read')
+     */
+    static async updateMessageStatus(externalId: string, status: string, projectId?: string): Promise<boolean> {
+        const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
+        if (process.env.STORAGE_MODE === "local") {
+            return LocalHistoryStore.updateMessageStatus(externalId, status, currentProjectId);
+        }
+        try {
+            const { error } = await supabase
+                .from('messages')
+                .update({ status })
+                .eq('external_id', externalId)
+                .eq('project_id', currentProjectId);
+            if (error) throw error;
+            return true;
+        } catch (err: any) {
+            console.error('[HistoryHandler] Error en updateMessageStatus:', err.message);
+            return false;
         }
     }
 
@@ -2092,7 +2126,12 @@ export class HistoryHandler {
                 // Prefer explicitly passed serviceId, then fall back to process.env
                 const currentServiceId = serviceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || this.SERVICE_IDENTIFIER;
                 if (currentServiceId && currentServiceId !== 'default_service') {
-                    query = query.or(`service_id.eq.${currentServiceId},service_id.eq.default_service,service_id.is.null`);
+                    if (currentServiceId.includes(',')) {
+                        const servicesList = currentServiceId.split(',').map(s => s.trim()).filter(Boolean);
+                        query = query.in('service_id', [...servicesList, 'default_service']);
+                    } else {
+                        query = query.or(`service_id.eq.${currentServiceId},service_id.eq.default_service,service_id.is.null`);
+                    }
                 }
 
                 if (matchingChatIds !== null) {
@@ -2239,8 +2278,13 @@ export class HistoryHandler {
                 .in('chat_id', [chatId, `${chatId}@s.whatsapp.net`, `${chatId}@c.us`])
                 .eq('project_id', targetProjectId);
 
-            if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
-                query = query.eq('service_id', currentServiceId);
+            if (currentServiceId && currentServiceId !== 'default_service') {
+                if (currentServiceId.includes(',')) {
+                    const servicesList = currentServiceId.split(',').map(s => s.trim()).filter(Boolean);
+                    query = query.in('service_id', servicesList);
+                } else {
+                    query = query.eq('service_id', currentServiceId);
+                }
             }
 
             const { data, error } = await query
@@ -2674,7 +2718,7 @@ export class HistoryHandler {
     /**
      * Lista los tickets del proyecto
      */
-    static async listTickets(limit: number = 50, offset: number = 0, estado?: string, _tipo?: string, _chatId?: string, ticketId?: string, projectId?: string | null) {
+    static async listTickets(limit: number = 50, offset: number = 0, estado?: string, _tipo?: string, _chatId?: string, ticketId?: string, projectId?: string | null, serviceId?: string | null) {
         const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
         if (process.env.STORAGE_MODE === "local") {
             const res = await LocalHistoryStore.listTickets(limit, offset, estado, _tipo, _chatId, ticketId, currentProjectId);
@@ -2686,9 +2730,14 @@ export class HistoryHandler {
                 .select('*')
                 .eq('project_id', currentProjectId);
 
-            const currentServiceId = process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || this.SERVICE_IDENTIFIER;
+            const currentServiceId = serviceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || this.SERVICE_IDENTIFIER;
             if (currentServiceId && currentServiceId !== 'default_service') {
-                query = query.eq('service_id', currentServiceId);
+                if (currentServiceId.includes(',')) {
+                    const servicesList = currentServiceId.split(',').map(s => s.trim()).filter(Boolean);
+                    query = query.in('service_id', [...servicesList, 'default_service']);
+                } else {
+                    query = query.or(`service_id.eq.${currentServiceId},service_id.eq.default_service,service_id.is.null`);
+                }
             }
 
             if (ticketId && ticketId !== 'null' && ticketId !== 'undefined' && ticketId !== '') {
@@ -2963,18 +3012,28 @@ export class HistoryHandler {
     /**
      * Lista los leads que tienen datos de CRM (editados y marcados explicitamente como leads)
      */
-    static async listEditedLeads(limit: number = 50, offset: number = 0, projectId?: string | null) {
+    static async listEditedLeads(limit: number = 50, offset: number = 0, projectId?: string | null, serviceId?: string | null) {
         const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
         if (process.env.STORAGE_MODE === "local") {
             return LocalHistoryStore.listEditedLeads(limit, offset, currentProjectId);
         }
         try {
-            // Filtramos para obtener chats marcados como leads O que tengan algún estado CRM/etiquetas
-            // Esto permite gestionar contactos que aún no son "leads" oficiales pero necesitan seguimiento.
-            const { data, error } = await supabase
+            const currentServiceId = serviceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || this.SERVICE_IDENTIFIER;
+            let query = supabase
                 .from('chats')
                 .select('*, chat_tags(tag_id, tags(*))')
-                .eq('project_id', currentProjectId)
+                .eq('project_id', currentProjectId);
+
+            if (currentServiceId && currentServiceId !== 'default_service') {
+                if (currentServiceId.includes(',')) {
+                    const servicesList = currentServiceId.split(',').map(s => s.trim()).filter(Boolean);
+                    query = query.in('service_id', [...servicesList, 'default_service']);
+                } else {
+                    query = query.or(`service_id.eq.${currentServiceId},service_id.eq.default_service,service_id.is.null`);
+                }
+            }
+
+            const { data, error } = await query
                 .or('is_lead.eq.true,crm_status.not.is.null')
                 .order('last_message_at', { ascending: false })
                 .range(offset, offset + limit - 1);
@@ -2992,7 +3051,7 @@ export class HistoryHandler {
     /**
      * Obtiene los leads con tareas próximas (hoy + 5 días)
      */
-    static async getTasksDashboard(projectId?: string | null) {
+    static async getTasksDashboard(projectId?: string | null, serviceId?: string | null) {
         const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
         if (process.env.STORAGE_MODE === "local") {
             const chats = LocalHistoryStore.getChats(currentProjectId);
@@ -3021,11 +3080,22 @@ export class HistoryHandler {
             fiveDaysLater.setDate(today.getDate() + 5);
             fiveDaysLater.setHours(23, 59, 59, 999);
 
-            const { data, error } = await supabase
+            const currentServiceId = serviceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || this.SERVICE_IDENTIFIER;
+            let query = supabase
                 .from('chats')
                 .select('id, name, type, crm_status, crm_due_date')
                 .eq('project_id', currentProjectId)
-                .eq('is_lead', true)
+                .eq('is_lead', true);
+
+            if (currentServiceId && currentServiceId !== 'default_service') {
+                if (currentServiceId.includes(',')) {
+                    const servicesList = currentServiceId.split(',').map(s => s.trim()).filter(Boolean);
+                    query = query.in('service_id', [...servicesList, 'default_service']);
+                } else {
+                    query = query.or(`service_id.eq.${currentServiceId},service_id.eq.default_service,service_id.is.null`);
+                }
+            }
+            const { data, error } = await query
                 .not('crm_due_date', 'is', null)
                 .lte('crm_due_date', fiveDaysLater.toISOString())
                 .order('crm_due_date', { ascending: true });
@@ -3404,6 +3474,20 @@ export class HistoryHandler {
         this.settingsCache.delete(`${targetProjectId}:${key}`);
     }
 
+    static async updateMessageExternalId(internalId: string, externalId: string, newStatus?: string): Promise<boolean> {
+        try {
+            const updatePayload: any = { external_id: externalId };
+            if (newStatus) updatePayload.status = newStatus;
+
+            const { error } = await supabase.from('messages').update(updatePayload).eq('id', internalId);
+            if (error) throw error;
+            return true;
+        } catch (err: any) {
+            console.error('[HistoryHandler] Error en updateMessageExternalId:', err.message);
+            return false;
+        }
+    }
+
     static async saveSystemLog(
         service: 'OPENAI' | 'META' | 'SUPABASE' | 'SYSTEM' | 'RAILWAY',
         level: 'INFO' | 'WARN' | 'ERROR',
@@ -3482,6 +3566,28 @@ export class HistoryHandler {
                         }, { onConflict: 'phone_number_id' });
                 }
             }
+        }
+    }
+
+    static async getAllProjectServices(projectId: string): Promise<string[]> {
+        if (!supabase) return ['default_service'];
+        try {
+            // Consultar todos los service_id únicos para el project_id en settings y chats
+            const { data, error } = await supabase
+                .from('settings')
+                .select('service_id')
+                .eq('project_id', projectId);
+
+            if (error) throw error;
+
+            const services = (data || [])
+                .map((item: any) => item.service_id)
+                .filter((val: any, idx: number, self: any[]) => val && val !== 'null' && val !== 'generic' && self.indexOf(val) === idx);
+
+            return services.length > 0 ? services : ['default_service'];
+        } catch (e: any) {
+            console.error('[HistoryHandler] Error en getAllProjectServices:', e.message);
+            return ['default_service'];
         }
     }
 

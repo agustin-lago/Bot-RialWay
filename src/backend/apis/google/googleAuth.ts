@@ -30,6 +30,7 @@ if (googleProxyUrl) {
             mutableOpts.url = mutableOpts.url.replace("https://sheets.googleapis.com", googleProxyUrl);
             mutableOpts.url = mutableOpts.url.replace("https://calendar.googleapis.com", googleProxyUrl);
             mutableOpts.url = mutableOpts.url.replace("https://drive.googleapis.com", googleProxyUrl);
+            mutableOpts.url = mutableOpts.url.replace("https://docs.googleapis.com", googleProxyUrl);
 
             if (mutableOpts.url !== originalUrlStr) {
                 mutableOpts.headers = mutableOpts.headers || {};

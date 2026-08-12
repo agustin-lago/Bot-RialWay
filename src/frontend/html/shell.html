@@ -248,6 +248,91 @@
                     </a>
                     <ul class="nav-dropdown-menu">
                         <li class="nav-item"><span class="nav-link nav-dropdown-title">Integraciones</span></li>
+                        <li class="nav-item {{SHOW_CRM_STYLE}}" data-route="/crm">
+                            <a href="#" class="nav-link nav-dropdown-link"
+                                onclick="event.preventDefault(); closeIntegracionesFlyout(); navigate('/crm')">
+                                <i class="fas fa-id-card-clip"></i>
+                                <span class="nav-label">CRM</span>
+                                <span class="nav-dot" id="dot-crm" style="display: none;"></span>
+                            </a>
+                        </li>
+                        <li class="nav-item {{SHOW_CRM_STYLE}}" data-route="/crm-tareas">
+                            <a href="#" class="nav-link nav-dropdown-link"
+                                onclick="event.preventDefault(); closeIntegracionesFlyout(); navigate('/crm-tareas')">
+                                <i class="fas fa-calendar-check"></i>
+                                <span class="nav-label">Tareas</span>
+                                <span class="nav-dot" id="dot-tareas" style="display: none;"></span>
+                            </a>
+                        </li>
+                        <li class="nav-item {{SHOW_BACKOFFICE_STYLE}}" data-route="/meta">
+                            <a href="#" class="nav-link nav-dropdown-link"
+                                onclick="event.preventDefault(); closeIntegracionesFlyout(); navigate('/meta')">
+                                <i class="fab fa-meta"></i>
+                                <span class="nav-label">Meta</span>
+                            </a>
+                        </li>
+                        <li class="nav-item nav-sub-dropdown" id="nav-mercado-libre-sub">
+                            <a href="#" class="nav-link nav-dropdown-link" onclick="toggleMeliSubMenu(event)">
+                                <i class="fas fa-handshake"></i>
+                                <span class="nav-label">Mercado Libre</span>
+                                <i class="fas fa-chevron-down nav-sub-dropdown-icon"
+                                    style="font-size: 0.7rem; margin-left: auto; transition: transform 0.2s;"></i>
+                            </a>
+                            <ul class="nav-sub-dropdown-menu"
+                                style="height: 0; overflow: hidden; transition: height 0.2s; padding-left: 1.25rem; list-style: none; display: flex; flex-direction: column; gap: 4px;">
+                                <li class="nav-item" data-route="/mercado-libre-productos">
+                                    <a href="#" class="nav-link nav-dropdown-link"
+                                        onclick="event.preventDefault(); closeIntegracionesFlyout(); navigate('/mercado-libre-productos')">
+                                        <i class="fas fa-boxes"
+                                            style="font-size: 0.8rem; width: 16px; text-align: center;"></i>
+                                        <span class="nav-label" style="font-size: 0.85rem;">Productos</span>
+                                    </a>
+                                </li>
+                                <li class="nav-item" data-route="/mercado-libre-bot">
+                                    <a href="#" class="nav-link nav-dropdown-link"
+                                        onclick="event.preventDefault(); closeIntegracionesFlyout(); navigate('/mercado-libre-bot')">
+                                        <i class="fas fa-robot"
+                                            style="font-size: 0.8rem; width: 16px; text-align: center;"></i>
+                                        <span class="nav-label" style="font-size: 0.85rem;">Mercado Libre: Bot</span>
+                                    </a>
+                                </li>
+                                <li class="nav-item" data-route="/mercado-pago">
+                                    <a href="#" class="nav-link nav-dropdown-link"
+                                        onclick="event.preventDefault(); closeIntegracionesFlyout(); navigate('/mercado-pago')">
+                                        <i class="fas fa-wallet"
+                                            style="font-size: 0.8rem; width: 16px; text-align: center;"></i>
+                                        <span class="nav-label" style="font-size: 0.85rem;">Mercado Pago</span>
+                                    </a>
+                                </li>
+                            </ul>
+                        <li class="nav-item" data-route="/database" id="nav-database">
+                            <a href="#" class="nav-link nav-dropdown-link"
+                                onclick="event.preventDefault(); closeIntegracionesFlyout(); navigate('/database')">
+                                <i class="fas fa-database"></i>
+                                <span class="nav-label">Base de Datos</span>
+                            </a>
+                        </li>
+                        <li class="nav-item" data-route="/lista-negra">
+                            <a href="#" class="nav-link nav-dropdown-link"
+                                onclick="event.preventDefault(); closeIntegracionesFlyout(); navigate('/lista-negra')">
+                                <i class="fas fa-ban"></i>
+                                <span class="nav-label">Lista Negra</span>
+                            </a>
+                        </li>
+                        <li class="nav-item" data-route="/webhooks">
+                            <a href="#" class="nav-link nav-dropdown-link"
+                                onclick="event.preventDefault(); closeIntegracionesFlyout(); navigate('/webhooks')">
+                                <i class="fas fa-satellite-dish"></i>
+                                <span class="nav-label">Webhooks</span>
+                            </a>
+                        </li>
+                        <li class="nav-item" data-route="/epc-cbu-cvu" id="nav-epc-cbu-cvu" style="display: none;">
+                            <a href="#" class="nav-link nav-dropdown-link"
+                                onclick="event.preventDefault(); closeIntegracionesFlyout(); navigate('/epc-cbu-cvu')">
+                                <i class="fas fa-money-check-dollar"></i>
+                                <span class="nav-label">CBU/CVU/ALIAS</span>
+                            </a>
+                        </li>
                     </ul>
                 </li>
             </ul>

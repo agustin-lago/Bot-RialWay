@@ -29,6 +29,27 @@ window.backofficeView = {
                     </div>
                 </div>
 
+                <div class="platform-tabs" id="platform-tabs">
+                    <div class="platform-tab active" id="tab-whatsapp" onclick="switchPlatform('whatsapp')" title="WhatsApp">
+                        <i class="fab fa-whatsapp"></i>
+                    </div>
+                    <div class="platform-tab" id="tab-instagram" onclick="switchPlatform('instagram')" title="Instagram" style="display:none;">
+                        <i class="fab fa-instagram"></i>
+                    </div>
+                    <div class="platform-tab" id="tab-messenger" onclick="switchPlatform('messenger')" title="Messenger" style="display:none;">
+                        <i class="fab fa-facebook-messenger"></i>
+                    </div>
+                    <div class="platform-tab" id="tab-all" onclick="switchPlatform('all')" title="Todos" style="display:none;">
+                        <i class="fas fa-list-ul"></i>
+                    </div>
+                </div>
+
+                <!-- Selector de CRM consolidado (Multi-CRM) -->
+                <div id="multi-crm-selector-container" style="display:none; padding:8px 16px; border-bottom:1px solid var(--border); background:var(--bg-header);">
+                    <select id="multi-crm-service-filter" onchange="filterChatsByService(this.value)" style="width:100%; padding:6px 10px; border-radius:8px; background:var(--bg-secondary); border:1px solid var(--border); color:var(--text-main); font-size:0.8rem; font-weight:600; outline:none; cursor:pointer;">
+                        <option value="all">Ver Todos los CRMs</option>
+                    </select>
+                </div>
                 <div class="search-container">
                     <div class="chat-filter-row">
                         <div id="unread-filter-container" class="unread-filter-compact" style="display:none;">

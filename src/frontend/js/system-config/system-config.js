@@ -16,6 +16,116 @@ async function _initSystemConfigPage() {
             scrollbarStyle: "native"
         });
         window.cmEditor = editor;
+
+        // --- BUSCADOR DEL PROMPT ---
+        let searchMarks = [];
+        let searchMatches = [];
+        let currentSearchIndex = -1;
+        let currentActiveMark = null;
+
+        const searchInput = document.getElementById('prompt-search-input');
+        const searchCounter = document.getElementById('prompt-search-counter');
+        const searchNav = document.getElementById('prompt-search-nav');
+        const prevBtn = document.getElementById('prompt-search-prev-btn');
+        const nextBtn = document.getElementById('prompt-search-next-btn');
+
+        function clearSearch() {
+            searchMarks.forEach(m => m.clear());
+            searchMarks = [];
+            if (currentActiveMark) {
+                currentActiveMark.clear();
+                currentActiveMark = null;
+            }
+            searchMatches = [];
+            currentSearchIndex = -1;
+            if (searchCounter) searchCounter.style.display = 'none';
+            if (searchNav) searchNav.style.display = 'none';
+        }
+
+        function runSearch() {
+            clearSearch();
+            const query = searchInput ? searchInput.value : '';
+            if (!query || !editor) return;
+
+            const cursor = editor.getSearchCursor(query, null, { caseFold: true });
+            while (cursor.findNext()) {
+                const from = cursor.from();
+                const to = cursor.to();
+                const mark = editor.markText(from, to, { className: "cm-search-match" });
+                searchMarks.push(mark);
+                searchMatches.push({ from, to });
+            }
+
+            if (searchMatches.length > 0) {
+                if (searchCounter) {
+                    searchCounter.style.display = 'inline';
+                    searchCounter.textContent = `1 / ${searchMatches.length}`;
+                }
+                if (searchNav) searchNav.style.display = 'flex';
+                currentSearchIndex = 0;
+                highlightActiveMatch();
+            } else {
+                if (searchCounter) {
+                    searchCounter.style.display = 'inline';
+                    searchCounter.textContent = `0 / 0`;
+                }
+                if (searchNav) searchNav.style.display = 'none';
+            }
+        }
+
+        function highlightActiveMatch() {
+            if (currentActiveMark) {
+                currentActiveMark.clear();
+                currentActiveMark = null;
+            }
+            if (currentSearchIndex < 0 || currentSearchIndex >= searchMatches.length) return;
+
+            const match = searchMatches[currentSearchIndex];
+            editor.scrollIntoView(match.from, 150);
+            currentActiveMark = editor.markText(match.from, match.to, { className: "cm-search-match-active" });
+            
+            if (searchCounter) {
+                searchCounter.textContent = `${currentSearchIndex + 1} / ${searchMatches.length}`;
+            }
+        }
+
+        function nextMatch() {
+            if (searchMatches.length === 0) return;
+            currentSearchIndex = (currentSearchIndex + 1) % searchMatches.length;
+            highlightActiveMatch();
+        }
+
+        function prevMatch() {
+            if (searchMatches.length === 0) return;
+            currentSearchIndex = (currentSearchIndex - 1 + searchMatches.length) % searchMatches.length;
+            highlightActiveMatch();
+        }
+
+        if (searchInput) {
+            searchInput.addEventListener('input', runSearch);
+            searchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (e.shiftKey) {
+                        prevMatch();
+                    } else {
+                        nextMatch();
+                    }
+                }
+            });
+        }
+
+        if (nextBtn) nextBtn.addEventListener('click', nextMatch);
+        if (prevBtn) prevBtn.addEventListener('click', prevMatch);
+
+        // Limpiar búsqueda al cambiar de pestaña de asistente
+        const assistantSelectEl = document.getElementById('assistant-select');
+        if (assistantSelectEl) {
+            assistantSelectEl.addEventListener('change', () => {
+                if (searchInput) searchInput.value = '';
+                clearSearch();
+            });
+        }
     }
 
     const variablesForm = document.getElementById('variables-form');

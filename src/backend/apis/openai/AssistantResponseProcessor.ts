@@ -555,7 +555,9 @@ export class AssistantResponseProcessor {
                 
                 if (match) {
                     const imageUrl = match[1];
-                    const cleanBody = trimmed.replace(imageUrl, '').trim();
+                    const escapedUrl = imageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const replaceRegex = new RegExp(`(https?:\\/\\/\\s*)?${escapedUrl}`, 'gi');
+                    const cleanBody = trimmed.replace(replaceRegex, '').trim();
                     console.log(`[AssistantResponseProcessor] 📸 Enviando imagen parseada con caption: ${imageUrl}`);
                     await flowDynamic([{ body: cleanBody, media: imageUrl }]);
                 } else {

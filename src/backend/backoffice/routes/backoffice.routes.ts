@@ -15,6 +15,7 @@ import { getAdapterProvider, getGroupProvider } from "../../providers/instances"
 import { upload } from "../../middleware/upload";
 import { getIdsByHost } from '../utils/routingResolver';
 import { ContactService } from "../../contacts/contactService";
+import { getVisibleServiceIds } from '../utils/databaseSync';
 
 // Invalidar visibility cache cuando cambia cualquier setting de visibilidad via Realtime
 const VISIBILITY_KEYS = ['WHATSAPP_VISIBLE', 'INSTAGRAM_VISIBLE', 'MESSENGER_VISIBLE', 'CRM_VISIBLE', 'SYSTEM_CONFIG_VISIBLE'];
@@ -243,6 +244,7 @@ export const processSendMessage = async (
     const projectId = req.query.projectId || (req.body && req.body.projectId) || req.headers['x-project-id'] || (req.auth && req.auth.projectId) || null;
     const currentProjectId = projectId || HistoryHandlerClass.PROJECT_IDENTIFIER;
     const currentServiceId = resolveServiceId(req) || HistoryHandlerClass.SERVICE_IDENTIFIER;
+    const serviceId = req.query.serviceId || (req.body && req.body.serviceId) || req.headers['x-service-id'] || (req.auth && req.auth.serviceId) || null;
     const adapterProvider = getAdapterProvider();
     const depsHistoryHandler = HistoryHandlerClass;
     const openaiMain = await getOpenAI(currentProjectId, currentServiceId);
@@ -273,12 +275,22 @@ export const processSendMessage = async (
             return res.status(503).json({ success: false, error: 'WhatsApp provider not initialized' });
         }
 
-        console.log(`[BACKOFFICE] Procesando envÃ­o para ${chatId}...`);
+        console.log(`[BACKOFFICE] Procesando envío para ${chatId}...`);
         let replyMessageData: any = null;
         let replyExternalId = '';
         let replyRawPayload: any = null;
+        
+        // Resolver el serviceId específico de este chat
+        let targetServiceId = serviceId || currentServiceId;
+        if (!targetServiceId || targetServiceId === 'default_service') {
+            const chatObj = await depsHistoryHandler.getChat(chatId, currentProjectId);
+            if (chatObj && chatObj.service_id) {
+                targetServiceId = chatObj.service_id;
+            }
+        }
+        if (!targetServiceId) targetServiceId = 'default_service';
 
-        // El guardado se moviÃ³ despuÃ©s del envÃ­o para capturar el ID real y evitar duplicados
+        // El guardado se movió después del envío para capturar el ID real y evitar duplicados
 
         // 3. Inyectar en thread OpenAI (silencioso)
         depsHistoryHandler.getThreadId(chatId).then((threadId: string | null) => {
@@ -297,13 +309,13 @@ export const processSendMessage = async (
             if (replyTo) {
                 if (process.env.STORAGE_MODE === "local") {
                     const { LocalHistoryStore } = await import('../../db/localHistoryStore');
-                    const messages = await LocalHistoryStore.getMessages(chatId, 1000, 0, currentProjectId, currentServiceId);
+                    const messages = await LocalHistoryStore.getMessages(chatId, 1000, 0, currentProjectId, targetServiceId);
                     replyMessageData = messages.find((m: any) => m.id === replyTo || m.external_id === replyTo);
                 } else {
                     const isUuid = UUID_RE.test(replyTo);
                     let query = supabase.from('messages').select('*').eq('chat_id', chatId).eq('project_id', currentProjectId);
-                    if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
-                        query = query.eq('service_id', currentServiceId);
+                    if (targetServiceId && targetServiceId !== 'default' && targetServiceId !== 'default_service') {
+                        query = query.eq('service_id', targetServiceId);
                     }
                     if (isUuid) {
                         query = query.or(`id.eq.${replyTo},external_id.eq.${replyTo}`);
@@ -321,11 +333,11 @@ export const processSendMessage = async (
                 }
 
                 if (replyExternalId || replyMessageData) {
-                    replyRawPayload = await buildReplyPreviewPayload(replyMessageData, chatId, currentProjectId, currentServiceId, replyExternalId || replyTo);
+                    replyRawPayload = await buildReplyPreviewPayload(replyMessageData, chatId, currentProjectId, targetServiceId, replyExternalId || replyTo);
                 }
             }
-
-            console.log(`[BACKOFFICE] Enviando via ${providerToSend.constructor.name} a ${chatId}`);
+            
+            console.log(`[BACKOFFICE] Enviando via ${providerToSend.constructor.name} a ${chatId} (Service: ${targetServiceId})`);
 
             const jid = chatId.includes('@') ? chatId : `${chatId}@s.whatsapp.net`;
             let providerResponse: any = null;
@@ -360,26 +372,26 @@ export const processSendMessage = async (
                     if (typeof (providerToSend as any).sendSticker === 'function') {
                         providerResponse = await (providerToSend as any).sendSticker(jid, absolutePath);
                     } else {
-                        providerResponse = await providerToSend.sendMessage(jid, '', opts);
+                        providerResponse = await providerToSend.sendMessage(jid, '', { ...opts, serviceId: targetServiceId, projectId: currentProjectId });
                     }
                 } else if (finalType === 'image') {
                     if (typeof providerToSend.sendImage === 'function') {
                         providerResponse = await providerToSend.sendImage(jid, absolutePath, message || '');
                     } else {
-                        providerResponse = await providerToSend.sendMessage(jid, message || '', opts);
+                        providerResponse = await providerToSend.sendMessage(jid, message || '', { ...opts, serviceId: targetServiceId, projectId: currentProjectId });
                     }
                 } else if (finalType === 'video') {
                     if (typeof (providerToSend as any).sendVideo === 'function') {
                         providerResponse = await (providerToSend as any).sendVideo(jid, absolutePath, message || '');
                     } else {
-                        providerResponse = await providerToSend.sendMessage(jid, message || '', opts);
+                        providerResponse = await providerToSend.sendMessage(jid, message || '', { ...opts, serviceId: targetServiceId, projectId: currentProjectId });
                     }
                 } else if (finalType === 'audio') {
                     if (typeof (providerToSend as any).sendAudio === 'function') {
                         providerResponse = await (providerToSend as any).sendAudio(jid, absolutePath, message || file.originalname);
                     } else {
                         opts.media = { url: absolutePath, mimetype: file.mimetype };
-                        providerResponse = await providerToSend.sendMessage(jid, message || '', opts);
+                        providerResponse = await providerToSend.sendMessage(jid, message || '', { ...opts, serviceId: targetServiceId, projectId: currentProjectId });
                     }
                 } else {
                     opts.fileName = file.originalname;
@@ -388,16 +400,16 @@ export const processSendMessage = async (
                     } else if (typeof (providerToSend as any).sendFile === 'function') {
                         providerResponse = await (providerToSend as any).sendFile(jid, absolutePath, message || file.originalname);
                     } else {
-                        providerResponse = await providerToSend.sendMessage(jid, message || '', opts);
+                        providerResponse = await providerToSend.sendMessage(jid, message || '', { ...opts, serviceId: targetServiceId, projectId: currentProjectId });
                     }
                 }
             } else {
                 if (replyExternalId && providerIsMeta) {
-                    providerResponse = await providerToSend.sendMessage(jid, message, { replyTo: replyExternalId });
+                    providerResponse = await providerToSend.sendMessage(jid, message, { replyTo: replyExternalId, serviceId: targetServiceId, projectId: currentProjectId });
                 } else if (baileysQuoted && providerToSend.vendor && typeof providerToSend.vendor.sendMessage === 'function') {
-                    providerResponse = await providerToSend.vendor.sendMessage(jid, { text: message }, { quoted: baileysQuoted });
+                    providerResponse = await providerToSend.vendor.sendMessage(jid, { text: message }, { quoted: baileysQuoted }); // serviceId no soportado aquí
                 } else {
-                    providerResponse = await providerToSend.sendMessage(jid, message, replyExternalId ? { replyTo: replyExternalId } : {});
+                    providerResponse = await providerToSend.sendMessage(jid, message, { ...(replyExternalId ? { replyTo: replyExternalId } : {}), serviceId: targetServiceId, projectId: currentProjectId });
                 }
             }
 
@@ -409,16 +421,15 @@ export const processSendMessage = async (
             const { trackSentMessage } = await import('../../providers/provider.manager');
             trackSentMessage(externalId);
 
-            await depsHistoryHandler.saveMessage(chatId, 'assistant', finalContent, finalType, undefined, undefined, externalId, 'whatsapp', currentProjectId, currentServiceId, replyRawPayload);
-            await depsHistoryHandler.updateLastHumanMessage(chatId, currentProjectId, currentServiceId);
-            await depsHistoryHandler.toggleBot(chatId, false, currentProjectId, currentServiceId);
+            await depsHistoryHandler.saveMessage(chatId, 'assistant', finalContent, finalType, undefined, undefined, externalId, 'whatsapp', currentProjectId, targetServiceId, replyRawPayload);
+            await depsHistoryHandler.updateLastHumanMessage(chatId, currentProjectId, targetServiceId);
+            await depsHistoryHandler.toggleBot(chatId, false, currentProjectId, targetServiceId);
 
             res.json({ success: true, fileUrl: file ? fileUrl : undefined });
         } catch (waError) {
             console.error('[BACKOFFICE] Error enviando a Whatsapp:', waError);
-
-            // Si fallÃ³ el envÃ­o, igual guardamos pero sin ID externo para que al menos quede el log local
-            await depsHistoryHandler.saveMessage(chatId, 'assistant', finalContent, finalType, undefined, undefined, null, 'whatsapp', currentProjectId, currentServiceId, replyRawPayload);
+            // Si falló el envío, igual guardamos pero sin ID externo para que al menos quede el log local, marcado como 'failed'
+            await depsHistoryHandler.saveMessage(chatId, 'assistant', finalContent, finalType, undefined, undefined, null, 'whatsapp', currentProjectId, targetServiceId, replyRawPayload, 'failed');
 
             res.json({
                 success: true,
@@ -782,6 +793,21 @@ export const processBulkTemplate = async (req: any, res: any) => {
                 }
             }
 
+            // --- RENDERIZAR TEXTO PARA EL HISTORIAL (Antes de intentar enviar) ---
+            let renderedText = "";
+            const bodyComp = template.components.find((c: any) => c.type === 'BODY');
+            if (bodyComp) {
+                renderedText = bodyComp.text || "";
+                // Reemplazar variables (soporta {{1}} y {{nombre}})
+                const varRegex = /\{\{(\w+)\}\}/g;
+                renderedText = renderedText.replace(varRegex, (match, p1) => {
+                    // Intentar obtener el valor de la fila (case-insensitive)
+                    const val = row[p1] || row[p1.toLowerCase()] || row[p1.toUpperCase()] || match;
+                    return String(val);
+                });
+            }
+            const historyContent = `[Campaña: ${templateName}]\n${renderedText}`;
+
             try {
                 console.log(`[BULK] Preparando envío para ${phone}. Componentes:`, JSON.stringify(components, null, 2));
                 const resApi = await provider.sendTemplate(phone, templateName, languageCode || 'es_AR', components, { isBulk: true });
@@ -815,27 +841,36 @@ export const processBulkTemplate = async (req: any, res: any) => {
                     }
 
                     // Guardar con un prefijo informativo para el asistente
-                    const historyContent = `[CampaÃ±a: ${templateName}]\n${renderedText}`;
-
+                    const historyContent = `[Campaña: ${templateName}]\n${renderedText}`;
                     await depsHistoryHandler.saveMessage(phone, 'assistant', historyContent, 'text', undefined, undefined, msgId, 'whatsapp', projectId, serviceId);
                     sent++;
                 } else {
                     errors++;
-                    console.error(`âŒ [BULK] Fallo al enviar a ${phone}: Meta no devolviÃ³ ID de mensaje. Respuesta:`, JSON.stringify(resApi));
+                    console.error(`❌ [BULK] Fallo al enviar a ${phone}: Meta no devolvió ID de mensaje. Respuesta:`, JSON.stringify(resApi));
+                    try {
+                        await depsHistoryHandler.saveMessage(phone, 'assistant', historyContent, 'text', undefined, undefined, null, 'whatsapp', projectId, serviceId, undefined, 'failed');
+                    } catch (saveErr: any) {
+                        console.error('[BULK] Error al guardar mensaje fallido:', saveErr.message);
+                    }
                 }
             } catch (e: any) {
                 errors++;
                 const errorData = e?.response?.data || e.message || e;
-                console.error(`âŒ [BULK] Error de Meta para ${phone}:`, JSON.stringify(errorData, null, 2));
+                console.error(`❌ [BULK] Error de Meta para ${phone}:`, JSON.stringify(errorData, null, 2));
+                try {
+                    await depsHistoryHandler.saveMessage(phone, 'assistant', historyContent, 'text', undefined, undefined, null, 'whatsapp', projectId, serviceId, undefined, 'failed');
+                } catch (saveErr: any) {
+                    console.error('[BULK] Error al guardar mensaje fallido en catch:', saveErr.message);
+                }
             }
-            // PequeÃ±o delay para no saturar la API
+            // Pequeño delay para no saturar la API
             await new Promise(r => setTimeout(r, 200));
         }
 
-        console.log(`âœ… [BULK] Proceso finalizado: ${sent} enviados, ${errors} errores de ${data.length} filas.`);
+        console.log(`✅ [BULK] Proceso finalizado: ${sent} enviados, ${errors} errores de ${data.length} filas.`);
     } catch (e: any) {
         console.error('Error en processBulkTemplate:', e);
-        // Nota: El res ya fue enviado (202), este error solo va a logs si ocurre despuÃ©s
+        // Nota: El res ya fue enviado (202), este error solo va a logs si ocurre después
     } finally {
         if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
     }
@@ -891,7 +926,7 @@ export const registerBackofficeRoutes = (app: any) => {
     app.post('/api/backoffice/auth', bodyParser.json(), async (req: any, res: any) => {
         const { user, pass, token } = req.body;
 
-        // 1. Soporte para login dinÃ¡mico (Prioridad: DB > Env)
+        // 1. Soporte para login dinámico (Prioridad: DB > Env)
         const dbAdminUser = await depsHistoryHandler.getSetting('ADMIN_USER');
         const dbAdminPass = await depsHistoryHandler.getSetting('ADMIN_PASS');
 
@@ -923,7 +958,7 @@ export const registerBackofficeRoutes = (app: any) => {
             });
         }
 
-        return res.status(401).json({ success: false, error: "Credenciales invÃ¡lidas" });
+        return res.status(401).json({ success: false, error: "Credenciales inválidas" });
     });
 
     app.get('/api/backoffice/me', backofficeAuth, async (req: any, res: any) => {
@@ -1109,12 +1144,13 @@ export const registerBackofficeRoutes = (app: any) => {
         const tag = req.query.tag as string;
         const platform = req.query.platform as string;
 
-        // Si es subusuario, aplicamos filtro de asignaciÃ³n (ve lo suyo + lo libre)
+        // Si es subusuario, aplicamos filtro de asignación (ve lo suyo + lo libre)
         const assignedTo = req.auth.isSubUser ? req.auth.userId : null;
 
         const projectId = resolveProjectId(req);
         const serviceId = resolveServiceId(req);
-        const chats = await depsHistoryHandler.listChats(limit, offset, search, tag, assignedTo, platform, projectId, serviceId);
+        const visibleServices = await getVisibleServiceIds(projectId, serviceId);
+        const chats = await depsHistoryHandler.listChats(limit, offset, search, tag, assignedTo, platform, projectId, visibleServices.join(','));
         res.json(chats);
     });
 
@@ -1158,14 +1194,14 @@ export const registerBackofficeRoutes = (app: any) => {
         if (!projectId) return res.status(400).json({ success: false, error: 'Se requiere ID de proyecto' });
 
         try {
-            console.log(`[VACIAR] Iniciando eliminaciÃ³n secuencial para project_id: ${projectId}...`);
+            console.log(`[VACIAR] Iniciando eliminación secuencial para project_id: ${projectId}...`);
             await supabase.from("chat_tags").delete().eq("project_id", projectId);
             await supabase.from("messages").delete().eq("project_id", projectId);
             await supabase.from("tickets").delete().eq("project_id", projectId);
             await supabase.from("chats").delete().eq("project_id", projectId);
             await supabase.from("tags").delete().eq("project_id", projectId);
 
-            console.log(`[VACIAR] Ã‰xito: Base de datos vaciada para el proyecto.`);
+            console.log(`[VACIAR] Éxito: Base de datos vaciada para el proyecto.`);
             res.json({ success: true });
         } catch (e: any) {
             console.error(`[VACIAR] Error:`, e);
@@ -1305,7 +1341,7 @@ export const registerBackofficeRoutes = (app: any) => {
         }
     });
 
-    // --- NUEVO: IMPORTACIÃ“N DE CONTACTOS ---
+    // --- NUEVO: IMPORTACIÓN DE CONTACTOS ---
     app.get('/api/backoffice/chats/import-template', backofficeAuth, (req: any, res: any) => {
         try {
             const data = [
@@ -1368,7 +1404,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
             const { title, message } = req.body;
             if (!title || !message) {
-                return res.status(400).json({ success: false, error: 'Falta tÃ­tulo o mensaje' });
+                return res.status(400).json({ success: false, error: 'Falta título o mensaje' });
             }
             const qm = await depsHistoryHandler.createQuickMessage(projectId, title, message);
             res.json({ success: true, data: qm });
@@ -1393,7 +1429,8 @@ export const registerBackofficeRoutes = (app: any) => {
         const offset = parseInt(req.query.offset as string) || 0;
         const projectId = resolveProjectId(req);
         const serviceId = resolveServiceId(req);
-        const messages = await depsHistoryHandler.getMessages(req.params.chatId, limit, offset, projectId, serviceId);
+        const visibleServices = await getVisibleServiceIds(projectId, serviceId);
+        const messages = await depsHistoryHandler.getMessages(req.params.chatId, limit, offset, projectId, visibleServices.join(','));
         res.json(messages);
     });
 
@@ -1422,7 +1459,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const vendor = (adapterProvider as any).vendor || adapterProvider.globalVendorArgs?.sock;
             if (vendor && typeof vendor.profilePictureUrl === 'function') {
                 try {
-                    // 1. Verificar cachÃ© positivo
+                    // 1. Verificar caché positivo
                     const cached = profilePicCache.get(jid);
                     if (cached && cached.expires > Date.now()) {
                         res.writeHead(302, { Location: cached.url });
@@ -1463,7 +1500,7 @@ export const registerBackofficeRoutes = (app: any) => {
             // 1. Revisar si estamos en modo META OFFICIAL
             const metaConfig = await depsHistoryHandler.getMetaOnboardingData(projectId, false, serviceId);
             if (metaConfig && metaConfig.access_token && metaConfig.phone_number_id) {
-                console.log(`ðŸ“¡ [SYNC] SincronizaciÃ³n Meta detectada. Solicitando historial SMB...`);
+                console.log(`¡ [SYNC] Sincronización Meta detectada. Solicitando historial SMB...`);
                 try {
                     const tokenForSync = metaConfig.onboarding_data?.client_token || metaConfig.access_token;
                     await triggerMetaSync(tokenForSync, metaConfig.phone_number_id);
@@ -1480,12 +1517,12 @@ export const registerBackofficeRoutes = (app: any) => {
                     const errorData = metaErr?.response?.data || {};
                     const details = errorData.error?.error_data?.details || errorData.error?.message || metaErr.message;
 
-                    console.error('âŒ [SMB-SYNC] FallÃ³ la sincronizaciÃ³n de Meta:', details);
+                    console.error('❌ [SMB-SYNC] Falló la sincronización de Meta:', details);
 
                     if (details.includes('outside of allowed time window')) {
                         return res.status(403).json({
                             success: false,
-                            error: 'Meta solo permite la sincronizaciÃ³n de historial dentro de las primeras 24 horas despuÃ©s de la vinculaciÃ³n inicial. Pasado este tiempo, los contactos se sincronizarÃ¡n automÃ¡ticamente a medida que escriban.'
+                            error: 'Meta solo permite la sincronización de historial dentro de las primeras 24 horas después de la vinculación inicial. Pasado este tiempo, los contactos se sincronizarán automáticamente a medida que escriban.'
                         });
                     }
 
@@ -1506,7 +1543,7 @@ export const registerBackofficeRoutes = (app: any) => {
                            (provider as any)?.sock ||
                            (provider as any)?.vendor?.sock;
 
-            console.log(`ðŸ“¡ [SYNC] Intento de sincronizaciÃ³n.`);
+            console.log(`¡ [SYNC] Intento de sincronización.`);
             console.log(`   - Provider: ${provider?.constructor?.name || 'Unknown'}`);
             console.log(`   - Vendor encontrado: ${!!vendor}`);
             if (vendor) {
@@ -1515,14 +1552,14 @@ export const registerBackofficeRoutes = (app: any) => {
                 console.log(`   - Auth ID: ${vendor.authState?.creds?.me?.id || 'No auth'}`);
             }
 
-            // DEBUG: Ver quÃ© tiene el vendor realmente
+            // DEBUG: Ver qué tiene el vendor realmente
             if (vendor) {
                 const keys = Object.keys(vendor).filter(k => !k.startsWith('_'));
                 console.log(`   - Propiedades del Vendor: ${keys.slice(0, 15).join(', ')}...`);
                 console.log(`   - Store detectado: ${!!(vendor as any).store}`);
             }
 
-            // Un motor es vÃ¡lido si tiene el vendor y alguna seÃ±al de sesiÃ³n activa
+            // Un motor es válido si tiene el vendor y alguna señal de sesión activa
             const isConnected = vendor && (
                 vendor.ws?.isOpen ||
                 !!vendor.user?.id ||
@@ -1530,31 +1567,31 @@ export const registerBackofficeRoutes = (app: any) => {
             );
 
             if (!isConnected) {
-                console.warn('âš ï¸ [SYNC] Intento de sincronizaciÃ³n con motor desconectado.');
+                console.warn('⚠️ [SYNC] Intento de sincronización con motor desconectado.');
                 return res.status(503).json({
                     success: false,
-                    error: 'El motor de WhatsApp (Baileys) no estÃ¡ conectado o la sesiÃ³n ha expirado. Por favor, vuelva a vincular el dispositivo desde el panel de control.'
+                    error: 'El motor de WhatsApp (Baileys) no está conectado o la sesión ha expirado. Por favor, vuelva a vincular el dispositivo desde el panel de control.'
                 });
             }
 
             if (vendor.ws?.isOpen === false) {
-                console.warn('âš ï¸ [SYNC] El motor tiene sesiÃ³n pero el WebSocket estÃ¡ cerrado. Los datos podrÃ­an estar desactualizados.');
+                console.warn('⚠️ [SYNC] El motor tiene sesión pero el WebSocket está cerrado. Los datos podrían estar desactualizados.');
             }
 
-            console.log('ðŸ“¡ [SYNC] Iniciando extracciÃ³n de datos desde el socket...');
+            console.log('¡ [SYNC] Iniciando extracción de datos desde el socket...');
 
             // 1. Obtener Etiquetas (Labels) por Query (solo Business)
             let labels: any[] = [];
             try {
                 if (typeof vendor.labelsQuery === 'function') {
-                    console.log('ðŸ“¡ [SYNC] Usando labelsQuery()...');
+                    console.log('¡ [SYNC] Usando labelsQuery()...');
                     labels = await vendor.labelsQuery() || [];
                 } else if (typeof (vendor as any).getLabels === 'function') {
-                    console.log('ðŸ“¡ [SYNC] Usando getLabels()...');
+                    console.log('¡ [SYNC] Usando getLabels()...');
                     labels = await (vendor as any).getLabels() || [];
                 }
             } catch (e) {
-                console.warn('âš ï¸ [SYNC] Error obteniendo etiquetas vÃ­a Query:', e);
+                console.warn('⚠️ [SYNC] Error obteniendo etiquetas vía Query:', e);
             }
 
             // 2. Obtener Datos del Store
@@ -1564,7 +1601,7 @@ export const registerBackofficeRoutes = (app: any) => {
                           (provider as any).provider?.store ||
                           (provider as any).globalVendorArgs?.store;
 
-            console.log(`ðŸ“¡ [SYNC] DiagnÃ³stico de Store:`);
+            console.log(`¡ [SYNC] Diagnóstico de Store:`);
             console.log(`   - En vendor: ${!!(vendor as any).store}`);
             console.log(`   - En provider: ${!!(provider as any).store}`);
             console.log(`   - En provider.provider: ${!!(provider as any).provider?.store}`);
@@ -1599,7 +1636,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
                     console.log(`   - Store Data: ${allChats.length} chats en store.chats`);
 
-                    // Fusionar: Agregar chats que no estÃ©n en contactList
+                    // Fusionar: Agregar chats que no estén en contactList
                     const existingIds = new Set(contactList.map(c => c.id));
                     for (const chat of allChats) {
                         if (chat.id && !existingIds.has(chat.id)) {
@@ -1622,9 +1659,9 @@ export const registerBackofficeRoutes = (app: any) => {
                 }
             }
 
-            // Fallback total al vendor si todo lo anterior fallÃ³ (intentamos obtener del socket directamente)
+            // Fallback total al vendor si todo lo anterior falló (intentamos obtener del socket directamente)
             if (contactList.length === 0) {
-                console.log('ðŸ“¡ [SYNC] ContactList vacÃ­a, intentando fallback a vendor.contacts o vendor.chats...');
+                console.log('¡ [SYNC] ContactList vacía, intentando fallback a vendor.contacts o vendor.chats...');
                 const vendorContacts = vendor.contacts || (vendor as any).contacts || (vendor as any).chats || {};
 
                 if (vendorContacts && typeof (vendorContacts as any).all === 'function') {
@@ -1634,7 +1671,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 }
             }
 
-            console.log(`ðŸ“¡ [SYNC] Resultado extracciÃ³n: ${contactList.length} registros, ${labels.length} etiquetas.`);
+            console.log(`¡ [SYNC] Resultado extracción: ${contactList.length} registros, ${labels.length} etiquetas.`);
 
             // 3. Sincronizar Etiquetas en DB
             const tagMap = new Map<string, string>(); // name -> uuid_db
@@ -1679,14 +1716,14 @@ export const registerBackofficeRoutes = (app: any) => {
                     };
                 });
 
-            console.log(`ðŸ“¡ [SYNC] Procesados ${chatsToSync.length} candidatos para upsert.`);
+            console.log(`¡ [SYNC] Procesados ${chatsToSync.length} candidatos para upsert.`);
             const syncChatsRes = await depsHistoryHandler.syncChats(chatsToSync, projectId, serviceId);
 
             // 5. Vincular Etiquetas a Contactos
             const associations: any[] = [];
             for (const contact of contactList as any[]) {
                 if (contact.id && contact.labels && Array.isArray(contact.labels) && contact.labels.length > 0) {
-                    // Normalizar ID para la asociaciÃ³n
+                    // Normalizar ID para la asociación
                     let cleanId = contact.id.replace(/@s\.whatsapp\.net$/, '');
                     cleanId = cleanId.replace(/@c\.us$/, '');
 
@@ -1703,7 +1740,7 @@ export const registerBackofficeRoutes = (app: any) => {
             }
 
             if (associations.length > 0) {
-                console.log(`ðŸ“¡ [SYNC] Vinculando ${associations.length} etiquetas a contactos...`);
+                console.log(`¡ [SYNC] Vinculando ${associations.length} etiquetas a contactos...`);
                 await depsHistoryHandler.syncChatTags(associations, projectId, serviceId);
             }
 
@@ -1717,7 +1754,7 @@ export const registerBackofficeRoutes = (app: any) => {
             });
 
         } catch (error: any) {
-            console.error('âŒ [SYNC] Error en ruta de sincronizaciÃ³n:', error);
+            console.error('❌ [SYNC] Error en ruta de sincronización:', error);
             res.status(500).json({ success: false, error: error.message });
         }
     });
@@ -1726,18 +1763,18 @@ export const registerBackofficeRoutes = (app: any) => {
 
     app.post('/api/backoffice/send-message', backofficeAuth, (req: any, res: any, _next: any) => {
         if (req.body && Object.keys(req.body).length > 0) {
-            console.warn("âš ï¸ [BACKOFFICE] Cuerpo detectado ANTES de Multer. Posible conflicto de stream.");
+            console.warn("⚠️ [BACKOFFICE] Cuerpo detectado ANTES de Multer. Posible conflicto de stream.");
         }
 
         upload.single('file')(req, res, (err: any) => {
             if (err) {
-                console.error("âŒ [BACKOFFICE] Error de Multer:", err);
+                console.error("❌ [BACKOFFICE] Error de Multer:", err);
                 return res.status(400).json({ success: false, error: `Error de archivo: ${err.message}` });
             }
             const { chatId, message, replyTo } = req.body;
             if (!chatId) return res.status(400).json({ success: false, error: 'chatId is required' });
 
-            // Pasamos deps como sexto argumento y replyTo como el sÃ©ptimo
+            // Pasamos deps como sexto argumento y replyTo como el séptimo
             processSendMessage(req, res, chatId, message, (req as any).file, replyTo);
         });
     });
@@ -1877,7 +1914,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 }
             } else if (isMeta && externalId) {
                 if (!externalId.startsWith('wamid.')) {
-                    return res.status(400).json({ success: false, error: 'Este mensaje no tiene un ID de Meta vÃ¡lido (wamid) para reaccionar. Fue enviado localmente o con otro proveedor.' });
+                    return res.status(400).json({ success: false, error: 'Este mensaje no tiene un ID de Meta válido (wamid) para reaccionar. Fue enviado localmente o con otro proveedor.' });
                 }
                 const { phone_number_id, access_token } = provider.config || (provider as any).globalVendorArgs || {};
                 if (phone_number_id && access_token) {
@@ -1903,7 +1940,7 @@ export const registerBackofficeRoutes = (app: any) => {
                         }
                     });
                     reactedInWhatsApp = true;
-                    console.log(`[BACKOFFICE] ReacciÃ³n enviada a Meta Cloud API (ID: ${externalId})`);
+                    console.log(`[BACKOFFICE] Reacción enviada a Meta Cloud API (ID: ${externalId})`);
                 }
             }
 
@@ -1915,9 +1952,9 @@ export const registerBackofficeRoutes = (app: any) => {
                 await supabase.from('messages').update({ reaction: reaction || '' }).eq('id', messageData.id);
             }
 
-            res.json({ success: true, reactedInWhatsApp, message: 'ReacciÃ³n enviada' });
+            res.json({ success: true, reactedInWhatsApp, message: 'Reacción enviada' });
         } catch (e: any) {
-            console.error('âŒ Error enviando reacciÃ³n:', e);
+            console.error('❌ Error enviando reacción:', e);
             res.status(500).json({ success: false, error: e.message });
         }
     });
@@ -1990,7 +2027,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 finalType = 'video';
             }
 
-            // Enviar usando el mÃ©todo adecuado del proveedor
+            // Enviar usando el método adecuado del proveedor
             if (finalType === 'text') {
                 providerResponse = await providerToSend.sendMessage(jid, mediaUrl, {});
             } else if (finalType === 'sticker') {
@@ -2032,7 +2069,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
             res.json({ success: true, message: 'Archivo reenviado correctamente' });
         } catch (e: any) {
-            console.error('âŒ Error crÃ­tico en reenviar mensaje:', e);
+            console.error('❌ Error crítico en reenviar mensaje:', e);
             res.status(500).json({ success: false, error: e.message });
         }
     });
@@ -2049,10 +2086,10 @@ export const registerBackofficeRoutes = (app: any) => {
         const statusObj = await hasActiveSession(adapterProvider, groupProvider);
         const providerStatus = isGroup ? statusObj.group : statusObj.adapter;
         if (providerStatus?.active) {
-            return res.json({ success: true, message: 'El proveedor ya estÃ¡ conectado' });
+            return res.json({ success: true, message: 'El proveedor ya está conectado' });
         }
 
-        console.log(`[BACKOFFICE] Iniciando vinculaciÃ³n para Baileys (Grupo: ${!!isGroup}, PairingCode: ${!!usePairingCode})...`);
+        console.log(`[BACKOFFICE] Iniciando vinculación para Baileys (Grupo: ${!!isGroup}, PairingCode: ${!!usePairingCode})...`);
 
         try {
             if (provider.globalVendorArgs) {
@@ -2073,7 +2110,7 @@ export const registerBackofficeRoutes = (app: any) => {
                     const currentProvStatus = isGroup ? currentStatus.group : currentStatus.adapter;
 
                     if (currentProvStatus && !currentProvStatus.active) {
-                        console.log(`[TIMEOUT] Pasaron 5 minutos y no se escaneÃ³ el QR. Deteniendo proveedor Baileys (Grupo: ${!!isGroup}) para ahorrar recursos.`);
+                        console.log(`[TIMEOUT] Pasaron 5 minutos y no se escaneó el QR. Deteniendo proveedor Baileys (Grupo: ${!!isGroup}) para ahorrar recursos.`);
                         if (typeof provider.stopProvider === 'function') {
                             await provider.stopProvider();
                         }
@@ -2274,7 +2311,9 @@ export const registerBackofficeRoutes = (app: any) => {
         const offset = parseInt(req.query.offset as string) || 0;
         const chatId = req.query.chatId as string;
         const projectId = resolveProjectId(req);
-        const result = await depsHistoryHandler.listTickets(limit, offset, estado, tipo, chatId, id, projectId);
+        const serviceId = resolveServiceId(req);
+        const visibleServices = await getVisibleServiceIds(projectId, serviceId);
+        const result = await depsHistoryHandler.listTickets(limit, offset, estado, tipo, chatId, id, projectId, visibleServices.join(','));
         res.json(result);
     });
 
@@ -2371,7 +2410,9 @@ export const registerBackofficeRoutes = (app: any) => {
     app.get('/api/backoffice/crm/tasks', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req);
-            const tasks = await depsHistoryHandler.getTasksDashboard(projectId);
+            const serviceId = resolveServiceId(req);
+            const visibleServices = await getVisibleServiceIds(projectId, serviceId);
+            const tasks = await depsHistoryHandler.getTasksDashboard(projectId, visibleServices.join(','));
             res.json(tasks);
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });
@@ -2382,7 +2423,9 @@ export const registerBackofficeRoutes = (app: any) => {
         const limit = parseInt(req.query.limit as string) || 50;
         const offset = parseInt(req.query.offset as string) || 0;
         const projectId = resolveProjectId(req);
-        const result = await depsHistoryHandler.listEditedLeads(limit, offset, projectId);
+        const serviceId = resolveServiceId(req);
+        const visibleServices = await getVisibleServiceIds(projectId, serviceId);
+        const result = await depsHistoryHandler.listEditedLeads(limit, offset, projectId, visibleServices.join(','));
         res.json(result);
     });
 
@@ -2478,12 +2521,12 @@ export const registerBackofficeRoutes = (app: any) => {
 
             if (!finalWabaId || !finalPhoneId) {
                 const { discoverMetaIds } = await import("../../apis/meta/metaDiscovery");
-                console.log(`ðŸ“¡ [META-SYNC-MANUAL] Iniciando descubrimiento manual por falta de IDs...`);
+                console.log(`¡ [META-SYNC-MANUAL] Iniciando descubrimiento manual por falta de IDs...`);
                 const appId = await depsHistoryHandler.getConfig('META_APP_ID', projectId, serviceId) || process.env.META_APP_ID || '1493670789148486';
                 const appSecret = await depsHistoryHandler.getConfig('META_APP_SECRET', projectId, serviceId) || process.env.META_APP_SECRET || '362b2ec20c00bdf51336fd165ad47160';
                 const discovery = await discoverMetaIds(manualToken, null, appId, appSecret);
                 if (!discovery.found || !discovery.data?.phoneNumberId) {
-                    return res.status(404).json({ success: false, error: 'No se pudieron encontrar los datos automÃ¡ticamente. Por favor ingresa los IDs manualmente.' });
+                    return res.status(404).json({ success: false, error: 'No se pudieron encontrar los datos automáticamente. Por favor ingresa los IDs manualmente.' });
                 }
                 finalWabaId = discovery.data.wabaId;
                 finalPhoneId = discovery.data.phoneNumberId;
@@ -2508,17 +2551,17 @@ export const registerBackofficeRoutes = (app: any) => {
 
     // --- TEMPLATES & BULK MESSAGING ---
 
-    /** Asegura que el proveedor tenga la config mÃ¡s reciente de la DB */
+    /** Asegura que el proveedor tenga la config más reciente de la DB */
     const syncMetaProvider = async (projectId: string | null = null, serviceId: string | null = null) => {
         const config = await depsHistoryHandler.getMetaOnboardingData(projectId || process.env.RAILWAY_PROJECT_ID, false, serviceId);
         if (config && adapterProvider && adapterProvider.updateConfig) {
-            // El objeto config puede venir de la DB (whatsappToken) o de una sincronizaciÃ³n previa (access_token)
+            // El objeto config puede venir de la DB (whatsappToken) o de una sincronización previa (access_token)
             const token = config.whatsappToken || config.access_token;
             const phoneId = config.whatsappNumberId || config.phone_number_id;
             const wabaId = config.whatsappBusinessId || config.waba_id;
 
             if (token && token !== 'PENDING') {
-                console.log("ðŸ”„ [MetaSync] Sincronizando credenciales de Meta...");
+                console.log("🔄 [MetaSync] Sincronizando credenciales de Meta...");
                 adapterProvider.updateConfig({
                     jwtToken: token,
                     numberId: phoneId,
@@ -2559,13 +2602,13 @@ export const registerBackofficeRoutes = (app: any) => {
                 return res.status(400).json({ success: false, error: 'El proveedor actual no soporta la biblioteca de Meta.' });
             }
 
-            console.log('ðŸ“¡ [BACKOFFICE-ROUTES] Solicitando plantillas de biblioteca...');
+            console.log('¡ [BACKOFFICE-ROUTES] Solicitando plantillas de biblioteca...');
             const templates = await provider.getLibraryTemplates();
-            console.log(`âœ… [BACKOFFICE-ROUTES] Se obtuvieron ${templates?.length || 0} plantillas.`);
+            console.log(`✅ [BACKOFFICE-ROUTES] Se obtuvieron ${templates?.length || 0} plantillas.`);
 
             res.json({ success: true, templates });
         } catch (error: any) {
-            console.error('âŒ [BACKOFFICE-ROUTES] Error en library-templates:', error);
+            console.error('❌ [BACKOFFICE-ROUTES] Error en library-templates:', error);
             res.status(500).json({ success: false, error: error.message });
         }
     });
@@ -2580,7 +2623,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
             const provider = (adapterProvider.constructor.name === 'MetaCloudProvider') ? adapterProvider : groupProvider;
             if (!provider || typeof provider.createTemplate !== 'function') {
-                return res.status(400).json({ success: false, error: 'Proveedor Meta no configurado o no soporta creaciÃ³n.' });
+                return res.status(400).json({ success: false, error: 'Proveedor Meta no configurado o no soporta creación.' });
             }
 
             const result = await provider.createTemplate(name, category, language, text, examples || []);
@@ -2604,7 +2647,7 @@ export const registerBackofficeRoutes = (app: any) => {
         }
     });
 
-    /** Paso 1: AÃ±adir nÃºmero a Meta y solicitar OTP */
+    /** Paso 1: Añadir número a Meta y solicitar OTP */
     app.post('/api/backoffice/whatsapp/register-step-1', bodyParser.json(), async (req: any, res: any) => {
         const { phoneNumber, verifiedName, projectId, manualWabaId, manualToken } = req.body;
         try {
@@ -2613,14 +2656,14 @@ export const registerBackofficeRoutes = (app: any) => {
 
             // Si el usuario provee un token manual (Super User), lo priorizamos
             const token = manualToken || config?.access_token;
-            if (!token) throw new Error('No se encontrÃ³ sesiÃ³n de Meta ni Token manual provisto.');
+            if (!token) throw new Error('No se encontró sesión de Meta ni Token manual provisto.');
 
             const wabaId = manualWabaId || config?.waba_id;
-            if (!wabaId) throw new Error('No se encontrÃ³ WABA ID. BÃºscalo en tu Panel de Meta o ingrÃ©salo manualmente.');
+            if (!wabaId) throw new Error('No se encontró WABA ID. Búscalo en tu Panel de Meta o ingrésalo manualmente.');
 
             const { addPhoneNumberToWaba, requestPhoneNumberOtp } = await import("../../apis/meta/metaDiscovery");
 
-            // 1. AÃ±adir el nÃºmero (esto nos da el Phone ID)
+            // 1. Añadir el número (esto nos da el Phone ID)
             const result = await addPhoneNumberToWaba(token, wabaId, phoneNumber, verifiedName);
             const phoneId = result.id;
 
@@ -2650,7 +2693,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 errorMessage = title ? `${title}: ${detail}` : detail;
             }
 
-            console.error('âŒ [Register-Step-1] Error:', metaError || error.message);
+            console.error('❌ [Register-Step-1] Error:', metaError || error.message);
             res.status(error.response?.status || 400).json({
                 success: false,
                 error: errorMessage
@@ -2685,7 +2728,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 errorMessage = title ? `${title}: ${detail}` : detail;
             }
 
-            console.error('âŒ [Register-Step-2] Error:', metaError || error.message);
+            console.error('❌ [Register-Step-2] Error:', metaError || error.message);
             res.status(error.response?.status || 400).json({
                 success: false,
                 error: errorMessage
@@ -2716,7 +2759,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const text = bodyComponent?.text || '';
             const varNames: string[] = [];
 
-            // DetecciÃ³n robusta: si tiene parameter_format='named' (case-insensitive)
+            // Detección robusta: si tiene parameter_format='named' (case-insensitive)
             const isNamed = (template.parameter_format || '').toLowerCase() === 'named';
             const bodyNamedParams = bodyComponent?.example?.body_text_named_params || [];
 
@@ -2724,8 +2767,8 @@ export const registerBackofficeRoutes = (app: any) => {
                 bodyNamedParams.forEach((p: any) => varNames.push(p.param_name));
             }
 
-            // Fallback: Si no es named o si varNames quedÃ³ vacÃ­o, escaneamos el texto del cuerpo.
-            // Esto sirve para Positional ({{1}}) o si es Named ({{nombre}}) pero no tenÃ­a ejemplos oficiales.
+            // Fallback: Si no es named o si varNames quedó vacío, escaneamos el texto del cuerpo.
+            // Esto sirve para Positional ({{1}}) o si es Named ({{nombre}}) pero no tenía ejemplos oficiales.
             if (varNames.length === 0 && text) {
                 const varRegex = /\{\{([^}]+)\}\}/g;
                 let match;
@@ -2742,7 +2785,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const hasMediaHeader = headerComp && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(headerComp.format);
             const headerExampleUrl = headerComp?.example?.header_handle?.[0] || '';
 
-            // 3. Detectar BUTTONS dinÃ¡micos
+            // 3. Detectar BUTTONS dinámicos
             const buttonsComp = template.components.find((c: any) => c.type === 'BUTTONS');
             const dynamicButtonIndices: number[] = [];
             if (buttonsComp && buttonsComp.buttons) {
@@ -2889,13 +2932,13 @@ export const registerBackofficeRoutes = (app: any) => {
 
         try {
             if (!templateName || (!chatId && !phone)) {
-                return res.status(400).json({ success: false, error: 'Faltan parÃ¡metros requeridos (templateName, chatId o phone).' });
+                return res.status(400).json({ success: false, error: 'Faltan parámetros requeridos (templateName, chatId o phone).' });
             }
 
             const rawTarget = phone || chatId || '';
             const targetPhone = String(rawTarget).split('@')[0].replace(/\D/g, '');
             if (!targetPhone) {
-                return res.status(400).json({ success: false, error: 'NÃºmero de telÃ©fono de destino no vÃ¡lido.' });
+                return res.status(400).json({ success: false, error: 'Número de teléfono de destino no válido.' });
             }
             const targetJid = String(rawTarget).includes('@') ? rawTarget : `${targetPhone}@s.whatsapp.net`;
 
@@ -2911,7 +2954,7 @@ export const registerBackofficeRoutes = (app: any) => {
             }
 
             const lang = languageCode || template.language || 'es';
-            console.log(`ðŸ“¡ [SINGLE-TEMPLATE] Enviando plantilla '${templateName}' (${lang}) a ${targetPhone}...`);
+            console.log(`¡ [SINGLE-TEMPLATE] Enviando plantilla '${templateName}' (${lang}) a ${targetPhone}...`);
 
             // Procesar componentes (en especial cabeceras multimedia) para subir directamente a Meta
             const finalComponents: any[] = JSON.parse(JSON.stringify(components || []));
@@ -2926,7 +2969,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
                             if (rawLink && typeof rawLink === 'string') {
                                 try {
-                                    console.log(`ðŸ“¥ [SINGLE-TEMPLATE] Procesando multimedia de cabecera: ${rawLink.substring(0, 60)}...`);
+                                    console.log(`📥 [SINGLE-TEMPLATE] Procesando multimedia de cabecera: ${rawLink.substring(0, 60)}...`);
                                     const isMetaUrl = rawLink.includes('fbcdn') || rawLink.includes('fbsbx') || rawLink.includes('facebook.com') || rawLink.includes('lookaside.fbsbx.com') || rawLink.includes('whatsapp.net') || rawLink.includes('whatsapp.com');
                                     const isDrive = rawLink.includes('drive.google.com');
 
@@ -2940,7 +2983,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
                                     const accessToken = provider.config?.access_token || '';
                                     const downloadHeaders: any = {
-                                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/120.0.0.0 Safari/537.36',
+                                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/120.0.0.0 Safari/120.0.0.0',
                                         'Accept': '*/*'
                                     };
                                     if (isMetaUrl && accessToken) {
@@ -2987,9 +3030,9 @@ export const registerBackofficeRoutes = (app: any) => {
                                     if (uploadedMediaId) {
                                         delete param[formatType].link;
                                         param[formatType].id = uploadedMediaId;
-                                        console.log(`âœ… [SINGLE-TEMPLATE] Multimedia de cabecera subido exitosamente a Meta. Media ID: ${uploadedMediaId}`);
+                                        console.log(`✅ [SINGLE-TEMPLATE] Multimedia de cabecera subido exitosamente a Meta. Media ID: ${uploadedMediaId}`);
                                     } else {
-                                        // 2. Fallback: Servir desde nuestro propio dominio pÃºblico
+                                        // 2. Fallback: Servir desde nuestro propio dominio público
                                         let baseUrl = process.env.PROJECT_URL;
                                         if (!baseUrl) {
                                             const host = req.headers.host || '';
@@ -3001,11 +3044,11 @@ export const registerBackofficeRoutes = (app: any) => {
                                         }
                                         if (!baseUrl.startsWith('http')) baseUrl = `https://${baseUrl}`;
                                         param[formatType].link = `${baseUrl.replace(/\/$/, '')}/uploads/${filename}`;
-                                        console.log(`âœ… [SINGLE-TEMPLATE] Multimedia servido localmente en: ${param[formatType].link}`);
+                                        console.log(`✅ [SINGLE-TEMPLATE] Multimedia servido localmente en: ${param[formatType].link}`);
                                     }
                                 } catch (downloadErr: any) {
-                                    console.error(`âŒ [SINGLE-TEMPLATE] Error procesando multimedia de cabecera:`, downloadErr.message);
-                                    // Fallback: Si el link fallÃ³ y la plantilla original de Meta define header_handle
+                                    console.error(`❌ [SINGLE-TEMPLATE] Error procesando multimedia de cabecera:`, downloadErr.message);
+                                    // Fallback: Si el link falló y la plantilla original de Meta define header_handle
                                     const headerCompDef = template.components?.find((c: any) => c.type === 'HEADER');
                                     const rawHandle = headerCompDef?.example?.header_handle?.[0];
                                     if (rawHandle) {
@@ -3015,7 +3058,7 @@ export const registerBackofficeRoutes = (app: any) => {
                                         } else {
                                             param[formatType].handle = rawHandle;
                                         }
-                                        console.log(`âš ï¸ [SINGLE-TEMPLATE] Usando handle/link de ejemplo original de la plantilla: ${rawHandle}`);
+                                        console.log(`⚠️ [SINGLE-TEMPLATE] Usando handle/link de ejemplo original de la plantilla: ${rawHandle}`);
                                     }
                                 }
                             }
@@ -3046,12 +3089,12 @@ export const registerBackofficeRoutes = (app: any) => {
 
                 return res.json({ success: true, messageId: msgId });
             } else {
-                console.error('âŒ [SINGLE-TEMPLATE] Meta no devolviÃ³ un ID de mensaje:', resApi);
-                return res.status(400).json({ success: false, error: 'Meta no devolviÃ³ un ID de mensaje vÃ¡lido.', details: resApi });
+                console.error('❌ [SINGLE-TEMPLATE] Meta no devolvió un ID de mensaje:', resApi);
+                return res.status(400).json({ success: false, error: 'Meta no devolvió un ID de mensaje válido.', details: resApi });
             }
         } catch (error: any) {
             const errDetail = error?.response?.data || error?.message || error;
-            console.error('âŒ [SINGLE-TEMPLATE] Error enviando plantilla:', JSON.stringify(errDetail, null, 2));
+            console.error('❌ [SINGLE-TEMPLATE] Error enviando plantilla:', JSON.stringify(errDetail, null, 2));
             return res.status(500).json({ success: false, error: error?.response?.data?.error?.message || error.message || 'Error al enviar la plantilla' });
         }
     });
@@ -3121,7 +3164,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 chatsList = [];
             }
 
-            // Filtrar el nÃºmero de ejemplo
+            // Filtrar el número de ejemplo
             chatsList = chatsList.filter((chat: any) => {
                 const cleanPhone = chat.id.split('@')[0];
                 return cleanPhone !== '5491100000000';
@@ -3132,15 +3175,15 @@ export const registerBackofficeRoutes = (app: any) => {
             }
 
             // 2. Responder 202 de inmediato
-            res.status(202).json({ success: true, message: 'EnvÃ­o rÃ¡pido masivo iniciado.', total: chatsList.length });
+            res.status(202).json({ success: true, message: 'Envío rápido masivo iniciado.', total: chatsList.length });
 
-            // 3. Procesar envÃ­os en segundo plano
+            // 3. Procesar envíos en segundo plano
             (async () => {
                 const provider = (adapterProvider.constructor.name === 'MetaCloudProvider') ? adapterProvider : groupProvider;
                 const templates = await provider.getTemplates();
                 const template = templates.find((t: any) => t.name === templateName);
                 if (!template) {
-                    console.error(`âŒ [QUICK BULK] Plantilla ${templateName} no encontrada.`);
+                    console.error(`❌ [QUICK BULK] Plantilla ${templateName} no encontrada.`);
                     return;
                 }
 
@@ -3150,7 +3193,7 @@ export const registerBackofficeRoutes = (app: any) => {
                     bodyText = bodyComp.text || "";
                 }
 
-                const historyContent = `[CampaÃ±a RÃ¡pida: ${templateName}]\n${bodyText}`;
+                const historyContent = `[Campaña Rápida: ${templateName}]\n${bodyText}`;
 
                 // Construir componentes (como multimedia por defecto)
                 const components: any[] = [];
@@ -3165,10 +3208,10 @@ export const registerBackofficeRoutes = (app: any) => {
                         const isMetaUrl = mediaLink.includes('fbcdn') || mediaLink.includes('fbsbx') || mediaLink.includes('facebook.com') || mediaLink.includes('lookaside.fbsbx.com') || mediaLink.includes('whatsapp.net') || mediaLink.includes('whatsapp.com');
                         if (isMetaUrl) {
                             try {
-                                console.log(`ðŸ“¥ [QUICK BULK] Descargando multimedia de cabecera de Meta: ${mediaLink.substring(0, 50)}...`);
+                                console.log(`📥 [QUICK BULK] Descargando multimedia de cabecera de Meta: ${mediaLink.substring(0, 50)}...`);
                                 const accessToken = provider.config?.access_token || '';
                                 const downloadHeaders: any = {
-                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/120.0.0.0 Safari/537.36',
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/120.0.0.0 Safari/120.0.0.0',
                                     'Accept': '*/*'
                                 };
                                 if (accessToken) {
@@ -3211,7 +3254,7 @@ export const registerBackofficeRoutes = (app: any) => {
                                     const uploadedMediaId = await (provider as any).uploadMedia(downloadedPath);
                                     if (uploadedMediaId) {
                                         headerParamPayload = { id: uploadedMediaId };
-                                        console.log(`âœ… [QUICK BULK] Multimedia subida a Meta con Ã©xito. Media ID: ${uploadedMediaId}`);
+                                        console.log(`✅ [QUICK BULK] Multimedia subida a Meta con éxito. Media ID: ${uploadedMediaId}`);
                                     }
                                 }
 
@@ -3228,10 +3271,10 @@ export const registerBackofficeRoutes = (app: any) => {
                                     if (!baseUrl.startsWith('http')) baseUrl = `https://${baseUrl}`;
                                     const publicUrl = `${baseUrl.replace(/\/$/, '')}/uploads/${filename}`;
                                     headerParamPayload = { link: publicUrl };
-                                    console.log(`âœ… [QUICK BULK] Multimedia servida localmente en: ${publicUrl}`);
+                                    console.log(`✅ [QUICK BULK] Multimedia servida localmente en: ${publicUrl}`);
                                 }
                             } catch (downloadErr: any) {
-                                console.error(`âŒ [QUICK BULK] Error descargando multimedia de cabecera:`, downloadErr.message);
+                                console.error(`❌ [QUICK BULK] Error descargando multimedia de cabecera:`, downloadErr.message);
                             }
                         }
                     }
@@ -3259,7 +3302,7 @@ export const registerBackofficeRoutes = (app: any) => {
                             }]
                         });
                     } else {
-                        console.warn(`âš ï¸ [QUICK BULK] Plantilla ${templateName} tiene cabecera multimedia pero no fue posible resolver un parÃ¡metro vÃ¡lido.`);
+                        console.warn(`⚠️ [QUICK BULK] Plantilla ${templateName} tiene cabecera multimedia pero no fue posible resolver un parámetro válido.`);
                     }
                 }
 
@@ -3281,10 +3324,20 @@ export const registerBackofficeRoutes = (app: any) => {
                             sent++;
                         } else {
                             errors++;
+                            try {
+                                await depsHistoryHandler.saveMessage(chat.id, 'assistant', historyContent, 'text', undefined, undefined, null, 'whatsapp', projectId || undefined, undefined, undefined, 'failed');
+                            } catch (saveErr: any) {
+                                console.error('[QUICK BULK] Error al guardar mensaje fallido:', saveErr.message);
+                            }
                         }
                     } catch (e: any) {
                         errors++;
-                        console.error(`âŒ [QUICK BULK] Error de Meta para ${phone}:`, e.message || e);
+                        console.error(`❌ [QUICK BULK] Error de Meta para ${phone}:`, e.message || e);
+                        try {
+                            await depsHistoryHandler.saveMessage(chat.id, 'assistant', historyContent, 'text', undefined, undefined, null, 'whatsapp', projectId || undefined, undefined, undefined, 'failed');
+                        } catch (saveErr: any) {
+                            console.error('[QUICK BULK] Error al guardar mensaje fallido en catch:', saveErr.message);
+                        }
                     }
                     await new Promise(r => setTimeout(r, 200));
                 }
@@ -4791,6 +4844,45 @@ Hemos recibido tu pago con Ã©xito.
         }
     });
 
+    app.get('/api/backoffice/project-services', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const services = await depsHistoryHandler.getAllProjectServices(projectId);
+            
+            const { data: slugData } = await supabase
+                .from('settings')
+                .select('service_id, key, value')
+                .eq('project_id', projectId)
+                .in('key', ['CLIENT_SLUG', 'BOT_NAME', 'PHONE_NUMBER_ID']);
+            
+            const serviceMetadata: Record<string, any> = {};
+            services.forEach(s => {
+                serviceMetadata[s] = {
+                    id: s,
+                    name: s === 'default_service' ? 'Servicio Principal' : s,
+                    phone: ''
+                };
+            });
+            
+            slugData?.forEach((item: any) => {
+                const sId = item.service_id || 'default_service';
+                if (!serviceMetadata[sId]) {
+                    serviceMetadata[sId] = { id: sId, name: sId, phone: '' };
+                }
+                if (item.key === 'CLIENT_SLUG' || item.key === 'BOT_NAME') {
+                    serviceMetadata[sId].name = item.value;
+                } else if (item.key === 'PHONE_NUMBER_ID') {
+                    serviceMetadata[sId].phone = item.value;
+                }
+            });
+            
+            res.json({ success: true, services: Object.values(serviceMetadata) });
+        } catch (error: any) {
+            console.error('Error al obtener servicios del proyecto:', error.message);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
     app.get('/api/backoffice/settings', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
@@ -5333,6 +5425,247 @@ Hemos recibido tu pago con Ã©xito.
             const ok = await depsHistoryHandler.markNotificationsAsRead(projectId, serviceId, ids);
             res.json({ success: ok });
         } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    // API BASE DE DATOS Y RAG (INTEGRACIONES)
+    // ─────────────────────────────────────────────────────────────
+
+    /** GET /api/backoffice/database/settings — Obtener configuraciones del bot (si tiene sheets o docs) */
+    app.get('/api/backoffice/database/settings', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req);
+            const visibleServices = await getVisibleServiceIds(projectId, serviceId);
+            
+            let hasTables = false;
+            let hasRag = false;
+            
+            for (const sId of visibleServices) {
+                const hasSheetsSetting = await depsHistoryHandler.getSetting('SHEET_ID_UPDATE', projectId, sId);
+                const hasDocsSetting = await depsHistoryHandler.getSetting('DOCX_ID_UPDATE', projectId, sId);
+                if (hasSheetsSetting && hasSheetsSetting !== 'default' && hasSheetsSetting !== 'PENDING') {
+                    hasTables = true;
+                }
+                if (hasDocsSetting && hasDocsSetting !== 'default' && hasDocsSetting !== 'PENDING') {
+                    hasRag = true;
+                }
+            }
+
+            const isSuperAdmin = await depsHistoryHandler.getSetting('SUPER_ADMIN_MODE', projectId, serviceId);
+
+            res.json({
+                success: true,
+                hasTables,
+                hasRag,
+                isSuperAdmin: isSuperAdmin === 'true'
+            });
+        } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** GET /api/backoffice/database/tables — Obtener lista de tablas vinculadas al proyecto/servicio */
+    app.get('/api/backoffice/database/tables', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req);
+            const visibleServices = await getVisibleServiceIds(projectId, serviceId);
+
+            const { getTablesMetadata } = await import('../utils/databaseSync.js');
+            
+            let allTables: any[] = [];
+            for (const sId of visibleServices) {
+                const tables = await getTablesMetadata(projectId, sId);
+                tables.forEach((t: any) => {
+                    t.serviceId = sId;
+                });
+                allTables = allTables.concat(tables);
+            }
+
+            res.json({
+                success: true,
+                tables: allTables
+            });
+        } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** GET /api/backoffice/database/table/:tableName — Obtener filas de una tabla específica */
+    app.get('/api/backoffice/database/table/:tableName', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const { tableName } = req.params;
+
+            const { data, error } = await supabase
+                .from(tableName)
+                .select('*')
+                .order('created_at', { ascending: true });
+
+            if (error) throw error;
+
+            res.json({
+                success: true,
+                data
+            });
+        } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** POST /api/backoffice/database/table/:tableName/row — Agregar fila en base de datos y Google Sheet */
+    app.post('/api/backoffice/database/table/:tableName/row', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const { tableName } = req.params;
+            const rowData = req.body.row;
+            const { sheetId, sheetTitle, headers } = req.body;
+
+            if (!rowData || !sheetId || !sheetTitle || !headers) {
+                return res.status(400).json({ success: false, error: 'Parámetros incompletos.' });
+            }
+
+            // 1. Insertar en Supabase
+            const { error: insError } = await supabase
+                .from(tableName)
+                .insert(rowData);
+
+            if (insError) throw insError;
+
+            // 2. Sincronizar hacia Google Sheets
+            const { syncTableToGoogleSheet } = await import('../utils/databaseSync.js');
+            await syncTableToGoogleSheet(tableName, sheetId, sheetTitle, headers, projectId);
+
+            res.json({ success: true });
+        } catch (e: any) {
+            console.error('[DB-Sync] Error insertando fila:', e);
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** PUT /api/backoffice/database/table/:tableName/row/:id — Editar fila en base de datos y Google Sheet */
+    app.put('/api/backoffice/database/table/:tableName/row/:id', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const { tableName, id } = req.params;
+            const rowData = req.body.row;
+            const { sheetId, sheetTitle, headers } = req.body;
+
+            if (!rowData || !sheetId || !sheetTitle || !headers) {
+                return res.status(400).json({ success: false, error: 'Parámetros incompletos.' });
+            }
+
+            // 1. Actualizar en Supabase
+            const { error: updError } = await supabase
+                .from(tableName)
+                .update(rowData)
+                .eq('id', id);
+
+            if (updError) throw updError;
+
+            // 2. Sincronizar hacia Google Sheets
+            const { syncTableToGoogleSheet } = await import('../utils/databaseSync.js');
+            await syncTableToGoogleSheet(tableName, sheetId, sheetTitle, headers, projectId);
+
+            res.json({ success: true });
+        } catch (e: any) {
+            console.error('[DB-Sync] Error actualizando fila:', e);
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** DELETE /api/backoffice/database/table/:tableName/rows — Eliminar una o más filas en base de datos y Google Sheet */
+    app.delete('/api/backoffice/database/table/:tableName/rows', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const { tableName } = req.params;
+            const { ids, sheetId, sheetTitle, headers } = req.body;
+
+            if (!Array.isArray(ids) || ids.length === 0 || !sheetId || !sheetTitle || !headers) {
+                return res.status(400).json({ success: false, error: 'Parámetros de eliminación incompletos.' });
+            }
+
+            // 1. Eliminar en Supabase
+            const { error: delError } = await supabase
+                .from(tableName)
+                .delete()
+                .in('id', ids);
+
+            if (delError) throw delError;
+
+            // 2. Sincronizar hacia Google Sheets
+            const { syncTableToGoogleSheet } = await import('../utils/databaseSync.js');
+            await syncTableToGoogleSheet(tableName, sheetId, sheetTitle, headers, projectId);
+
+            res.json({ success: true });
+        } catch (e: any) {
+            console.error('[DB-Sync] Error eliminando filas:', e);
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** GET /api/backoffice/database/rag — Obtener metadatos de documentos RAG vinculados */
+    app.get('/api/backoffice/database/rag', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req);
+            const visibleServices = await getVisibleServiceIds(projectId, serviceId);
+
+            const { getRagDocsMetadata } = await import('../utils/databaseSync.js');
+            
+            let allDocs: any[] = [];
+            for (const sId of visibleServices) {
+                const docs = await getRagDocsMetadata(projectId, sId);
+                docs.forEach((d: any) => {
+                    d.serviceId = sId;
+                });
+                allDocs = allDocs.concat(docs);
+            }
+
+            res.json({
+                success: true,
+                docs: allDocs
+            });
+        } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** GET /api/backoffice/database/rag/:docId — Obtener texto de un documento RAG de Google Drive */
+    app.get('/api/backoffice/database/rag/:docId', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const { docId } = req.params;
+            const { getDriveDocText } = await import('../utils/databaseSync.js');
+            const text = await getDriveDocText(docId);
+
+            res.json({
+                success: true,
+                text
+            });
+        } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** PUT /api/backoffice/database/rag/:docId — Guardar texto modificado en Drive y re-indexar RAG */
+    app.put('/api/backoffice/database/rag/:docId', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req);
+            const { docId } = req.params;
+            const { text } = req.body;
+
+            if (text === undefined) {
+                return res.status(400).json({ success: false, error: 'Se requiere el contenido de texto.' });
+            }
+
+            const { saveDriveDocText } = await import('../utils/databaseSync.js');
+            await saveDriveDocText(docId, text, projectId, serviceId);
+
+            res.json({ success: true });
+        } catch (e: any) {
+            console.error('[DB-Sync] Error actualizando documento RAG:', e);
             res.status(500).json({ success: false, error: e.message });
         }
     });

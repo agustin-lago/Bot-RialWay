@@ -655,7 +655,41 @@ class MetaCloudProvider extends ProviderClass {
      * Envía mensajes a través de la API oficial de Meta
      */
     public async sendMessage(number: string, message: string, options: any = {}): Promise<any> {
-        const { phone_number_id, access_token } = this.config;
+        let phone_number_id = this.config.phone_number_id;
+        let access_token = this.config.access_token;
+
+        try {
+            const { HistoryHandler } = await import('../db/historyHandler');
+            const targetProjectId = options?.projectId || HistoryHandler.PROJECT_IDENTIFIER;
+            let targetServiceId = options?.serviceId;
+
+            if (!targetServiceId && number) {
+                const jid = number.includes('@') ? number.split('@')[0] : number;
+                const supabase = HistoryHandler.getSupabase();
+                if (supabase) {
+                    const { data: chatData } = await supabase
+                        .from('chats')
+                        .select('service_id')
+                        .eq('id', jid)
+                        .eq('project_id', targetProjectId)
+                        .maybeSingle();
+                    
+                    if (chatData?.service_id) {
+                        targetServiceId = chatData.service_id;
+                    }
+                }
+            }
+
+            if (targetServiceId && targetServiceId !== 'default_service') {
+                const tenantOnboarding = await HistoryHandler.getMetaOnboardingData(targetProjectId, false, targetServiceId);
+                if (tenantOnboarding?.whatsappToken && tenantOnboarding?.phoneNumberId) {
+                    access_token = tenantOnboarding.whatsappToken;
+                    phone_number_id = tenantOnboarding.phoneNumberId;
+                }
+            }
+        } catch (e: any) {
+            console.error('[MetaCloudProvider] Error resolviendo credenciales dinámicas en sendMessage:', e.message);
+        }
 
         if (!phone_number_id || !access_token) {
             console.error('❌ [MetaCloudProvider] Error: Falta phone_number_id o access_token en la configuración');
@@ -995,28 +1029,41 @@ class MetaCloudProvider extends ProviderClass {
                     // 0. MANEJO DE ACTUALIZACIONES DE ESTADO (statuses)
                     if (statuses && Array.isArray(statuses)) {
                         for (const status of statuses) {
-                            // console.log(`📡 [MetaCloudProvider] Webhook de estado para ${status.recipient_id} (${status.id}): ${status.status}`);
-                            if (status.status === 'failed' && status.errors) {
-                                for (const err of status.errors) {
-                                    console.error(`❌ [MetaCloudProvider] Error de entrega para ${status.recipient_id} (ID: ${status.id}): [Código ${err.code}] ${err.message} - ${err.error_data?.details || ''}`);
-                                    
-                                    // Registrar notificación de error de entrega (asíncrono)
-                                    const errorObj = {
-                                        code: err.code,
-                                        message: `${err.message} - ${err.error_data?.details || ''}`
-                                    };
-                                    await this.handleMetaError(errorObj, status.recipient_id, { isBulk: false });
+                            try {
+                                const { HistoryHandler } = await import('../db/historyHandler.js');
+                                const phoneNumberId = this.config.phone_number_id || this.config.numberId;
+                                const resolvedProject = await HistoryHandler.getProjectIdByRecipient(phoneNumberId);
+                                const resolvedService = await HistoryHandler.getServiceIdByRecipient(phoneNumberId);
+                                const projectId = resolvedProject || HistoryHandler.PROJECT_IDENTIFIER;
+                                const serviceId = resolvedService || HistoryHandler.SERVICE_IDENTIFIER;
+
+                                if (status.status === 'failed' && status.errors) {
+                                    for (const err of status.errors) {
+                                        console.error(`❌ [MetaCloudProvider] Error de entrega para ${status.recipient_id} (ID: ${status.id}): [Código ${err.code}] ${err.message} - ${err.error_data?.details || ''}`);
+                                        
+                                        // Registrar notificación de error de entrega (asíncrono)
+                                        const errorObj = {
+                                            code: err.code,
+                                            message: `${err.message} - ${err.error_data?.details || ''}`
+                                        };
+                                        await this.handleMetaError(errorObj, status.recipient_id, { isBulk: false });
+                                    }
                                 }
-                            }
-                            if (status.status === 'read' || status.status === 'delivered') {
-                                try {
-                                    const { historyEvents } = await import('../db/historyHandler');
-                                    historyEvents.emit('message_status_update', {
-                                        externalId: status.id,
-                                        chatId: status.recipient_id,
-                                        status: status.status
-                                    });
-                                } catch (e) { console.warn('[MetaCloudProvider] historyEvents emit failed', e); }
+
+                                // Actualizar el estado del mensaje en la base de datos
+                                await HistoryHandler.updateMessageStatus(status.id, status.status, projectId);
+
+                                // Emitir actualización de estado de mensaje
+                                const { historyEvents } = await import('../db/historyHandler.js');
+                                historyEvents.emit('message_status_update', {
+                                    externalId: status.id,
+                                    chatId: status.recipient_id,
+                                    status: status.status,
+                                    projectId,
+                                    serviceId
+                                });
+                            } catch (e) {
+                                console.warn('[MetaCloudProvider] Error procesando webhook de estado:', e);
                             }
                         }
                     }
