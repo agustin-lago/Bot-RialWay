@@ -302,7 +302,7 @@ export async function saveDriveDocText(docId: string, newText: string, projectId
         const newName = name.replace(/\.docx?$/i, '.txt');
         await drive.files.update({
             fileId: docId,
-            resource: { name: newName, mimeType: "text/plain" },
+            requestBody: { name: newName, mimeType: "text/plain" },
             media: {
                 mimeType: "text/plain",
                 body: newText
