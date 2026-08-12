@@ -2,6 +2,8 @@ import { google } from "googleapis";
 import { createGoogleAuth } from "../../apis/google/googleAuth.js";
 import { HistoryHandler } from "../../db/historyHandler.js";
 import { updateAllSheets } from "../../apis/google/updateSheet.js";
+import fs from "fs";
+import path from "path";
 
 const getSheetsClient = () => {
     const auth = createGoogleAuth(["https://www.googleapis.com/auth/spreadsheets"]);
@@ -209,9 +211,10 @@ export async function getRagDocsMetadata(projectId: string, serviceId?: string):
 export async function getDriveDocText(docId: string): Promise<string> {
     const drive = getDriveClient();
     
-    // 1. Obtener tipo de documento
-    const meta = await drive.files.get({ fileId: docId, fields: "mimeType" });
+    // 1. Obtener tipo de documento y nombre
+    const meta = await drive.files.get({ fileId: docId, fields: "name, mimeType" });
     const mimeType = meta.data.mimeType;
+    const name = meta.data.name || "";
 
     // 2. Si es Google Doc nativo, exportar como texto plano
     if (mimeType === "application/vnd.google-apps.document") {
@@ -220,6 +223,31 @@ export async function getDriveDocText(docId: string): Promise<string> {
             mimeType: "text/plain"
         });
         return typeof res.data === "string" ? res.data : JSON.stringify(res.data);
+    } else if (name.toLowerCase().endsWith('.docx') || name.toLowerCase().endsWith('.doc')) {
+        // Es un archivo docx binario en Drive.
+        // Descargarlo a un archivo temporal en "temp" y parsearlo con mammoth
+        if (!fs.existsSync("temp")) {
+            fs.mkdirSync("temp", { recursive: true });
+        }
+        const tempPath = path.join("temp", `temp_rag_${docId}.docx`);
+        const dest = fs.createWriteStream(tempPath);
+        const res = await drive.files.get(
+            { fileId: docId, alt: "media" },
+            { responseType: "stream" }
+        );
+        await new Promise((resolve, reject) => {
+            res.data
+                .on("end", resolve)
+                .on("error", reject)
+                .pipe(dest);
+        });
+        
+        const mammoth = await import("mammoth");
+        const buffer = fs.readFileSync(tempPath);
+        const result = await mammoth.extractRawText({ buffer });
+        
+        try { fs.unlinkSync(tempPath); } catch {}
+        return result.value || "";
     } else {
         // Archivo plano en Drive (como un .txt)
         const res = await drive.files.get({
@@ -232,8 +260,9 @@ export async function getDriveDocText(docId: string): Promise<string> {
 
 export async function saveDriveDocText(docId: string, newText: string, projectId: string, serviceId?: string) {
     const drive = getDriveClient();
-    const meta = await drive.files.get({ fileId: docId, fields: "mimeType" });
+    const meta = await drive.files.get({ fileId: docId, fields: "name, mimeType" });
     const mimeType = meta.data.mimeType;
+    const name = meta.data.name || "";
 
     if (mimeType === "application/vnd.google-apps.document") {
         const docs = getDocsClient();
@@ -265,6 +294,18 @@ export async function saveDriveDocText(docId: string, newText: string, projectId
             documentId: docId,
             requestBody: {
                 requests
+            }
+        });
+    } else if (name.toLowerCase().endsWith('.docx') || name.toLowerCase().endsWith('.doc')) {
+        // Es un archivo docx binario. Dado que guardamos texto plano, lo convertimos a un archivo .txt en Drive 
+        // para que sea compatible y no se corrompa el binario original.
+        const newName = name.replace(/\.docx?$/i, '.txt');
+        await drive.files.update({
+            fileId: docId,
+            resource: { name: newName, mimeType: "text/plain" },
+            media: {
+                mimeType: "text/plain",
+                body: newText
             }
         });
     } else {
