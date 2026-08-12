@@ -29,7 +29,7 @@ async function _initSystemConfigPage() {
         const prevBtn = document.getElementById('prompt-search-prev-btn');
         const nextBtn = document.getElementById('prompt-search-next-btn');
 
-        function clearSearch() {
+        const clearSearch = () => {
             searchMarks.forEach(m => m.clear());
             searchMarks = [];
             if (currentActiveMark) {
@@ -42,7 +42,7 @@ async function _initSystemConfigPage() {
             if (searchNav) searchNav.style.display = 'none';
         }
 
-        function runSearch() {
+        const runSearch = () => {
             clearSearch();
             const query = searchInput ? searchInput.value : '';
             if (!query || !editor) return;
@@ -73,7 +73,7 @@ async function _initSystemConfigPage() {
             }
         }
 
-        function highlightActiveMatch() {
+        const highlightActiveMatch = () => {
             if (currentActiveMark) {
                 currentActiveMark.clear();
                 currentActiveMark = null;
@@ -89,13 +89,13 @@ async function _initSystemConfigPage() {
             }
         }
 
-        function nextMatch() {
+        const nextMatch = () => {
             if (searchMatches.length === 0) return;
             currentSearchIndex = (currentSearchIndex + 1) % searchMatches.length;
             highlightActiveMatch();
         }
 
-        function prevMatch() {
+        const prevMatch = () => {
             if (searchMatches.length === 0) return;
             currentSearchIndex = (currentSearchIndex - 1 + searchMatches.length) % searchMatches.length;
             highlightActiveMatch();
