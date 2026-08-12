@@ -28,6 +28,7 @@ if (googleProxyUrl) {
             opts.url = opts.url.replace("https://sheets.googleapis.com", googleProxyUrl);
             opts.url = opts.url.replace("https://calendar.googleapis.com", googleProxyUrl);
             opts.url = opts.url.replace("https://drive.googleapis.com", googleProxyUrl);
+            opts.url = opts.url.replace("https://docs.googleapis.com", googleProxyUrl);
 
             if (opts.url !== originalUrlStr) {
                 opts.headers = opts.headers || {};

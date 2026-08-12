@@ -1106,22 +1106,6 @@ function generateMessageHtml(m, isNew = false) {
             ${deleteBtn}
             <div class="msg-content">${contentHtml}</div>
             <span class="msg-time">${time}${checkHtml}</span>
-            ${hasFailed ? `
-                <div class="msg-failed-indicator" style="
-                    position: absolute;
-                    ${m.role === 'assistant' ? 'left: -32px;' : 'right: -32px;'}
-                    top: 50%;
-                    transform: translateY(-50%);
-                    color: #ef4444;
-                    font-size: 1.4rem;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    cursor: help;
-                " title="Fallo de entrega de Meta (Excedió ventana 24hs o falta de pago). Revisa la sección de Notificaciones.">
-                    ❌
-                </div>
-            ` : ''}
         </div>
     `;
 }

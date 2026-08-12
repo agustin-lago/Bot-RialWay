@@ -601,6 +601,21 @@ export const processBulkTemplate = async (req: any, res: any) => {
                 }
             }
 
+            // --- RENDERIZAR TEXTO PARA EL HISTORIAL (Antes de intentar enviar) ---
+            let renderedText = "";
+            const bodyComp = template.components.find((c: any) => c.type === 'BODY');
+            if (bodyComp) {
+                renderedText = bodyComp.text || "";
+                // Reemplazar variables (soporta {{1}} y {{nombre}})
+                const varRegex = /\{\{(\w+)\}\}/g;
+                renderedText = renderedText.replace(varRegex, (match, p1) => {
+                    // Intentar obtener el valor de la fila (case-insensitive)
+                    const val = row[p1] || row[p1.toLowerCase()] || row[p1.toUpperCase()] || match;
+                    return String(val);
+                });
+            }
+            const historyContent = `[Campaña: ${templateName}]\n${renderedText}`;
+
             try {
                 console.log(`[BULK] Preparando envío para ${phone}. Componentes:`, JSON.stringify(components, null, 2));
                 const resApi = await provider.sendTemplate(phone, templateName, languageCode || 'es_AR', components, { isBulk: true });
@@ -619,23 +634,6 @@ export const processBulkTemplate = async (req: any, res: any) => {
                         }
                     }
 
-                    // --- RENDERIZAR TEXTO PARA EL ASISTENTE ---
-                    let renderedText = "";
-                    const bodyComp = template.components.find((c: any) => c.type === 'BODY');
-                    if (bodyComp) {
-                        renderedText = bodyComp.text || "";
-                        // Reemplazar variables (soporta {{1}} y {{nombre}})
-                        const varRegex = /\{\{(\w+)\}\}/g;
-                        renderedText = renderedText.replace(varRegex, (match, p1) => {
-                            // Intentar obtener el valor de la fila (case-insensitive)
-                            const val = row[p1] || row[p1.toLowerCase()] || row[p1.toUpperCase()] || match;
-                            return String(val);
-                        });
-                    }
-
-                    // Guardar con un prefijo informativo para el asistente
-                    const historyContent = `[Campaña: ${templateName}]\n${renderedText}`;
-
                     await depsHistoryHandler.saveMessage(phone, 'assistant', historyContent, 'text', undefined, undefined, msgId, 'whatsapp', projectId, serviceId);
                     sent++;
                 } else {
@@ -652,17 +650,6 @@ export const processBulkTemplate = async (req: any, res: any) => {
                 const errorData = e?.response?.data || e.message || e;
                 console.error(`❌ [BULK] Error de Meta para ${phone}:`, JSON.stringify(errorData, null, 2));
                 try {
-                    let renderedText = "";
-                    const bodyComp = template.components.find((c: any) => c.type === 'BODY');
-                    if (bodyComp) {
-                        renderedText = bodyComp.text || "";
-                        const varRegex = /\{\{(\w+)\}\}/g;
-                        renderedText = renderedText.replace(varRegex, (match, p1) => {
-                            const val = row[p1] || row[p1.toLowerCase()] || row[p1.toUpperCase()] || match;
-                            return String(val);
-                        });
-                    }
-                    const historyContent = `[Campaña: ${templateName}]\n${renderedText}`;
                     await depsHistoryHandler.saveMessage(phone, 'assistant', historyContent, 'text', undefined, undefined, null, 'whatsapp', projectId, serviceId, undefined, 'failed');
                 } catch (saveErr: any) {
                     console.error('[BULK] Error al guardar mensaje fallido en catch:', saveErr.message);
@@ -4790,6 +4777,214 @@ Hemos recibido tu pago con éxito.
             const ok = await depsHistoryHandler.markNotificationsAsRead(projectId, serviceId, ids);
             res.json({ success: ok });
         } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    // API BASE DE DATOS Y RAG (INTEGRACIONES)
+    // ─────────────────────────────────────────────────────────────
+
+    /** GET /api/backoffice/database/settings — Obtener configuraciones del bot (si tiene sheets o docs) */
+    app.get('/api/backoffice/database/settings', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req);
+            
+            const hasSheetsSetting = await depsHistoryHandler.getSetting('SHEET_ID_UPDATE', projectId, serviceId);
+            const hasDocsSetting = await depsHistoryHandler.getSetting('DOCX_ID_UPDATE', projectId, serviceId);
+
+            res.json({
+                success: true,
+                hasTables: !!hasSheetsSetting && hasSheetsSetting !== 'default' && hasSheetsSetting !== 'PENDING',
+                hasRag: !!hasDocsSetting && hasDocsSetting !== 'default' && hasDocsSetting !== 'PENDING'
+            });
+        } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** GET /api/backoffice/database/tables — Obtener lista de tablas vinculadas al proyecto/servicio */
+    app.get('/api/backoffice/database/tables', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req);
+
+            const { getTablesMetadata } = await import('../utils/databaseSync.js');
+            const tables = await getTablesMetadata(projectId, serviceId);
+
+            res.json({
+                success: true,
+                tables
+            });
+        } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** GET /api/backoffice/database/table/:tableName — Obtener filas de una tabla específica */
+    app.get('/api/backoffice/database/table/:tableName', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const { tableName } = req.params;
+
+            const { data, error } = await supabase
+                .from(tableName)
+                .select('*')
+                .order('created_at', { ascending: true });
+
+            if (error) throw error;
+
+            res.json({
+                success: true,
+                data
+            });
+        } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** POST /api/backoffice/database/table/:tableName/row — Agregar fila en base de datos y Google Sheet */
+    app.post('/api/backoffice/database/table/:tableName/row', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const { tableName } = req.params;
+            const rowData = req.body.row;
+            const { sheetId, sheetTitle, headers } = req.body;
+
+            if (!rowData || !sheetId || !sheetTitle || !headers) {
+                return res.status(400).json({ success: false, error: 'Parámetros incompletos.' });
+            }
+
+            // 1. Insertar en Supabase
+            const { error: insError } = await supabase
+                .from(tableName)
+                .insert(rowData);
+
+            if (insError) throw insError;
+
+            // 2. Sincronizar hacia Google Sheets
+            const { syncTableToGoogleSheet } = await import('../utils/databaseSync.js');
+            await syncTableToGoogleSheet(tableName, sheetId, sheetTitle, headers, projectId);
+
+            res.json({ success: true });
+        } catch (e: any) {
+            console.error('[DB-Sync] Error insertando fila:', e);
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** PUT /api/backoffice/database/table/:tableName/row/:id — Editar fila en base de datos y Google Sheet */
+    app.put('/api/backoffice/database/table/:tableName/row/:id', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const { tableName, id } = req.params;
+            const rowData = req.body.row;
+            const { sheetId, sheetTitle, headers } = req.body;
+
+            if (!rowData || !sheetId || !sheetTitle || !headers) {
+                return res.status(400).json({ success: false, error: 'Parámetros incompletos.' });
+            }
+
+            // 1. Actualizar en Supabase
+            const { error: updError } = await supabase
+                .from(tableName)
+                .update(rowData)
+                .eq('id', id);
+
+            if (updError) throw updError;
+
+            // 2. Sincronizar hacia Google Sheets
+            const { syncTableToGoogleSheet } = await import('../utils/databaseSync.js');
+            await syncTableToGoogleSheet(tableName, sheetId, sheetTitle, headers, projectId);
+
+            res.json({ success: true });
+        } catch (e: any) {
+            console.error('[DB-Sync] Error actualizando fila:', e);
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** DELETE /api/backoffice/database/table/:tableName/rows — Eliminar una o más filas en base de datos y Google Sheet */
+    app.delete('/api/backoffice/database/table/:tableName/rows', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const { tableName } = req.params;
+            const { ids, sheetId, sheetTitle, headers } = req.body;
+
+            if (!Array.isArray(ids) || ids.length === 0 || !sheetId || !sheetTitle || !headers) {
+                return res.status(400).json({ success: false, error: 'Parámetros de eliminación incompletos.' });
+            }
+
+            // 1. Eliminar en Supabase
+            const { error: delError } = await supabase
+                .from(tableName)
+                .delete()
+                .in('id', ids);
+
+            if (delError) throw delError;
+
+            // 2. Sincronizar hacia Google Sheets
+            const { syncTableToGoogleSheet } = await import('../utils/databaseSync.js');
+            await syncTableToGoogleSheet(tableName, sheetId, sheetTitle, headers, projectId);
+
+            res.json({ success: true });
+        } catch (e: any) {
+            console.error('[DB-Sync] Error eliminando filas:', e);
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** GET /api/backoffice/database/rag — Obtener metadatos de documentos RAG vinculados */
+    app.get('/api/backoffice/database/rag', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req);
+
+            const { getRagDocsMetadata } = await import('../utils/databaseSync.js');
+            const docs = await getRagDocsMetadata(projectId, serviceId);
+
+            res.json({
+                success: true,
+                docs
+            });
+        } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** GET /api/backoffice/database/rag/:docId — Obtener texto de un documento RAG de Google Drive */
+    app.get('/api/backoffice/database/rag/:docId', backofficeAuth, async (req: any, res: any) => {
+        try {
+            const { docId } = req.params;
+            const { getDriveDocText } = await import('../utils/databaseSync.js');
+            const text = await getDriveDocText(docId);
+
+            res.json({
+                success: true,
+                text
+            });
+        } catch (e: any) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    /** PUT /api/backoffice/database/rag/:docId — Guardar texto modificado en Drive y re-indexar RAG */
+    app.put('/api/backoffice/database/rag/:docId', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
+        try {
+            const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req);
+            const { docId } = req.params;
+            const { text } = req.body;
+
+            if (text === undefined) {
+                return res.status(400).json({ success: false, error: 'Se requiere el contenido de texto.' });
+            }
+
+            const { saveDriveDocText } = await import('../utils/databaseSync.js');
+            await saveDriveDocText(docId, text, projectId, serviceId);
+
+            res.json({ success: true });
+        } catch (e: any) {
+            console.error('[DB-Sync] Error actualizando documento RAG:', e);
             res.status(500).json({ success: false, error: e.message });
         }
     });

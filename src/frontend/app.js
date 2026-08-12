@@ -4,6 +4,7 @@
 
 const ROUTES = {
     '/backoffice':               '/js/backoffice/backoffice.view.js',
+    '/database':                 '/js/database/database.view.js',
     '/dashboard':                '/js/dashboard/dashboard.view.js',
     '/conexion':                 '/js/conexion/conexion.view.js',
     '/crm':                      '/js/crm/crm.view.js',
@@ -94,7 +95,7 @@ function highlightActiveNav(path) {
     });
     // Integraciones flyout button
     const intBtn = document.getElementById('nav-integraciones-btn');
-    const isIntegrationPath = ['/crm', '/crm-tareas', '/meta', '/mercado-libre', '/mercado-libre-productos', '/mercado-libre-bot', '/mercado-pago', '/lista-negra', '/webhooks'].includes(path);
+    const isIntegrationPath = ['/crm', '/crm-tareas', '/meta', '/mercado-libre', '/mercado-libre-productos', '/mercado-libre-bot', '/mercado-pago', '/lista-negra', '/webhooks', '/database'].includes(path);
     if (intBtn) intBtn.classList.toggle('active', isIntegrationPath);
     // Dropdown links de Integraciones
     document.querySelectorAll('#nav-integraciones-btn .nav-dropdown-link[data-route]').forEach(item => {
