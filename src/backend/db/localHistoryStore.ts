@@ -73,6 +73,7 @@ export interface LocalMessage {
     content: string;
     type: string;
     external_id: string | null;
+    status?: string;
     created_at: string;
 }
 
@@ -353,7 +354,8 @@ export class LocalHistoryStore {
         externalId: string | null,
         projectId: string,
         serviceId?: string,
-        rawPayload?: any
+        rawPayload?: any,
+        status: string = 'sent'
     ): Promise<LocalMessage> {
         // Ensure chat exists
         const chat = await this.getOrCreateChat(chatId, "whatsapp", contactName, userId, projectId);
@@ -376,6 +378,7 @@ export class LocalHistoryStore {
             content: content,
             type: type,
             external_id: externalId,
+            status: status,
             created_at: nowStr
         };
 
@@ -912,5 +915,16 @@ export class LocalHistoryStore {
             notifications = notifications.filter(n => n.service_id === serviceId);
         }
         return notifications.filter(n => !n.read).length;
+    }
+
+    static async updateMessageStatus(externalId: string, status: string, projectId: string): Promise<boolean> {
+        const messages = this.getMessagesList(projectId);
+        const idx = messages.findIndex(m => m.external_id === externalId || m.id === externalId);
+        if (idx !== -1) {
+            messages[idx].status = status;
+            this.saveMessagesList(projectId, messages);
+            return true;
+        }
+        return false;
     }
 }

@@ -226,6 +226,10 @@ socket.on('message_status_update', ({ externalId, chatId, status }) => {
     if (!msg) return;
     msg.status = status;
     if (normChatId(chatId) !== normChatId(activeChatId)) return;
+    if (status === 'failed') {
+        renderMessages();
+        return;
+    }
     // Patch only the icon in place - avoids full re-render and scroll jump
     const dataId = CSS.escape(String(msg.id || msg.external_id || ''));
     const msgEl = document.querySelector(`.msg[data-id="${dataId}"]`);
@@ -1091,7 +1095,8 @@ function generateMessageHtml(m, isNew = false) {
     ` : '';
 
     let checkHtml = '';
-    if (m._failed) checkHtml = ' <i class="fas fa-exclamation-circle" style="color:#ef4444;font-size:0.62rem;"></i>';
+    const hasFailed = m._failed || m.status === 'failed';
+    if (hasFailed) checkHtml = ' <i class="fas fa-times-circle" style="color:#ef4444;font-size:0.62rem;"></i>';
     else if (m._pending) checkHtml = ' <i class="fas fa-check" style="opacity:0.55;font-size:0.62rem;"></i>';
     else if (m.status === 'read') checkHtml = ' <i class="fas fa-check-double" style="color:#53bdeb;font-size:0.62rem;"></i>';
     else checkHtml = ' <i class="fas fa-check-double" style="opacity:0.75;font-size:0.62rem;"></i>';
@@ -1101,6 +1106,22 @@ function generateMessageHtml(m, isNew = false) {
             ${deleteBtn}
             <div class="msg-content">${contentHtml}</div>
             <span class="msg-time">${time}${checkHtml}</span>
+            ${hasFailed ? `
+                <div class="msg-failed-indicator" style="
+                    position: absolute;
+                    ${m.role === 'assistant' ? 'left: -32px;' : 'right: -32px;'}
+                    top: 50%;
+                    transform: translateY(-50%);
+                    color: #ef4444;
+                    font-size: 1.4rem;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    cursor: help;
+                " title="Fallo de entrega de Meta (Excedió ventana 24hs o falta de pago). Revisa la sección de Notificaciones.">
+                    ❌
+                </div>
+            ` : ''}
         </div>
     `;
 }

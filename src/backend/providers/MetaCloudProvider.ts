@@ -987,28 +987,41 @@ class MetaCloudProvider extends ProviderClass {
                     // 0. MANEJO DE ACTUALIZACIONES DE ESTADO (statuses)
                     if (statuses && Array.isArray(statuses)) {
                         for (const status of statuses) {
-                            // console.log(`📡 [MetaCloudProvider] Webhook de estado para ${status.recipient_id} (${status.id}): ${status.status}`);
-                            if (status.status === 'failed' && status.errors) {
-                                for (const err of status.errors) {
-                                    console.error(`❌ [MetaCloudProvider] Error de entrega para ${status.recipient_id} (ID: ${status.id}): [Código ${err.code}] ${err.message} - ${err.error_data?.details || ''}`);
-                                    
-                                    // Registrar notificación de error de entrega (asíncrono)
-                                    const errorObj = {
-                                        code: err.code,
-                                        message: `${err.message} - ${err.error_data?.details || ''}`
-                                    };
-                                    await this.handleMetaError(errorObj, status.recipient_id, { isBulk: false });
+                            try {
+                                const { HistoryHandler } = await import('../db/historyHandler.js');
+                                const phoneNumberId = this.config.phone_number_id || this.config.numberId;
+                                const resolvedProject = await HistoryHandler.getProjectIdByRecipient(phoneNumberId);
+                                const resolvedService = await HistoryHandler.getServiceIdByRecipient(phoneNumberId);
+                                const projectId = resolvedProject || HistoryHandler.PROJECT_IDENTIFIER;
+                                const serviceId = resolvedService || HistoryHandler.SERVICE_IDENTIFIER;
+
+                                if (status.status === 'failed' && status.errors) {
+                                    for (const err of status.errors) {
+                                        console.error(`❌ [MetaCloudProvider] Error de entrega para ${status.recipient_id} (ID: ${status.id}): [Código ${err.code}] ${err.message} - ${err.error_data?.details || ''}`);
+                                        
+                                        // Registrar notificación de error de entrega (asíncrono)
+                                        const errorObj = {
+                                            code: err.code,
+                                            message: `${err.message} - ${err.error_data?.details || ''}`
+                                        };
+                                        await this.handleMetaError(errorObj, status.recipient_id, { isBulk: false });
+                                    }
                                 }
-                            }
-                            if (status.status === 'read' || status.status === 'delivered') {
-                                try {
-                                    const { historyEvents } = await import('../db/historyHandler');
-                                    historyEvents.emit('message_status_update', {
-                                        externalId: status.id,
-                                        chatId: status.recipient_id,
-                                        status: status.status
-                                    });
-                                } catch (e) { console.warn('[MetaCloudProvider] historyEvents emit failed', e); }
+
+                                // Actualizar el estado del mensaje en la base de datos
+                                await HistoryHandler.updateMessageStatus(status.id, status.status, projectId);
+
+                                // Emitir actualización de estado de mensaje
+                                const { historyEvents } = await import('../db/historyHandler.js');
+                                historyEvents.emit('message_status_update', {
+                                    externalId: status.id,
+                                    chatId: status.recipient_id,
+                                    status: status.status,
+                                    projectId,
+                                    serviceId
+                                });
+                            } catch (e) {
+                                console.warn('[MetaCloudProvider] Error procesando webhook de estado:', e);
                             }
                         }
                     }

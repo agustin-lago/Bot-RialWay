@@ -205,6 +205,7 @@ export class HistoryHandler {
                     content TEXT NOT NULL,
                     type TEXT DEFAULT 'text',
                     external_id TEXT UNIQUE,
+                    status TEXT DEFAULT 'sent',
                     created_at TIMESTAMPTZ DEFAULT NOW(),
                     FOREIGN KEY (chat_id, project_id) REFERENCES chats(id, project_id) ON UPDATE CASCADE ON DELETE CASCADE
                 );
@@ -487,6 +488,13 @@ export class HistoryHandler {
                             console.log(`🔧 Agregando columna external_id a messages...`);
                             await supabase.rpc('exec_sql', { query: `ALTER TABLE messages ADD COLUMN IF NOT EXISTS external_id TEXT;` });
                             await supabase.rpc('exec_sql', { query: `CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_external_id ON messages (external_id);` });
+                        }
+
+                        // Migración para status en mensajes
+                        const { error: statusColErr } = await supabase.from('messages').select('status').limit(1);
+                        if (statusColErr && statusColErr.code === '42703') {
+                            console.log(`🔧 Agregando columna status a messages...`);
+                            await supabase.rpc('exec_sql', { query: `ALTER TABLE messages ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'sent';` });
                         }
 
                         // Migración para assigned_to
@@ -994,10 +1002,11 @@ export class HistoryHandler {
     /**
      * Guarda un mensaje en la base de datos
      */
-    static async saveMessage(rawChatId: string, role: 'user' | 'assistant' | 'system', content: string, type: string = 'text', contactName: string | null = null, userId: string | null = null, external_id: string | null = null, platformType?: 'whatsapp' | 'webchat' | 'instagram' | 'messenger', forcedProjectId?: string, forcedServiceId?: string, rawPayload?: any) {
+    static async saveMessage(rawChatId: string, role: 'user' | 'assistant' | 'system', content: string, type: string = 'text', contactName: string | null = null, userId: string | null = null, external_id: string | null = null, platformType?: 'whatsapp' | 'webchat' | 'instagram' | 'messenger', forcedProjectId?: string, forcedServiceId?: string, rawPayload?: any, status?: string) {
         const chatId = this.normalizeId(rawChatId);
         const currentProjectId = forcedProjectId || this.PROJECT_IDENTIFIER;
         const currentServiceId = forcedServiceId || this.SERVICE_IDENTIFIER;
+        const messageStatus = status || 'sent';
 
         // Registrar en cache si es respuesta del bot/operador para evitar falsas intervenciones manuales
         if (role === 'assistant' && content) {
@@ -1024,8 +1033,8 @@ export class HistoryHandler {
         }
 
         if (process.env.STORAGE_MODE === "local") {
-            const msg = await LocalHistoryStore.saveMessage(chatId, role, content, type, contactName, userId, external_id, currentProjectId, currentServiceId);
-            historyEvents.emit('message_saved', { chatId, projectId: currentProjectId, role, content, type });
+            const msg = await LocalHistoryStore.saveMessage(chatId, role, content, type, contactName, userId, external_id, currentProjectId, currentServiceId, rawPayload, messageStatus);
+            historyEvents.emit('message_saved', { chatId, projectId: currentProjectId, role, content, type, status: messageStatus });
             return [msg] as any;
         }
         if (contactName === '[-]') contactName = null;
@@ -1115,7 +1124,8 @@ export class HistoryHandler {
                 content,
                 type,
                 external_id: external_id || null,
-                created_at: msgData.created_at
+                created_at: msgData.created_at,
+                status: messageStatus
             }).select();
 
             if (insertError) {
@@ -1150,6 +1160,7 @@ export class HistoryHandler {
                 type,
                 created_at: new Date().toISOString(),
                 external_id: external_id || null,
+                status: messageStatus,
                 project_id: currentProjectId,
                 projectId: currentProjectId,
                 service_id: currentServiceId,
@@ -1159,6 +1170,28 @@ export class HistoryHandler {
 
         } catch (err) {
             console.error('[HistoryHandler] Error en saveMessage:', err);
+        }
+    }
+
+    /**
+     * Actualiza el estado de un mensaje (ej. 'failed', 'delivered', 'read')
+     */
+    static async updateMessageStatus(externalId: string, status: string, projectId?: string): Promise<boolean> {
+        const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
+        if (process.env.STORAGE_MODE === "local") {
+            return LocalHistoryStore.updateMessageStatus(externalId, status, currentProjectId);
+        }
+        try {
+            const { error } = await supabase
+                .from('messages')
+                .update({ status })
+                .eq('external_id', externalId)
+                .eq('project_id', currentProjectId);
+            if (error) throw error;
+            return true;
+        } catch (err: any) {
+            console.error('[HistoryHandler] Error en updateMessageStatus:', err.message);
+            return false;
         }
     }
 

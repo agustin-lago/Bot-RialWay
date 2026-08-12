@@ -236,8 +236,8 @@ export const processSendMessage = async (
         } catch (waError) {
             console.error('[BACKOFFICE] Error enviando a Whatsapp:', waError);
             
-            // Si falló el envío, igual guardamos pero sin ID externo para que al menos quede el log local
-            await depsHistoryHandler.saveMessage(chatId, 'assistant', finalContent, finalType, undefined, undefined, null, 'whatsapp', projectId);
+            // Si falló el envío, igual guardamos pero sin ID externo para que al menos quede el log local, marcado como 'failed'
+            await depsHistoryHandler.saveMessage(chatId, 'assistant', finalContent, finalType, undefined, undefined, null, 'whatsapp', projectId, undefined, undefined, 'failed');
 
             res.json({ 
                 success: true, 
@@ -641,11 +641,32 @@ export const processBulkTemplate = async (req: any, res: any) => {
                 } else {
                     errors++;
                     console.error(`❌ [BULK] Fallo al enviar a ${phone}: Meta no devolvió ID de mensaje. Respuesta:`, JSON.stringify(resApi));
+                    try {
+                        await depsHistoryHandler.saveMessage(phone, 'assistant', historyContent, 'text', undefined, undefined, null, 'whatsapp', projectId, serviceId, undefined, 'failed');
+                    } catch (saveErr: any) {
+                        console.error('[BULK] Error al guardar mensaje fallido:', saveErr.message);
+                    }
                 }
             } catch (e: any) {
                 errors++;
                 const errorData = e?.response?.data || e.message || e;
                 console.error(`❌ [BULK] Error de Meta para ${phone}:`, JSON.stringify(errorData, null, 2));
+                try {
+                    let renderedText = "";
+                    const bodyComp = template.components.find((c: any) => c.type === 'BODY');
+                    if (bodyComp) {
+                        renderedText = bodyComp.text || "";
+                        const varRegex = /\{\{(\w+)\}\}/g;
+                        renderedText = renderedText.replace(varRegex, (match, p1) => {
+                            const val = row[p1] || row[p1.toLowerCase()] || row[p1.toUpperCase()] || match;
+                            return String(val);
+                        });
+                    }
+                    const historyContent = `[Campaña: ${templateName}]\n${renderedText}`;
+                    await depsHistoryHandler.saveMessage(phone, 'assistant', historyContent, 'text', undefined, undefined, null, 'whatsapp', projectId, serviceId, undefined, 'failed');
+                } catch (saveErr: any) {
+                    console.error('[BULK] Error al guardar mensaje fallido en catch:', saveErr.message);
+                }
             }
             // Pequeño delay para no saturar la API
             await new Promise(r => setTimeout(r, 200));
@@ -2721,10 +2742,20 @@ export const registerBackofficeRoutes = (app: any) => {
                             sent++;
                         } else {
                             errors++;
+                            try {
+                                await depsHistoryHandler.saveMessage(chat.id, 'assistant', historyContent, 'text', undefined, undefined, null, 'whatsapp', projectId || undefined, undefined, undefined, 'failed');
+                            } catch (saveErr: any) {
+                                console.error('[QUICK BULK] Error al guardar mensaje fallido:', saveErr.message);
+                            }
                         }
                     } catch (e: any) {
                         errors++;
                         console.error(`❌ [QUICK BULK] Error de Meta para ${phone}:`, e.message || e);
+                        try {
+                            await depsHistoryHandler.saveMessage(chat.id, 'assistant', historyContent, 'text', undefined, undefined, null, 'whatsapp', projectId || undefined, undefined, undefined, 'failed');
+                        } catch (saveErr: any) {
+                            console.error('[QUICK BULK] Error al guardar mensaje fallido en catch:', saveErr.message);
+                        }
                     }
                     await new Promise(r => setTimeout(r, 200));
                 }
