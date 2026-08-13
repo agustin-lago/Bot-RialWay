@@ -2207,48 +2207,45 @@
     width: 26px;
     height: 26px;
     border-radius: 50%;
-    background: radial-gradient(circle at right, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0) 80%);
+    background: rgba(0, 0, 0, 0.35);
     display: none;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    color: rgba(255, 255, 255, 0.8);
+    color: rgba(255, 255, 255, 0.95);
     z-index: 10;
     transition: color 0.2s, background 0.18s ease, transform 0.14s ease;
-    background: transparent;
-    border-radius: 999px;
+    backdrop-filter: blur(2px);
 }
 .msg-out .msg-dropdown-toggle {
-    background: transparent;
+    background: rgba(0, 0, 0, 0.35);
 }
 .msg.user .msg-dropdown-toggle {
     left: 8px;
     right: auto;
-    border-radius: 999px;
 }
 .msg.assistant .msg-dropdown-toggle {
     left: auto;
     right: 8px;
-    border-radius: 999px;
 }
 .msg:hover .msg-dropdown-toggle {
     display: flex;
 }
 .msg-dropdown-toggle:hover {
     color: #fff;
-    background: rgba(255, 255, 255, 0.14);
+    background: rgba(0, 0, 0, 0.6);
     transform: scale(0.96);
 }
 [data-theme="light"] .msg-dropdown-toggle {
-    background: transparent;
-    color: rgba(0, 0, 0, 0.5);
+    background: rgba(255, 255, 255, 0.65);
+    color: rgba(0, 0, 0, 0.7);
 }
 [data-theme="light"] .msg-out .msg-dropdown-toggle {
-    background: transparent;
+    background: rgba(255, 255, 255, 0.65);
 }
 [data-theme="light"] .msg-dropdown-toggle:hover {
     color: #000;
-    background: rgba(15, 23, 42, 0.08);
+    background: rgba(255, 255, 255, 0.95);
 }
 
 @media (max-width: 769px) {
