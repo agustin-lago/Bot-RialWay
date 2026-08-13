@@ -156,7 +156,8 @@ export class AssistantResponseProcessor {
         ASSISTANT_ID: string,
         agentName?: string,
         recursionDepth: number = 0,
-        projectId?: string
+        projectId?: string,
+        serviceId?: string | null
     ) {
         if (recursionDepth > 5) {
             console.error('[AssistantResponseProcessor] Límite de recursión alcanzado (5). Abortando para evitar bucle infinito.');
@@ -258,7 +259,9 @@ export class AssistantResponseProcessor {
                         provider, 
                         gotoFlow, 
                         getAssistantResponse, 
-                        ASSISTANT_ID 
+                        ASSISTANT_ID,
+                        projectId,
+                        serviceId
                     });
                     
                     // Si el handler retorna un string, lo envolvemos en un objeto resultado; si es objeto, lo pasamos directo
@@ -280,13 +283,13 @@ export class AssistantResponseProcessor {
 
                 let newResponse: any;
                 try {
-                    newResponse = await getAssistantResponse(ASSISTANT_ID, feedbackMsg, state, "Error procesando resultado API.", ctx?.from, threadId, projectId, agentName);
+                    newResponse = await getAssistantResponse(ASSISTANT_ID, feedbackMsg, state, "Error procesando resultado API.", ctx?.from, threadId, projectId, agentName, serviceId);
                 } catch (err: any) {
                     // Si falla por run activo, intentamos una vez más tras una espera larga
                     if (err?.message?.includes('active')) {
                         // console.log("[AssistantResponseProcessor] Re-intentando tras detectar run activo residual (API)...");
                         await new Promise(resolve => setTimeout(resolve, 5000));
-                        newResponse = await getAssistantResponse(ASSISTANT_ID, feedbackMsg, state, "Error procesando resultado API.", ctx?.from, threadId, projectId, agentName);
+                        newResponse = await getAssistantResponse(ASSISTANT_ID, feedbackMsg, state, "Error procesando resultado API.", ctx?.from, threadId, projectId, agentName, serviceId);
                     } else {
                         // console.error("Error al obtener respuesta recursiva tras API:", err);
                         if (unblockUser) unblockUser();
@@ -298,7 +301,7 @@ export class AssistantResponseProcessor {
 
                 // Recursión: procesar la respuesta final del asistente
                 await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
-                    newResponse, ctx, flowDynamic, state, provider, gotoFlow, getAssistantResponse, ASSISTANT_ID, agentName, recursionDepth + 1, projectId
+                    newResponse, ctx, flowDynamic, state, provider, gotoFlow, getAssistantResponse, ASSISTANT_ID, agentName, recursionDepth + 1, projectId, serviceId
                 );
                 return;
             }
@@ -351,12 +354,12 @@ export class AssistantResponseProcessor {
             let threadId = ctx?.thread_id;
             if (!threadId && state?.get) threadId = state.get('thread_id');
             
-            let assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, 'ok', state, undefined, ctx.from, threadId, projectId, agentName);
+            let assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, 'ok', state, undefined, ctx.from, threadId, projectId, agentName, serviceId);
             // Si la respuesta contiene (ID: ...), no la envíes al usuario, espera 10s y vuelve a enviar ok
             while (assistantApiResponse && /(ID:\s*\w+)/.test(assistantApiResponse)) {
                 // console.log('[Debug] Respuesta contiene ID de reserva, esperando 10s y reenviando ok...');
                 await new Promise(res => setTimeout(res, 10000));
-                assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, 'ok', state, undefined, ctx.from, threadId, projectId, agentName);
+                assistantApiResponse = await getAssistantResponse(ASSISTANT_ID, 'ok', state, undefined, ctx.from, threadId, projectId, agentName, serviceId);
             }
             // Cuando la respuesta no contiene el ID, envíala al usuario
             if (assistantApiResponse) {
@@ -365,7 +368,7 @@ export class AssistantResponseProcessor {
                     await AssistantResponseProcessor.sendResponseWithImages(flowDynamic, cleanRes);
                     // Guardar en el historial
                     if (ctx?.from) {
-                        await HistoryHandler.saveMessage(ctx.from, 'assistant', cleanRes, 'text', null, ctx.userId, null, ctx.platform, projectId);
+                        await HistoryHandler.saveMessage(ctx.from, 'assistant', cleanRes, 'text', null, ctx.userId, null, ctx.platform, projectId, serviceId || undefined);
                     }
                 } catch (err: any) {
                     console.error('[WhatsApp Debug] Error en flowDynamic:', err);
@@ -392,7 +395,8 @@ export class AssistantResponseProcessor {
                     ctx.userId, 
                     null, 
                     platform,
-                    projectId
+                    projectId,
+                    serviceId || undefined
                 );
             }
             
@@ -456,7 +460,8 @@ export class AssistantResponseProcessor {
         currentAssistantId: string,
         assignedAgentName: string,
         assistantMap: Record<string, string | undefined>,
-        projectId: string
+        projectId: string,
+        serviceId: string | null = null
     ) {
         if (!response) return;
 
@@ -477,11 +482,11 @@ export class AssistantResponseProcessor {
         if (nextAgentName) {
             if (nextAgentName === 'asistente_humano') {
                 console.log(`🚀 [MultiAgent] Handover a HUMANO: Apagando bot para ${ctx.from}`);
-                await HistoryHandler.toggleBot(ctx.from, false);
+                await HistoryHandler.toggleBot(ctx.from, false, projectId, serviceId);
                 
                 await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
                     response, ctx, flowDynamic, state, provider, gotoFlow,
-                    getAssistantResponse, currentAssistantId, assignedAgentName, 0, projectId
+                    getAssistantResponse, currentAssistantId, assignedAgentName, 0, projectId, serviceId
                 );
                 return;
             }
@@ -492,25 +497,25 @@ export class AssistantResponseProcessor {
                 console.warn(`⚠️ [MultiAgent] Handover fallido: No hay Assistant ID configurado para '${nextAgentName}' en el proyecto ${projectId}.`);
                 await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
                     response, ctx, flowDynamic, state, provider, gotoFlow,
-                    getAssistantResponse, currentAssistantId, assignedAgentName, 0, projectId
+                    getAssistantResponse, currentAssistantId, assignedAgentName, 0, projectId, serviceId
                 );
             } else if (nextAgentName === assignedAgentName) {
                 console.log(`[MultiAgent] El destino '${nextAgentName}' es el mismo que el actual (${assignedAgentName}). Ignorando handover.`);
                 await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
                     response, ctx, flowDynamic, state, provider, gotoFlow,
-                    getAssistantResponse, currentAssistantId, assignedAgentName, 0, projectId
+                    getAssistantResponse, currentAssistantId, assignedAgentName, 0, projectId, serviceId
                 );
             } else {
                 console.log(`🚀 [MultiAgent] Handover detectado: ${assignedAgentName} -> ${nextAgentName} (User: ${ctx.from})`);
                 
                 // 1. Persistir cambio de agente en DB y state
-                await HistoryHandler.setAssignedAgent(ctx.from, nextAgentName, projectId);
+                await HistoryHandler.setAssignedAgent(ctx.from, nextAgentName, projectId, serviceId || undefined);
                 await state.update({ assignedAgent: nextAgentName });
 
                 // 2. Procesar respuesta del agente saliente
                 await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
                     response, ctx, flowDynamic, state, provider, gotoFlow,
-                    getAssistantResponse, currentAssistantId, assignedAgentName, 0, projectId
+                    getAssistantResponse, currentAssistantId, assignedAgentName, 0, projectId, serviceId
                 );
 
                 // 3. Transición inmediata al nuevo agente
@@ -521,20 +526,20 @@ export class AssistantResponseProcessor {
                 if (!threadId && state?.get) threadId = state.get('thread_id');
 
                 const nextResponseRaw = await getAssistantResponse(
-                    nextAssistantId, resumenContextual, state, undefined, ctx.from, threadId, projectId, nextAgentName
+                    nextAssistantId, resumenContextual, state, undefined, ctx.from, threadId, projectId, nextAgentName, serviceId
                 );
                 
                 if (nextResponseRaw) {
                     await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
                         nextResponseRaw, ctx, flowDynamic, state, provider, gotoFlow,
-                        getAssistantResponse, nextAssistantId, nextAgentName, 0, projectId
+                        getAssistantResponse, nextAssistantId, nextAgentName, 0, projectId, serviceId
                     );
                 }
             }
         } else {
             await AssistantResponseProcessor.analizarYProcesarRespuestaAsistente(
                 response, ctx, flowDynamic, state, provider, gotoFlow,
-                getAssistantResponse, currentAssistantId, assignedAgentName, 0, projectId
+                getAssistantResponse, currentAssistantId, assignedAgentName, 0, projectId, serviceId
             );
         }
     }

@@ -15,8 +15,9 @@
     "build": "esbuild src/app.ts --bundle --platform=node --format=esm --packages=external --outdir=dist",
     "vaciar_base_backoffice": "tsx src/backend/backoffice/vaciar_base_backoffice.ts",
     "meta_webhook_register": "tsx src/backend/backoffice/meta_webhook_register.ts",
-    "tailwind:build": "tailwindcss -c src/frontend/tailwind.config.js -i src/frontend/style/tailwind.input.css -o src/frontend/style/tailwind.css --minify",
-    "tailwind:watch": "tailwindcss -c src/frontend/tailwind.config.js -i src/frontend/style/tailwind.input.css -o src/frontend/style/tailwind.css --watch"
+    "tailwind:compose": "node scripts/compose-tailwind-input.mjs",
+    "tailwind:build": "pnpm tailwind:compose && tailwindcss -c src/frontend/tailwind.config.js -i .codex/tailwind.composed.css -o src/frontend/style/tailwind.css --minify",
+    "tailwind:watch": "pnpm tailwind:compose && tailwindcss -c src/frontend/tailwind.config.js -i .codex/tailwind.composed.css -o src/frontend/style/tailwind.css --watch"
   },
   "keywords": [],
   "dependencies": {
@@ -80,10 +81,12 @@
   },
   "devDependencies": {
     "@rollup/plugin-typescript": "^12.3.0",
+    "@types/body-parser": "^1.19.6",
     "@types/mime-types": "^3.0.1",
     "@types/multer": "^1.4.13",
     "@types/node": "^20.17.18",
     "@types/selenium-webdriver": "^4.35.6",
+    "@types/serve-static": "^2.2.0",
     "@typescript-eslint/eslint-plugin": "^7.2.0",
     "@typescript-eslint/parser": "^7.4.0",
     "esbuild": "^0.27.4",

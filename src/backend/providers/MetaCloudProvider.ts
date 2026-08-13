@@ -535,7 +535,7 @@ class MetaCloudProvider extends ProviderClass {
     /**
      * Sube un archivo local a Meta para obtener un media_id
      */
-    public async uploadMedia(filePath: string, mimeType?: string): Promise<string | null> {
+    public async uploadMedia(filePath: string, mimeType?: string, originalFilename?: string): Promise<string | null> {
         const { phone_number_id, access_token } = this.config;
         if (!fs.existsSync(filePath)) {
             console.error(`❌ [MetaCloudProvider] uploadMedia: El archivo no existe en ${filePath}`);
@@ -621,7 +621,7 @@ class MetaCloudProvider extends ProviderClass {
                 }
             }
 
-            form.append('file', fs.createReadStream(uploadPath), { contentType, filename: path.basename(uploadPath) });
+            form.append('file', fs.createReadStream(uploadPath), { contentType, filename: originalFilename || path.basename(uploadPath) });
 
             const response = await axios.post(url, form, {
                 headers: {
@@ -629,7 +629,7 @@ class MetaCloudProvider extends ProviderClass {
                     'Authorization': `Bearer ${access_token}`
                 }
             });
-            
+
             // Limpieza
             if (tempOgg && fs.existsSync(tempOgg)) {
                 try { fs.unlinkSync(tempOgg); } catch (_) { void 0; }
@@ -637,7 +637,7 @@ class MetaCloudProvider extends ProviderClass {
             if (isTemp && finalPath && fs.existsSync(finalPath)) {
                 try { fs.unlinkSync(finalPath); } catch (_) { void 0; }
             }
-            
+
             return response.data.id;
         } catch (error: any) {
             console.error('❌ [MetaCloudProvider] Error subiendo media a Meta:', error?.response?.data || error.message);
@@ -699,9 +699,9 @@ class MetaCloudProvider extends ProviderClass {
         const apiVersion = process.env.META_API_VERSION || 'v25.0';
         const url = `https://graph.facebook.com/${apiVersion}/${phone_number_id}/messages`;
 
-        const isGroup = number.includes('@g.us') || 
-                        (options && options.recipient_type === 'group') || 
-                        number.startsWith('120363') || 
+        const isGroup = number.includes('@g.us') ||
+                        (options && options.recipient_type === 'group') ||
+                        number.startsWith('120363') ||
                         (/[A-Za-z]/.test(number) && !number.includes('@'));
         let toFormat = '';
         let recipientType = 'individual';
@@ -725,6 +725,10 @@ class MetaCloudProvider extends ProviderClass {
             recipient_type: recipientType,
             to: toFormat
         };
+
+        if (options && options.replyTo) {
+            body.context = { message_id: options.replyTo };
+        }
 
         // Soporte para archivos (buscamos en todas las propiedades posibles)
         const mediaSource = options.media || options.url || options.path || (isMessagePath ? message : null) || (typeof options === 'string' && options.includes('/') ? options : null);
@@ -750,7 +754,9 @@ class MetaCloudProvider extends ProviderClass {
 
                 if (finalPath && fs.existsSync(finalPath)) {
                     console.log(`📤 [MetaCloudProvider] Subiendo archivo local a Meta: ${finalPath}`);
-                    const mediaId = await this.uploadMedia(finalPath, mimeType);
+                    const customFilenameForUpload = options.fileName || options.filename || options.name || (typeof mediaSource === 'object' ? (mediaSource.fileName || mediaSource.filename || mediaSource.name) : null);
+
+                    const mediaId = await this.uploadMedia(finalPath, mimeType, customFilenameForUpload);
                     if (mediaId) {
                         const mediaData = { id: mediaId };
                         const finalLowerPath = finalPath.toLowerCase();
@@ -773,7 +779,9 @@ class MetaCloudProvider extends ProviderClass {
                             body.audio = { ...mediaData };
                         } else {
                             body.type = 'document';
-                            body.document = { ...mediaData, filename: path.basename(finalPath), caption: finalCaption };
+                            const customFilename = options.fileName || options.filename || options.name || (typeof mediaSource === 'object' ? (mediaSource.fileName || mediaSource.filename || mediaSource.name) : null);
+
+                            body.document = { ...mediaData, filename: customFilename || path.basename(finalPath), caption: finalCaption };
                         }
 
                         try {
@@ -849,7 +857,7 @@ class MetaCloudProvider extends ProviderClass {
             await this.handleMetaError(error, clientPhone, options);
             
             let humanMessage = `Error [${errorCode}]: Falló el envío de mensaje de WhatsApp a [${clientPhone}]. Detalle: ${errorMsg}`;
-            
+
             // Si Meta devuelve error por versión de API deprecada
             if (errorMsg.includes('deprecated') || errorCode === 190) {
                 humanMessage = `Error [${errorCode}]: Token expirado o Versión de API de Meta deprecada al intentar responder a [${clientPhone}]. Requiere actualización manual. Detalle: ${errorMsg}`;
@@ -1136,7 +1144,7 @@ class MetaCloudProvider extends ProviderClass {
                                 actualIsEcho = String(msg.from) === String(this.config.phone_number_id);
                             }
 
-                            // Para echos de smb_message_echoes, el "from" contiene nuestro número, 
+                            // Para echos de smb_message_echoes, el "from" contiene nuestro número,
                             // y el "to" contiene el número del destinatario.
                             const recipientId = msg.recipient_id || msg.to || wa_id || msg.from;
 
@@ -1159,12 +1167,14 @@ class MetaCloudProvider extends ProviderClass {
                             }
 
                             const formatedMessage: any = {
+                                id: msg.id,
                                 from: actualIsEcho ? recipientId : (wa_id || msg.from),
                                 body: bodyText,
                                 phoneNumber: actualIsEcho ? recipientId : msg.from,
                                 userId: bsuid, // Añadimos el BSUID al contexto
                                 name: actualIsEcho ? 'Operador (App WhatsApp)' : (contact?.profile?.name || 'User'),
                                 type: type,
+                                context: msg.context || null,
                                 payload: msg,
                                 platform: 'whatsapp',
                                 isManualIntervention: isThisChangeEcho && fieldName !== 'history', // Solo marcar intervención si no es historial retroactivo

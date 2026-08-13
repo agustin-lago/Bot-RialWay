@@ -21,6 +21,7 @@ window.crmTareasView = {
         </style>
 
         <div class="crm-main-container kanban-wrapper relative" style="z-index:10;">
+            ${window.renderSectionTabs ? window.renderSectionTabs('integrations') : ''}
 
             <div class="kanban-header animate-fade">
                 <div class="header-info">

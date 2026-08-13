@@ -10,7 +10,7 @@ import { setAdapterProvider, setGroupProvider, getGroupProvider } from "./backen
 import { isSessionInDb, deleteAllProjectSessionsFromDb } from "./backend/providers/sessionSync";
 import { ErrorReporter } from "./backend/bot/errorReporter";
 import { updateMain } from "./backend/apis/google/updateMain";
-import { HistoryHandler } from "./backend/db/historyHandler";
+import { HistoryHandler, historyEvents } from "./backend/db/historyHandler";
 import { registerProcessCallback, handleQueue, userQueues, userLocks } from "./backend/bot/queueManager";
 import { registerBackofficeRoutes, processSendMessage, processBulkTemplate, processImportExcel } from "./backend/backoffice/routes/backoffice.routes";
 import { registerDashboardRoutes } from "./backend/backoffice/routes/dashboard.routes";
@@ -24,7 +24,7 @@ import { startHumanInactivityWorker } from "./backend/workers/humanInactivity.wo
 import { startFileCleanupWorker } from "./backend/workers/fileCleanup.worker";
 import { AiManager } from "./backend/bot/ai.manager";
 import { registerExternalApiRoutes } from "./backend/apis/external/external_api.routes";
-import { syncAssistantTools, getOpenAI, getOpenAIVision } from "./backend/apis/openai/openaiHelper";
+import { syncAssistantTools, getOpenAI } from "./backend/apis/openai/openaiHelper";
 import { registerWebhookRoutes } from "./backend/webhook/webhook.routes";
 import { WebhookDispatcher } from "./backend/webhook/WebhookDispatcher";
 import { discoverMetaIds } from "./backend/apis/meta/metaDiscovery";
@@ -111,7 +111,7 @@ const main = async () => {
     const PORT = process.env.PORT || 8080;
     
     // El proceso de sincronización de tools se movió más abajo para asegurar que todas las variables estén recuperadas.
-    // await syncAssistantTools(ASSISTANT_ID); // MOVIDO
+    // await syncAssistantTools(ASSISTANT_ID, HistoryHandler.PROJECT_IDENTIFIER, HistoryHandler.SERVICE_IDENTIFIER); // MOVIDO
 
     
     // Usar un nombre de sesión consistente para evitar desajustes entre SessionSync y el Provider
@@ -153,6 +153,7 @@ const main = async () => {
         }
     }
 
+    const currentServiceId = HistoryHandler.SERVICE_IDENTIFIER;
     const useMeta = !!metaToken && !!metaPhoneId && metaPhoneId !== 'PENDING';
 
     if (useMeta) {
@@ -172,6 +173,10 @@ const main = async () => {
             console.log('🔗 [App] Inicializando conexión auxiliar para grupos...');
             groupProvider = createProvider(SupabaseBaileysProvider, {
                 name: `${SESSION_NAME}_groups`, 
+                service_id: currentServiceId,
+                serviceId: currentServiceId,
+                project_id: HistoryHandler.PROJECT_IDENTIFIER,
+                projectId: HistoryHandler.PROJECT_IDENTIFIER,
                 ...(baileysVersion ? { version: baileysVersion } : {}),
                 groupsIgnore: false,
                 readStatus: false,
@@ -187,6 +192,10 @@ const main = async () => {
         console.log('🚀 [App] Modo Estándar detectado (Baileys para todo)');
         adapterProvider = createProvider(SupabaseBaileysProvider, {
             name: SESSION_NAME, 
+            service_id: currentServiceId,
+            serviceId: currentServiceId,
+            project_id: HistoryHandler.PROJECT_IDENTIFIER,
+            projectId: HistoryHandler.PROJECT_IDENTIFIER,
             ...(baileysVersion ? { version: baileysVersion } : {}),
             groupsIgnore: false,
             readStatus: false,
@@ -203,7 +212,7 @@ const main = async () => {
 
     // --- INICIALIZACIÓN DE MOTORES ---
     // Importante: Llamar a initVendor explícitamente solo una vez aquí si existe una sesión previa en la base de datos.
-    const hasAdapterSession = await isSessionInDb(SESSION_NAME);
+    const hasAdapterSession = await isSessionInDb(SESSION_NAME, currentServiceId);
     if (adapterProvider.initVendor) {
         if (hasAdapterSession) {
             console.log('🚀 [App] Sesión previa detectada. Inicializando Motor Principal (Baileys)...');
@@ -216,7 +225,7 @@ const main = async () => {
 
     if (groupProvider) {
         registerProviderEvents(groupProvider, true);
-        const hasGroupSession = await isSessionInDb(`${SESSION_NAME}_groups`);
+        const hasGroupSession = await isSessionInDb(`${SESSION_NAME}_groups`, currentServiceId);
         if (groupProvider.initVendor) {
             if (hasGroupSession) {
                 console.log('🚀 [App] Sesión previa detectada. Inicializando Motor de Grupos (Baileys Auxiliar)...');
@@ -231,15 +240,15 @@ const main = async () => {
     // 4. Initialize Database and Configuration (Ya inicializado arriba)
 
     
-    const groupResumenId = await HistoryHandler.getConfig('ID_GRUPO_RESUMEN') || "";
+    const groupResumenId = await HistoryHandler.getConfig('ID_GRUPO_RESUMEN', HistoryHandler.PROJECT_IDENTIFIER, HistoryHandler.SERVICE_IDENTIFIER) || "";
     errorReporter = new ErrorReporter(adapterProvider, groupResumenId);
     await updateMain();
     
     // 4.1. Sincronizar herramientas con OpenAI Assistant (Ahora que el entorno está listo)
-    const ASSISTANT_ID = await HistoryHandler.getConfig('ASSISTANT_ID');
+    const ASSISTANT_ID = await HistoryHandler.getConfig('ASSISTANT_ID', HistoryHandler.PROJECT_IDENTIFIER, HistoryHandler.SERVICE_IDENTIFIER);
     if (ASSISTANT_ID) {
         console.log(`[App] 🔄 Iniciando sincronización de tools para Assistant: ${ASSISTANT_ID}`);
-        await syncAssistantTools(ASSISTANT_ID);
+        await syncAssistantTools(ASSISTANT_ID, HistoryHandler.PROJECT_IDENTIFIER, HistoryHandler.SERVICE_IDENTIFIER);
     }
 
 
@@ -262,7 +271,6 @@ const main = async () => {
                 
                 return backofficeAuth(req, res, async () => {
                     const contentType = req.headers['content-type'] || '';
-                    const openaiMainDynamic = await getOpenAI();
                     
 
                     // Sincronizar Meta Provider antes de procesar si es necesario
@@ -289,8 +297,8 @@ const main = async () => {
                                 return res.end(JSON.stringify({ success: false, error: `Error de stream: ${err.message}` }));
                             }
                             if (isSend) {
-                                const { chatId, message } = req.body;
-                                return processSendMessage(req, res, chatId, message, (req as any).file);
+                                const { chatId, message, replyTo } = req.body;
+                                return processSendMessage(req, res, chatId, message, (req as any).file, replyTo);
                             } else if (isImport) {
                                 console.log("🚀 [MASTER-INTERCEPTOR] Ejecutando lógica de importación...");
                                 return processImportExcel(req, res);
@@ -302,8 +310,8 @@ const main = async () => {
                     } else {
                         return bodyParser.json()(req, res, () => {
                             if (isSend) {
-                                const { chatId, message } = req.body;
-                                return processSendMessage(req, res, chatId || '', message || '', null);
+                                const { chatId, message, replyTo } = req.body;
+                                return processSendMessage(req, res, chatId || '', message || '', null, replyTo);
                             } else if (isImport) {
                                 return next();
                             } else {
@@ -327,8 +335,8 @@ const main = async () => {
 
     // 6. Initialize AI Manager and flows
     const flows = { welcomeFlowTxt, welcomeFlowVoice, welcomeFlowImg, welcomeFlowVideo, welcomeFlowDoc, locationFlow, idleFlow, welcomeFlowButton };
-    const openaiMain = await getOpenAI();
-    const assistantIdValue = await HistoryHandler.getConfig('ASSISTANT_ID') || "";
+    const openaiMain = await getOpenAI(HistoryHandler.PROJECT_IDENTIFIER, HistoryHandler.SERVICE_IDENTIFIER);
+    const assistantIdValue = await HistoryHandler.getConfig('ASSISTANT_ID', HistoryHandler.PROJECT_IDENTIFIER, HistoryHandler.SERVICE_IDENTIFIER) || "";
 
     aiManagerInstance = new AiManager(openaiMain, assistantIdValue, errorReporter, flows);
 
@@ -339,7 +347,8 @@ const main = async () => {
             try {
                 const botPhoneNumber = provider?.globalVendorArgs?.phone_number_id || (ctx.to ? ctx.to.replace(/\D/g, '') : null);
                 const projectId = await HistoryHandler.getProjectIdByRecipient(botPhoneNumber) || state.get('dynamicProjectId') || process.env.RAILWAY_PROJECT_ID;
-                const ID_GRUPO_RESUMEN = await HistoryHandler.getConfig('ID_GRUPO_RESUMEN', projectId) || '';
+                const serviceId = await HistoryHandler.getServiceIdByRecipient(botPhoneNumber) || state.get('dynamicServiceId') || process.env.RAILWAY_SERVICE_ID;
+                const ID_GRUPO_RESUMEN = await HistoryHandler.getConfig('ID_GRUPO_RESUMEN', projectId, serviceId) || '';
                 
                 console.log(`[GRUPO_TEST] Command received. BotNumber: ${botPhoneNumber} | ProjectId: ${projectId} | GroupJID: ${ID_GRUPO_RESUMEN}`);
 
@@ -377,7 +386,10 @@ const main = async () => {
             return;
         }
 
-        const timeoutCierreValue = await HistoryHandler.getConfig('timeOutCierre') || 15;
+        const botPhoneNumber = provider?.globalVendorArgs?.phone_number_id || (ctx.to ? ctx.to.replace(/\D/g, '') : null);
+        const dynamicProjectId = await HistoryHandler.getProjectIdByRecipient(botPhoneNumber) || state.get('dynamicProjectId') || process.env.RAILWAY_PROJECT_ID;
+        const dynamicServiceId = await HistoryHandler.getServiceIdByRecipient(botPhoneNumber) || state.get('dynamicServiceId') || process.env.RAILWAY_SERVICE_ID;
+        const timeoutCierreValue = await HistoryHandler.getConfig('timeOutCierre', dynamicProjectId, dynamicServiceId) || 15;
         const setTime = Number(timeoutCierreValue) * 60 * 1000;
         reset(ctx, gotoFlow, setTime);
         await aiManagerInstance.processUserMessage(ctx, { flowDynamic, state, provider, gotoFlow });
@@ -403,9 +415,6 @@ const main = async () => {
         app.use(smartBodyParser);
 
         // 9. Register Other Routes
-        const openaiMainDynamic = await getOpenAI();
-        const openaiVision = await getOpenAIVision();
-        
         registerBackofficeRoutes(app);
         registerDashboardRoutes(app);
         registerStaticRoutes(app, { __dirname });
@@ -522,6 +531,7 @@ const main = async () => {
                         provider.initialized = false;
                         provider.qrCodeString = null;
                         provider.pairingCode = null;
+                        provider.connectionState = 'close';
                     }
                 }
 
@@ -535,6 +545,16 @@ const main = async () => {
                         console.warn('[API] Error borrando carpeta local bot_sessions:', fsErr.message);
                     }
                 }
+
+                historyEvents.emit('whatsapp_line_changed', {
+                    projectId: HistoryHandler.PROJECT_IDENTIFIER,
+                    project_id: HistoryHandler.PROJECT_IDENTIFIER,
+                    serviceId: HistoryHandler.SERVICE_IDENTIFIER,
+                    service_id: HistoryHandler.SERVICE_IDENTIFIER,
+                    provider: 'baileys',
+                    active: false,
+                    connection: 'close'
+                });
 
                 res.json({ success: true });
             } catch (err: any) {

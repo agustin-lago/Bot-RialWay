@@ -11,6 +11,7 @@ window.metaView = (() => {
     function getHTML() {
         return `
         <main class="crm-main-container" style="z-index:10; padding:0;">
+            ${window.renderSectionTabs ? window.renderSectionTabs('integrations') : ''}
 
             <div class="kanban-header animate-fade">
                 <div class="header-info">
@@ -51,7 +52,7 @@ window.metaView = (() => {
                                 <li>Soporte para <strong>Imagenes y Audios</strong> oficiales.</li>
                             </ul>
                         </div>
-                        <button id="meta-onboard-btn" class="btn-primary" onclick="launchMetaOnboardingView()" style="width:100%; padding:13px 20px; display:flex; align-items:center; justify-content:center; gap:10px; font-size:0.95rem; font-weight:600; border-radius:14px;">
+                        <button id="meta-onboard-btn" class="btn-primary w-full" onclick="launchMetaOnboardingView()">
                             <i class="fab fa-meta"></i> Vincular con META
                         </button>
                         <div id="meta-onboard-status" style="display:none; margin-top:1rem; color:var(--text-muted); font-size:0.85rem; text-align:center;">
@@ -110,7 +111,7 @@ window.metaView = (() => {
                                                 <span id="detail-tpl-cat-badge" class="tpl-info-badge"><i class="fas fa-tag"></i> CATEGORIA</span>
                                             </div>
                                         </div>
-                                        <a id="btn-edit-in-meta" href="#" target="_blank" style="display:none; flex-shrink:0; align-items:center; gap:5px; font-size:0.72rem; font-weight:600; padding:5px 10px; border-radius:8px; background:linear-gradient(135deg,#0668E1,#00B2FF); color:#fff; text-decoration:none; white-space:nowrap;">
+                                        <a id="btn-edit-in-meta" href="#" target="_blank" style="display:none; flex-shrink:0;">
                                             <i class="fab fa-facebook"></i> META
                                         </a>
                                     </div>
@@ -293,7 +294,10 @@ window.metaView = (() => {
                 <p class="text-sm text-secondary-content mt-3">Sincronizando con Meta Cloud...</p>
             </div>`;
         try {
-            const res  = await fetch(`/api/backoffice/whatsapp/templates?token=${_token}`);
+            const params = new URLSearchParams({ token: _token });
+            if (window.railwayProjectId) params.set('projectId', window.railwayProjectId);
+            if (window.railwayServiceId) params.set('serviceId', window.railwayServiceId);
+            const res  = await fetch(`/api/backoffice/whatsapp/templates?${params.toString()}`);
             const data = await res.json();
             if (data.success) {
                 _availableTemplates = data.templates;
@@ -480,12 +484,15 @@ window.metaView = (() => {
     // ── Descarga Excel ────────────────────────────────────────────────────
     function downloadBulkExcel() {
         if (!_currentTemplate) return;
-        let url = `/api/backoffice/whatsapp/template-excel/${_currentTemplate.name}?token=${encodeURIComponent(_token)}`;
+        const params = new URLSearchParams({ token: _token });
+        if (window.railwayProjectId) params.set('projectId', window.railwayProjectId);
+        if (window.railwayServiceId) params.set('serviceId', window.railwayServiceId);
         const start  = document.getElementById('bulk-filter-start')?.value;
         const end    = document.getElementById('bulk-filter-end')?.value;
-        if (start) url += `&startDate=${start}`;
-        if (end)   url += `&endDate=${end}`;
-        if (_selectedTagIds.size > 0) url += `&tagIds=${[..._selectedTagIds].join(',')}`;
+        if (start) params.set('startDate', start);
+        if (end) params.set('endDate', end);
+        if (_selectedTagIds.size > 0) params.set('tagIds', [..._selectedTagIds].join(','));
+        const url = `/api/backoffice/whatsapp/template-excel/${encodeURIComponent(_currentTemplate.name)}?${params.toString()}`;
         window.open(url, '_blank');
     }
 
@@ -507,6 +514,8 @@ window.metaView = (() => {
         formData.append('file', fileInput.files[0]);
         formData.append('templateName', _currentTemplate.name);
         formData.append('languageCode', _currentTemplate.language || 'es');
+        if (window.railwayProjectId) formData.append('projectId', window.railwayProjectId);
+        if (window.railwayServiceId) formData.append('serviceId', window.railwayServiceId);
 
         btn.disabled        = true;
         btn.innerHTML       = '<i class="fas fa-spinner fa-spin"></i> Iniciando...';
@@ -515,7 +524,10 @@ window.metaView = (() => {
         statusText.innerText      = 'Subiendo y procesando...';
 
         try {
-            const res = await fetch(`/api/backoffice/whatsapp/send-bulk-template?token=${_token}`, {
+            const params = new URLSearchParams({ token: _token });
+            if (window.railwayProjectId) params.set('projectId', window.railwayProjectId);
+            if (window.railwayServiceId) params.set('serviceId', window.railwayServiceId);
+            const res = await fetch(`/api/backoffice/whatsapp/send-bulk-template?${params.toString()}`, {
                 method: 'POST',
                 body: formData
             });
@@ -573,7 +585,10 @@ window.metaView = (() => {
         if (statusText) statusText.innerText = 'Consultando contactos y procesando envío...';
 
         try {
-            const res = await fetch(`/api/backoffice/whatsapp/send-quick-template?token=${_token}`, {
+            const params = new URLSearchParams({ token: _token });
+            if (window.railwayProjectId) params.set('projectId', window.railwayProjectId);
+            if (window.railwayServiceId) params.set('serviceId', window.railwayServiceId);
+            const res = await fetch(`/api/backoffice/whatsapp/send-quick-template?${params.toString()}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -581,7 +596,9 @@ window.metaView = (() => {
                     languageCode: _currentTemplate.language || 'es',
                     startDate,
                     endDate,
-                    tagIds
+                    tagIds,
+                    projectId: window.railwayProjectId || '',
+                    serviceId: window.railwayServiceId || ''
                 })
             });
 

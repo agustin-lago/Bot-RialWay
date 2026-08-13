@@ -27,15 +27,15 @@ function extraerPaginasComoPNG(pdfPath: string, outputDir: string) {
 export const welcomeFlowDoc = addKeyword<BaileysProvider, MemoryDB>(EVENTS.DOCUMENT)
     .addAction(async (ctx, { gotoFlow, flowDynamic, provider, state }) => {
         const { HistoryHandler } = await import("~/db/historyHandler");
-        const timeoutCierreValue = await HistoryHandler.getConfig('timeOutCierre') || 45;
-        const setTime = Number(timeoutCierreValue) * 60 * 1000;
-        reset(ctx, gotoFlow, setTime);
         let localPath = null;
         let outputDir = null;
         const imagenesGeneradas = [];
         const botPhoneNumber = provider?.globalVendorArgs?.phone_number_id || (ctx.to ? ctx.to.replace(/\D/g, '') : null);
         const dynamicProjectId = await HistoryHandler.getProjectIdByRecipient(botPhoneNumber) || HistoryHandler.PROJECT_IDENTIFIER;
         const dynamicServiceId = await HistoryHandler.getServiceIdByRecipient(botPhoneNumber) || HistoryHandler.SERVICE_IDENTIFIER;
+        const timeoutCierreValue = await HistoryHandler.getConfig('timeOutCierre', dynamicProjectId, dynamicServiceId) || 45;
+        const setTime = Number(timeoutCierreValue) * 60 * 1000;
+        reset(ctx, gotoFlow, setTime);
         try {
             const mimetype = (ctx?.media?.mimetype || ctx?.message?.documentMessage?.mimetype || ctx?.mimetype || '').toLowerCase();
             const fileName = (ctx?.media?.filename || ctx?.message?.documentMessage?.fileName || '').toLowerCase();

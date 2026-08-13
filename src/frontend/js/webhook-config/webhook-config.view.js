@@ -5,6 +5,7 @@ window.webhookConfigView = (() => {
     function getHTML() {
         return `
         <div id="main-webhook-content" style="display:flex; opacity:1; flex:1; overflow:auto; flex-direction:column;">
+            ${window.renderSectionTabs ? window.renderSectionTabs('integrations') : ''}
             <main class="crm-main-container relative animate-fade" style="z-index:10; max-width:800px; margin:0 auto; padding: 2rem 1.5rem; width: 100%;">
                 
                 <div class="kanban-header" style="margin-bottom:2rem;">
@@ -33,7 +34,7 @@ window.webhookConfigView = (() => {
                                     <i class="fas fa-eye"></i> Mostrar
                                 </button>
                             </div>
-                            <button type="button" class="btn-outline" onclick="generateRandomSecret()" style="padding:10px 14px; border-radius:10px; white-space:nowrap; display:flex; align-items:center; gap:6px;">
+                            <button type="button" class="btn-outline" onclick="generateRandomSecret()" style="white-space:nowrap;">
                                 <i class="fas fa-key"></i> Generar
                             </button>
                         </div>
@@ -94,10 +95,10 @@ window.webhookConfigView = (() => {
 
                     <!-- Botones de Acción -->
                     <div style="display:flex; gap:14px; justify-content:flex-end; border-top:1px solid var(--border); padding-top:20px; margin-top:10px;">
-                        <button type="button" class="btn-outline" onclick="sendTestWebhook()" style="padding:10px 20px; border-radius:10px; display:flex; align-items:center; gap:8px; font-weight:600;">
+                        <button type="button" class="btn-outline" onclick="sendTestWebhook()">
                             <i class="fas fa-flask"></i> Enviar Evento de Prueba
                         </button>
-                        <button type="button" class="btn-primary" onclick="saveWebhookConfig()" style="padding:10px 24px; border-radius:10px; background:linear-gradient(135deg,#6366f1,#8b5cf6); color:white; border:none; cursor:pointer; display:flex; align-items:center; gap:8px; font-weight:600; box-shadow:0 4px 12px rgba(99,102,241,0.25);">
+                        <button type="button" class="btn-success" onclick="saveWebhookConfig()">
                             <i class="fas fa-floppy-disk"></i> Guardar Suscripciones
                         </button>
                     </div>

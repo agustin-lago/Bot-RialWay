@@ -19,6 +19,7 @@ export class SupabaseBaileysProvider extends BaileysProvider {
     public pairingCode: string | null = null;
     public preventAutoStart = false;
     public initialized = false;
+    public connectionState: 'idle' | 'connecting' | 'open' | 'close' = 'idle';
     private lidToPnCache = new Map<string, string>();
     private connectionFailures = 0;
     private isConnecting = false;
@@ -222,7 +223,11 @@ export class SupabaseBaileysProvider extends BaileysProvider {
     }
 
     protected initProvider = async (): Promise<any> => {
+        this.connectionState = 'connecting';
+        this.emit('status_change', { active: false, connection: 'connecting' });
         if (this.isConnecting) {
+            this.connectionState = 'idle';
+            this.emit('status_change', { active: false, connection: 'idle' });
             console.log(`[SupabaseBaileysProvider] ℹ️ Ya hay un intento de conexión en curso para ${this.globalVendorArgs.name || 'default'}. Saltando.`);
             return null;
         }
@@ -230,6 +235,7 @@ export class SupabaseBaileysProvider extends BaileysProvider {
         // Evitar múltiples inicializaciones simultáneas
         if (this.initialized && this.vendor?.ws?.isOpen) {
             console.log(`[SupabaseBaileysProvider] ℹ️ Conexión ya activa para ${this.globalVendorArgs.name}. Saltando.`);
+            this.connectionState = 'open';
             return this.vendor;
         }
 
@@ -239,6 +245,8 @@ export class SupabaseBaileysProvider extends BaileysProvider {
             if (this.preventAutoStart) {
                 console.log(`[SupabaseBaileysProvider] ℹ️ Auto-start prevenido para ${this.globalVendorArgs.name || 'default'}. Esperando activación manual.`);
                 this.isConnecting = false;
+                this.connectionState = 'idle';
+                this.emit('status_change', { active: false, connection: 'idle' });
                 return null;
             }
 
@@ -253,6 +261,8 @@ export class SupabaseBaileysProvider extends BaileysProvider {
             if (!supabaseUrl || !supabaseKey) {
                 console.error('[SupabaseBaileysProvider] ❌ Faltan SUPABASE_URL o SUPABASE_KEY en el entorno.');
                 this.isConnecting = false;
+                this.connectionState = 'idle';
+                this.emit('status_change', { active: false, connection: 'idle' });
                 return null;
             }
 
@@ -270,7 +280,7 @@ export class SupabaseBaileysProvider extends BaileysProvider {
                 }
             }
 
-            const serviceId = this.globalVendorArgs.service_id || null;
+            const serviceId = this.globalVendorArgs.service_id || this.globalVendorArgs.serviceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || null;
 
             const { state, saveCreds } = await useSupabaseAuthState(
                 supabaseUrl,
@@ -307,6 +317,8 @@ export class SupabaseBaileysProvider extends BaileysProvider {
                 printQRInTerminal: false,
                 generateHighQualityLinkPreview: true,
                 syncFullHistory: false,
+                shouldSyncHistoryMessage: () => false,
+                fireInitQueries: false,
                 markOnlineOnConnect: false,
                 linkPreviewImageThumbnailWidth: 192
             }) as any;
@@ -407,6 +419,7 @@ export class SupabaseBaileysProvider extends BaileysProvider {
                     if (!usePairingCode) {
                         this.qrCodeString = qr;
                         this.emit('qr', qr);
+                        this.emit('status_change', { active: false, connection: 'qr' });
                         this.emit('require_action', {
                             title: 'Vincular WhatsApp',
                             instructions: ['Escanea el código QR'],
@@ -423,6 +436,8 @@ export class SupabaseBaileysProvider extends BaileysProvider {
                     this.connectionFailures = 0; // Resetear contador al conectar con éxito
                     this.qrCodeString = null; // Limpiar QR al conectar
                     this.pairingCode = null; // Limpiar código al conectar
+                    this.connectionState = 'open';
+                    this.emit('status_change', { active: true, connection: 'open' });
                     this.emit('ready', true);
                 }
 
@@ -433,9 +448,11 @@ export class SupabaseBaileysProvider extends BaileysProvider {
                     const reason = lastDisconnect?.error?.message || 'unknown';
                     console.log(`[SupabaseBaileysProvider] ❌ Conexión CERRADA [${this.globalVendorArgs.name}]. Razón: ${reason} (Código: ${statusCode}) (Fallo consecutivo #${this.connectionFailures})`);
                     
+                    this.connectionState = 'close';
                     this.initialized = false;
                     this.qrCodeString = null;
                     this.pairingCode = null; // Limpiar código al cerrar
+                    this.emit('status_change', { active: false, connection: 'close', reason, statusCode });
                     
                     if (this.preventAutoStart) {
                         console.log(`[SupabaseBaileysProvider] ℹ️ Conexión cerrada intencionalmente para ${this.globalVendorArgs.name}. No se reintentará reconexión.`);
@@ -450,7 +467,7 @@ export class SupabaseBaileysProvider extends BaileysProvider {
                         console.log(`[SupabaseBaileysProvider] ⚠️ Sesión inválida o corrupta (${isLoggedOut ? 'Logout' : 'Límite de 3 fallos superado'}). Limpiando credenciales de la DB y solicitando nuevo QR...`);
                         this.connectionFailures = 0; // Resetear
                         const { deleteSessionFromDb } = await import('./sessionSync');
-                        await deleteSessionFromDb(this.globalVendorArgs.name);
+                        await deleteSessionFromDb(this.globalVendorArgs.name, this.globalVendorArgs.service_id || this.globalVendorArgs.serviceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || null);
                         
                         // Reiniciar para generar nuevo QR
                         setTimeout(() => this.initProvider(), 1000);
@@ -515,6 +532,8 @@ export class SupabaseBaileysProvider extends BaileysProvider {
                                 from,
                                 isManualIntervention: true,
                                 id: msg.key.id,
+                                type: 'text',
+                                payload: msg,
                                 platform: 'whatsapp'
                             });
                         }
@@ -643,6 +662,8 @@ export class SupabaseBaileysProvider extends BaileysProvider {
      * Detiene la conexión del socket de Baileys y limpia los recursos del motor.
      */
      public stopProvider = async (): Promise<void> => {
+        this.connectionState = 'close';
+        this.emit('status_change', { active: false, connection: 'close' });
         console.log(`[SupabaseBaileysProvider] 🛑 Deteniendo instancia para: ${this.globalVendorArgs.name || 'default'}`);
         this.initialized = false;
         this.preventAutoStart = true;

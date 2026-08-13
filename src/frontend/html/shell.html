@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="es" data-theme="light" style="height: 100%; width: 100%;">
+<html lang="es" data-theme="light" style="height: 100dvh; width: 100%; overflow: hidden;">
 
 <head>
     <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('theme') || 'light');</script>
-    <script src="/js/auth/auth-check.js"></script>
+    <script src="/js/auth/auth-check.js?v=2"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>{{BOT_NAME}} - Backoffice</title>
@@ -11,7 +11,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
     <script>(function () { var v = '?v=2';['link[rel*="icon"]', 'link[rel="apple-touch-icon"]'].forEach(function (s) { document.querySelectorAll(s).forEach(function (e) { e.href = e.href.split('?')[0] + v; }); }); }());</script>
     <link rel="stylesheet" href="/style/vendor/fontawesome/css/all.min.css">
-    <link rel="stylesheet" href="/style/tailwind.css?v=6">
+    <link rel="stylesheet" href="/style/tailwind.css?v=21">
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script>
@@ -53,6 +53,9 @@
     <script>
         window.BOT_NAME = '{{BOT_NAME}}';
         window.__SYSTEM_CONFIG_VISIBLE = '{{SYSTEM_CONFIG_VISIBLE_JS}}' !== 'false';
+        window.__IS_SUPERADMIN_SESSION = localStorage.getItem('is_superadmin') === 'true';
+        window.__BACKOFFICE_VISIBLE = '{{SHOW_BACKOFFICE_STYLE}}' !== 'hidden-item';
+        window.__CRM_VISIBLE = '{{SHOW_CRM_STYLE}}' !== 'hidden-item';
         window.railwayProjectId = '{{PROJECT_ID}}';
         window.railwayServiceId = '{{SERVICE_ID}}';
         (function() {
@@ -167,14 +170,15 @@
         .nav-sidebar.collapsed .nav-item>.nav-link>.nav-dot {
             position: absolute;
             top: 10px;
-            left: 28px;
+            left: auto;
+            right: 15px;
             margin-left: 0;
         }
 
         .nav-sidebar.collapsed .nav-item>.nav-link>#badge-notifications-count {
             position: absolute;
             top: 6px;
-            left: 25px;
+            left: 34px;
             margin-left: 0;
             padding: 1px 4px;
             font-size: 0.6rem;
@@ -184,7 +188,7 @@
     </style>
 </head>
 
-<body class="flex h-screen overflow-hidden font-body" style="height: 100dvh;">
+<body class="flex h-screen overflow-hidden font-body sidebar-collapsed" style="height: 100dvh;">
 
     <!-- Fondo -->
     <div class="bg-page"></div>
@@ -198,32 +202,22 @@
             <i class="fas fa-bars"></i>
         </button>
         <span class="nav-brand-logo mobile-brand-logo">
-            <span class="nav-brand-details mobile-brand-details">
-                <span class="nav-brand-name" title="{{PROJECT_NAME}}">{{PROJECT_NAME}}</span>
-                <span class="nav-brand-sub" title="Copiar ID de proyecto"
-                    onclick="navigator.clipboard.writeText('{{PROJECT_ID}}').then(() => showToast('ID de proyecto copiado', 'success')).catch(err => console.error(err))">{{PROJECT_ID}}</span>
-                <span class="nav-brand-sub" title="Copiar ID de servicio"
-                    onclick="navigator.clipboard.writeText('{{SERVICE_ID}}').then(() => showToast('ID de servicio copiado', 'success')).catch(err => console.error(err))">{{SERVICE_ID}}</span>
-            </span>
             <i class="fas fa-brain"></i>
         </span>
     </header>
 
     <!-- Navbar lateral -->
-    <nav id="navbar" class="nav-sidebar" style="z-index:30;">
-        <div class="nav-sidebar-header">
-            <button id="sidebar-toggler" class="nav-toggler" aria-label="Colapsar menu">
-                <i class="fas fa-chevron-left"></i>
+    <nav id="navbar" class="nav-sidebar collapsed" style="z-index:30;">
+        <div class="nav-sidebar-header nav-sidebar-header-static">
+            <button id="sidebar-toggle-btn" class="nav-sidebar-toggle" type="button" aria-label="Expandir menu" aria-expanded="false">
+                <i class="fas fa-chevron-right"></i>
             </button>
             <div class="nav-brand">
-                <span class="nav-brand-logo">
+                <span class="nav-brand-logo" title="{{PROJECT_NAME}}">
                     <i class="fas fa-brain"></i>
-                    <span class="nav-brand-details">
-                        <span class="nav-brand-name" title="{{PROJECT_NAME}}">{{PROJECT_NAME}}</span>
-                        <span class="nav-brand-sub" title="Copiar ID de proyecto"
-                            onclick="navigator.clipboard.writeText('{{PROJECT_ID}}').then(() => showToast('ID de proyecto copiado', 'success')).catch(err => console.error(err))">{{PROJECT_ID}}</span>
-                        <span class="nav-brand-sub" title="Copiar ID de servicio"
-                            onclick="navigator.clipboard.writeText('{{SERVICE_ID}}').then(() => showToast('ID de servicio copiado', 'success')).catch(err => console.error(err))">{{SERVICE_ID}}</span>
+                    <span class="nav-brand-text">
+                        <span class="nav-brand-title">Neurolinks</span>
+                        <span class="nav-brand-subtitle">Backoffice</span>
                     </span>
                 </span>
             </div>
@@ -231,69 +225,22 @@
 
         <div class="nav-sidebar-scroll">
             <ul class="nav-list">
-                <li class="nav-item" data-route="/dashboard">
-                    <a href="#" class="nav-link" onclick="event.preventDefault(); navigate('/dashboard')">
-                        <i class="fas fa-chart-simple"></i>
-                        <span class="nav-label">Dashboard</span>
-                    </a>
-                    <ul class="nav-dropdown-menu">
-                        <li class="nav-item"><span class="nav-link nav-dropdown-title">Dashboard</span></li>
-                    </ul>
-                </li>
-
-                <li class="nav-item nav-dropdown {{SHOW_BACKOFFICE_STYLE}}" id="nav-messaging-btn">
-                    <a href="#" class="nav-link" onclick="toggleMessagingFlyout(event)">
+                <li class="nav-item nav-dropdown" id="nav-messaging-btn">
+                    <a href="#" class="nav-link" onclick="toggleSidebarDropdown(event, 'nav-messaging-btn')">
                         <i class="fas fa-mobile-screen-button"></i>
-                        <span class="nav-label">Mensajeria</span>
+                        <span class="nav-label">Gestion</span>
                         <span class="nav-dot" id="dot-messaging" style="display: none;"></span>
                         <i class="fas fa-chevron-down nav-dropdown-icon"></i>
                     </a>
                     <ul class="nav-dropdown-menu">
-                        <li class="nav-item"><span class="nav-link nav-dropdown-title">Mensajeria</span></li>
-                        <li class="nav-item {{SHOW_BACKOFFICE_STYLE}}" data-route="/backoffice">
-                            <a href="#" class="nav-link nav-dropdown-link"
-                                onclick="event.preventDefault(); closeMessagingFlyout(); navigate('/backoffice')">
-                                <i class="fas fa-comments"></i>
-                                <span class="nav-label">Conversaciones</span>
-                                <span class="nav-dot" id="dot-conversaciones" style="display: none;"></span>
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a href="#" class="nav-link nav-dropdown-link"
-                                onclick="event.preventDefault(); closeMessagingFlyout(); toggleLeadsPanel(event)">
-                                <i class="fas fa-user-group"></i>
-                                <span class="nav-label">Contactos</span>
-                            </a>
-                        </li>
-                        <li class="nav-item" data-route="/reportes">
-                            <a href="#" class="nav-link nav-dropdown-link"
-                                onclick="event.preventDefault(); closeMessagingFlyout(); navigate('/reportes')">
-                                <i class="fas fa-file-lines"></i>
-                                <span class="nav-label">Reportes</span>
-                                <span class="nav-dot" id="dot-reportes" style="display: none;"></span>
-                            </a>
-                        </li>
-                        <li class="nav-item" data-route="/conexion">
-                            <a href="#" class="nav-link nav-dropdown-link"
-                                onclick="event.preventDefault(); closeMessagingFlyout(); navigate('/conexion')">
-                                <i class="fas fa-plug-circle-bolt"></i>
-                                <span class="nav-label">Conexion</span>
-                            </a>
-                        </li>
-                        <li class="nav-item {{SHOW_BACKOFFICE_STYLE}}" data-route="/webchat">
-                            <a href="#" class="nav-link nav-dropdown-link"
-                                onclick="event.preventDefault(); closeMessagingFlyout(); navigate('/webchat')">
-                                <i class="fas fa-headset"></i>
-                                <span class="nav-label">Webchat</span>
-                            </a>
-                        </li>
+                        <li class="nav-item"><span class="nav-link nav-dropdown-title">Gestion</span></li>
                     </ul>
                 </li>
 
                 <li class="nav-sep" role="separator"></li>
 
                 <li class="nav-item nav-dropdown" id="nav-integraciones-btn">
-                    <a href="#" class="nav-link" onclick="toggleIntegracionesFlyout(event)">
+                    <a href="#" class="nav-link" onclick="toggleSidebarDropdown(event, 'nav-integraciones-btn')">
                         <i class="fas fa-puzzle-piece"></i>
                         <span class="nav-label">Integraciones</span>
                         <span class="nav-dot" id="dot-integraciones" style="display: none;"></span>
@@ -369,7 +316,7 @@
                             <a href="#" class="nav-link nav-dropdown-link"
                                 onclick="event.preventDefault(); closeIntegracionesFlyout(); navigate('/lista-negra')">
                                 <i class="fas fa-ban"></i>
-                                <span class="nav-label">Lista BOT/CRM Desactivado</span>
+                                <span class="nav-label">Lista Negra</span>
                             </a>
                         </li>
                         <li class="nav-item" data-route="/webhooks">
@@ -412,80 +359,91 @@
                     <li class="nav-item"><span class="nav-link nav-dropdown-title">Soporte</span></li>
                 </ul>
             </li>
-            <li class="nav-item nav-dropdown" id="nav-ajustes-btn">
-                <a href="#" class="nav-link" onclick="toggleAjustesFlyout(event)">
-                    <i class="fas fa-sliders"></i>
-                    <span class="nav-label">Ajustes</span>
-                    <i class="fas fa-chevron-down nav-dropdown-icon"></i>
-                </a>
+            <li class="nav-item" id="nav-theme-btn">
+                <div class="nav-link nav-theme-row" onclick="toggleTheme()">
+                    <i id="theme-mode-icon" class="fas fa-sun"></i>
+                    <span class="nav-label">Tema</span>
+                    <input type="checkbox" id="theme-toggle-input" class="sr-only" onchange="toggleTheme()">
+                </div>
                 <ul class="nav-dropdown-menu">
-                    <li class="nav-item"><span class="nav-link nav-dropdown-title">Ajustes</span></li>
-                    <li class="nav-item {{SHOW_SYSTEM_CONFIG_STYLE}}" data-route="/system-config">
-                        <a href="#" class="nav-link nav-dropdown-link"
-                            onclick="event.preventDefault(); closeAjustesFlyout(); navigate('/system-config')">
-                            <i class="fas fa-gears"></i>
-                            <span class="nav-label">Configuracion</span>
-                        </a>
-                    </li>
-                    <li class="nav-item" id="btn-global-new-user" data-route="/usuarios">
-                        <a href="#" class="nav-link nav-dropdown-link"
-                            onclick="event.preventDefault(); closeAjustesFlyout(); navigate('/usuarios')">
-                            <i class="fas fa-user-plus"></i>
-                            <span class="nav-label">Nuevo Usuario</span>
-                        </a>
-                    </li>
-                    <li class="nav-item" data-route="/docs">
-                        <a href="#" class="nav-link nav-dropdown-link"
-                            onclick="event.preventDefault(); closeAjustesFlyout(); navigate('/docs')">
-                            <i class="fas fa-book"></i>
-                            <span class="nav-label">Manual</span>
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <div class="nav-link nav-dropdown-link nav-theme-row"
-                            onclick="document.getElementById('theme-toggle-input').click()">
-                            <span class="nav-label">Tema</span>
-                            <label class="nav-theme-toggle" onclick="event.stopPropagation()">
-                                <input type="checkbox" id="theme-toggle-input" class="sr-only" onchange="toggleTheme()">
-                                <span class="nav-theme-track">
-                                    <span class="nav-theme-thumb">
-                                        <i class="fas fa-sun nav-theme-icon-sun"></i>
-                                        <i class="fas fa-moon nav-theme-icon-moon"></i>
-                                    </span>
-                                </span>
-                            </label>
-                        </div>
-                    </li>
+                    <li class="nav-item"><span id="theme-flyout-label" class="nav-link nav-dropdown-title">Tema: Claro</span></li>
                 </ul>
             </li>
-            <li class="nav-item">
-                <a href="https://clientesneurolinks.com/portal/dashboard" class="nav-link" target="_blank"
-                    rel="noopener">
-                    <i class="fas fa-arrow-left"></i>
-                    <span class="nav-label">Volver a mi portal</span>
+            <li class="nav-item {{SHOW_SYSTEM_CONFIG_STYLE}}" id="nav-system-config-btn" data-route="/system-config" style="display:none;">
+                <a href="#" class="nav-link" onclick="event.preventDefault(); navigate('/system-config')">
+                    <i class="fas fa-gears"></i>
+                    <span class="nav-label">Configuracion</span>
                 </a>
                 <ul class="nav-dropdown-menu">
-                    <li class="nav-item"><span class="nav-link nav-dropdown-title">Volver a mi portal</span></li>
-                </ul>
-            </li>
-            <li class="nav-item nav-item-logout">
-                <a href="#" class="nav-link" onclick="event.preventDefault(); logout()">
-                    <i class="fas fa-power-off"></i>
-                    <span class="nav-label">Salir</span>
-                </a>
-                <ul class="nav-dropdown-menu">
-                    <li class="nav-item"><span class="nav-link nav-dropdown-title">Salir</span></li>
+                    <li class="nav-item"><span class="nav-link nav-dropdown-title">Configuracion</span></li>
                 </ul>
             </li>
         </ul>
     </nav>
 
     <!-- Mount point para views dinamicas -->
-    <div id="view-root" class="flex flex-1 overflow-hidden relative" style="z-index:10;"></div>
+    <div id="view-root" class="flex flex-1 flex-col overflow-hidden relative" style="z-index:10;">
+        <header class="desktop-topbar no-print" aria-label="Acciones principales">
+            <div class="desktop-topbar-left">
+                <div class="desktop-line-selector" id="desktop-line-selector">
+                    <button type="button" class="desktop-line-selector-btn is-loading" id="desktop-line-selector-btn" onclick="toggleDesktopLineMenu(event)" aria-label="Linea vinculada" aria-expanded="false">
+                        <i class="fab fa-whatsapp"></i>
+                        <span id="desktop-line-selector-label">Cargando linea</span>
+                        <i class="fas fa-chevron-down desktop-line-selector-chevron"></i>
+                    </button>
+                    <div class="desktop-line-menu" id="desktop-line-menu" role="menu" aria-label="Lineas vinculadas">
+                        <div class="desktop-line-menu-status" id="desktop-line-menu-status">
+                            <span class="desktop-line-menu-empty">Cargando linea...</span>
+                        </div>
+                        <button type="button" class="desktop-line-menu-item" role="menuitem" onclick="showAddLineSoon(event)">
+                            <i class="fas fa-plus"></i>
+                            <span>Agregar linea</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="desktop-topbar-spacer" aria-hidden="true"></div>
+            <div class="desktop-topbar-actions">
+                <button type="button" class="desktop-topbar-btn" id="desktop-notifications-btn" onclick="openNotificationsModal(event)" aria-label="Notificaciones" title="Notificaciones">
+                    <i class="fas fa-bell"></i>
+                    <span class="unread-badge desktop-topbar-badge" id="desktop-badge-notifications-count" style="display:none;">0</span>
+                </button>
+                <button type="button" class="desktop-topbar-btn" id="desktop-support-btn" onclick="openSupportWidget(event)" aria-label="Soporte" title="Soporte">
+                    <i class="fas fa-headset"></i>
+                    <span class="nav-dot desktop-topbar-dot" id="desktop-dot-support-widget" data-dot-sync="sw-badge" style="display:none;"></span>
+                </button>
+                <button type="button" class="desktop-topbar-btn" id="desktop-theme-btn" onclick="toggleTheme()" aria-label="Cambiar tema" title="Cambiar tema">
+                    <i id="desktop-theme-icon" class="fas fa-sun"></i>
+                </button>
+                <button type="button" class="desktop-project-avatar" id="desktop-project-avatar" data-project-name="{{PROJECT_NAME}}" title="{{PROJECT_NAME}}" aria-label="Menu de cuenta" aria-expanded="false" onclick="toggleDesktopAccountMenu(event)">
+                    <span>{{PROJECT_NAME}}</span>
+                </button>
+                <div class="desktop-account-menu" id="desktop-account-menu" role="menu" aria-label="Menu de cuenta">
+                    <button type="button" class="desktop-account-menu-item" role="menuitem" onclick="navigateFromDesktopAccount('/usuarios')">
+                        <i class="fas fa-user-plus"></i>
+                        <span>Nuevo usuario</span>
+                    </button>
+                    <button type="button" class="desktop-account-menu-item" id="desktop-system-config-account-item" role="menuitem" onclick="navigateFromDesktopAccount('/system-config')" style="display:none;">
+                        <i class="fas fa-gears"></i>
+                        <span>Configuracion</span>
+                    </button>
+                    <button type="button" class="desktop-account-menu-item desktop-account-menu-item-danger" role="menuitem" onclick="logout()">
+                        <i class="fas fa-power-off"></i>
+                        <span>Cerrar sesion</span>
+                    </button>
+                </div>
+            </div>
+        </header>
+        <div id="section-header-root" class="no-print" hidden></div>
+        <div id="view-content-root" class="flex flex-1 overflow-hidden relative"></div>
+    </div>
 
-    <script src="/js/crm/crm-common.js"></script>
+    <script src="/js/core/navigation-config.js?v=10"></script>
+    <script src="/js/crm/crm-common.js?v=8"></script>
+    <script src="/js/core/navigation-router.js?v=1"></script>
+    <script src="/js/core/section-header.js"></script>
     <script src="/js/core/neural-bg.js"></script>
-    <script src="/app.js"></script>
+    <script src="/app.js?v=8"></script>
 </body>
 
 </html>

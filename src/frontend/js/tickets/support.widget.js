@@ -28,15 +28,15 @@ window.supportWidget = (() => {
         if (!_socketBound && typeof io !== 'undefined') {
             _socketBound = true;
             const s = typeof socket !== 'undefined' ? socket : (typeof window.crmSocket !== 'undefined' ? window.crmSocket : io());
-            
+
             s.on('ticket_updated', async (payload) => {
                 if (_activeTicket && payload && payload.id === _activeTicket.id) {
                     _activeTicket = { ..._activeTicket, ...payload };
                     _updateChatUI();
                 }
-                
+
                 await _fetchAll();
-                
+
                 if (_activeTicket) {
                     const updatedTicket = _activeTicketsCache.find(x => x.id === _activeTicket.id);
                     if (updatedTicket) {
@@ -134,24 +134,23 @@ window.supportWidget = (() => {
                 height: 28px;
                 border: none;
                 border-radius: 8px;
-                background: rgba(15, 23, 42, 0.62);
+                background: rgba(22, 54, 84, 0.72);
                 color: #ffffff;
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 cursor: pointer;
-                transition: background 0.2s, transform 0.2s;
+                transition: transform 0.14s ease;
             }
             .sw-widget-action:hover {
-                background: rgba(15, 23, 42, 0.82);
-                transform: translateY(-1px);
+                transform: scale(0.97);
             }
             html[data-theme="dark"] .sw-widget-action {
                 background: rgba(148, 163, 184, 0.28);
                 color: #f8fafc;
             }
             html[data-theme="dark"] .sw-widget-action:hover {
-                background: rgba(148, 163, 184, 0.42);
+                transform: scale(0.97);
             }
             #sw-minimized-bar {
                 display: none;
@@ -172,10 +171,10 @@ window.supportWidget = (() => {
                 color: #f8fafc;
             }
             html[data-theme="dark"] #sw-popover {
-                background: #0A192F;
+                background: #0A2036;
                 border: 1px solid rgba(255,255,255,0.1);
             }
-            
+
             #sw-popover.sw-show {
                 opacity: 1;
                 pointer-events: auto;
@@ -185,8 +184,12 @@ window.supportWidget = (() => {
             .sw-tab-content {
                 display: none;
                 flex: 1;
-                overflow-y: auto;
+                overflow-y: hidden;
+                min-height: 0;
                 flex-direction: column;
+            }
+            #sw-tab-home {
+                overflow-y: auto;
             }
             .sw-tab-content.sw-active {
                 display: flex;
@@ -200,7 +203,7 @@ window.supportWidget = (() => {
                 flex-shrink: 0;
             }
             html[data-theme="dark"] #sw-navbar {
-                background: #0A192F;
+                background: #0A2036;
                 border-top: 1px solid rgba(255,255,255,0.1);
             }
             .sw-nav-btn {
@@ -254,12 +257,12 @@ window.supportWidget = (() => {
                 font-weight: 600;
                 cursor: pointer;
                 display: block;
-                transition: background 0.2s;
+                transition: transform 0.14s ease;
             }
             html[data-theme="dark"] .sw-new-msg-btn { background: #102A43; }
-            .sw-new-msg-btn:hover { background: #0f172a; }
-            html[data-theme="dark"] .sw-new-msg-btn:hover { background: #0B2447; }
-            
+            .sw-new-msg-btn:hover { transform: scale(0.97); }
+            html[data-theme="dark"] .sw-new-msg-btn:hover { transform: scale(0.97); }
+
             .sw-topics {
                 padding: 0 20px 20px;
             }
@@ -293,16 +296,17 @@ window.supportWidget = (() => {
             /* MESSAGES TAB */
             .sw-msg-header {
                 padding: 16px 88px 16px 20px;
-                border-bottom: 1px solid rgba(0,0,0,0.08);
+                background: #0099FF;
+                border-bottom: 1px solid rgba(255,255,255,0.12);
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
-                color: #1e293b;
+                color: #ffffff;
             }
-            html[data-theme="dark"] .sw-msg-header { border-color: rgba(255,255,255,0.1); color: #f8fafc; }
+            html[data-theme="dark"] .sw-msg-header { background: #102A43; border-color: rgba(255,255,255,0.1); color: #f8fafc; }
             .sw-msg-header h2 { font-size: 1.1rem; margin: 0; font-weight: 600; }
             .sw-back-btn { background: none; border: none; cursor: pointer; color: inherit; font-size: 1.1rem; padding: 0; margin-right: 12px; display: none; }
-            
+
             .sw-ticket-list {
                 padding: 16px;
                 flex: 1;
@@ -328,7 +332,7 @@ window.supportWidget = (() => {
             .sw-date-divider::after { right: 0; }
             html[data-theme="dark"] .sw-date-divider::before, html[data-theme="dark"] .sw-date-divider::after { background: rgba(255,255,255,0.1); }
             html[data-theme="dark"] .sw-date-divider { color: #94a3b8; }
-            
+
             .sw-ticket-card {
                 padding: 12px;
                 border: 1px solid rgba(0,0,0,0.08);
@@ -351,7 +355,7 @@ window.supportWidget = (() => {
                 display: none;
                 flex-direction: column;
                 flex: 1;
-                height: 100%;
+                min-height: 0;
             }
             .sw-chat-container {
                 flex: 1;
@@ -421,6 +425,50 @@ window.supportWidget = (() => {
                 justify-content: center;
                 cursor: pointer;
             }
+            .tc-emoji-btn {
+                background: transparent;
+                color: #64748b;
+                border: none;
+                font-size: 1.2rem;
+                cursor: pointer;
+                padding: 0 4px;
+                display: flex;
+                align-items: center;
+                transition: color 0.2s;
+            }
+            .tc-emoji-btn:hover { color: #0099FF; }
+            html[data-theme="dark"] .tc-emoji-btn { color: #94a3b8; }
+            html[data-theme="dark"] .tc-emoji-btn:hover { color: #38bdf8; }
+
+            .sw-emoji-picker {
+                position: absolute;
+                bottom: 70px;
+                left: 12px;
+                background: white;
+                border: 1px solid rgba(0,0,0,0.1);
+                border-radius: 8px;
+                padding: 8px;
+                display: flex;
+                flex-wrap: wrap;
+                width: 260px;
+                gap: 4px;
+                box-shadow: 0 -4px 12px rgba(0,0,0,0.1);
+                z-index: 100;
+            }
+            html[data-theme="dark"] .sw-emoji-picker {
+                background: #1e293b;
+                border-color: rgba(255,255,255,0.1);
+                box-shadow: 0 -4px 12px rgba(0,0,0,0.3);
+            }
+            .sw-emoji-item {
+                font-size: 1.2rem;
+                cursor: pointer;
+                padding: 4px;
+                border-radius: 4px;
+                transition: background 0.2s;
+            }
+            .sw-emoji-item:hover { background: rgba(0,0,0,0.05); }
+            html[data-theme="dark"] .sw-emoji-item:hover { background: rgba(255,255,255,0.1); }
 
             /* MODAL TICKET */
             #sw-modal {
@@ -446,16 +494,16 @@ window.supportWidget = (() => {
                 transform: scale(0.95);
                 animation: popIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
             }
-            html[data-theme="dark"] .sw-modal-content { background: #0A192F; color: #f8fafc; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
+            html[data-theme="dark"] .sw-modal-content { background: #0E2D49; color: #f8fafc; border: 1px solid rgba(0,153,255,0.16); box-shadow: 0 20px 40px rgba(0,0,0,0.34); }
             .sw-modal-content h3 { font-size: 1.25rem; margin-top: 0; margin-bottom: 20px; font-weight: 600; text-align: center; }
-            .sw-input { 
-                width: 100%; 
-                padding: 12px; 
-                border-radius: 8px; 
-                border: 1px solid rgba(0,0,0,0.2); 
-                margin-bottom: 16px; 
-                background: #ffffff; 
-                color: #1e293b; 
+            .sw-input {
+                width: 100%;
+                padding: 12px;
+                border-radius: 8px;
+                border: 1px solid rgba(0,0,0,0.2);
+                margin-bottom: 16px;
+                background: #ffffff;
+                color: #1e293b;
                 font-family: inherit;
                 transition: border-color 0.2s;
             }
@@ -474,16 +522,16 @@ window.supportWidget = (() => {
                 border: none;
                 font-weight: 600;
                 cursor: pointer;
-                transition: background 0.2s, box-shadow 0.2s;
+                transition: transform 0.14s ease;
                 font-size: 0.95rem;
             }
-            .sw-btn-cancel { background: #f1f5f9; color: #475569; }
-            .sw-btn-cancel:hover { background: #e2e8f0; box-shadow: 0 0 10px rgba(71, 85, 105, 0.2); }
-            html[data-theme="dark"] .sw-btn-cancel { background: #1e293b; color: #cbd5e1; }
-            html[data-theme="dark"] .sw-btn-cancel:hover { background: #334155; box-shadow: 0 0 10px rgba(255, 255, 255, 0.1); }
-            
+            .sw-btn-cancel { background: #f3f4f6; color: #475569; border: 1px solid #d1d5db; }
+            .sw-btn-cancel:hover { transform: scale(0.97); }
+            html[data-theme="dark"] .sw-btn-cancel { background: rgba(30, 41, 59, 0.78); color: #cbd5e1; border-color: rgba(100, 116, 139, 0.36); }
+            html[data-theme="dark"] .sw-btn-cancel:hover { transform: scale(0.97); }
+
             .sw-btn-send { background: #0099FF; color: white; }
-            .sw-btn-send:hover { background: #0078D4; box-shadow: 0 0 12px rgba(0, 153, 255, 0.4); }
+            .sw-btn-send:hover { transform: scale(0.97); }
         </style>
 
         <div id="sw-root">
@@ -507,14 +555,14 @@ window.supportWidget = (() => {
                         <div class="sw-home-greeting">Hola, <span id="sw-user-name">Cargando...</span> 👋</div>
                         <div class="sw-home-sub">El equipo de soporte está aquí para ayudarte.</div>
                     </div>
-                    <button id="sw-home-action-btn" class="sw-new-msg-btn" onclick="supportWidget.handleHomeAction()">Enviar un mensaje</button>
-                    
+                    <button id="sw-home-action-btn" class="sw-new-msg-btn" onclick="supportWidget.handleHomeAction()"><i class="fas fa-ticket-alt"></i> Iniciar ticket</button>
+
                     <div class="sw-topics">
-                        <div class="sw-topic-title">Temas Populares</div>
+                        <div class="sw-topic-title">Menu</div>
                         <a href="/docs" target="_blank" class="sw-topic-item" onclick="event.preventDefault(); supportWidget.toggleOpen(); navigate('/docs');">
                             <div class="sw-topic-text">
-                                <strong>Preguntas Frecuentes</strong>
-                                <span>Respuestas a dudas comunes y tutoriales</span>
+                                <strong>Centro de ayuda</strong>
+                                <span>Manuales, respuestas comunes y tutoriales</span>
                             </div>
                             <i class="fas fa-chevron-right" style="color: #64748b;"></i>
                         </a>
@@ -529,19 +577,21 @@ window.supportWidget = (() => {
                             <h2 id="sw-msg-title">Mis Tickets</h2>
                         </div>
                     </div>
-                    
+
                     <!-- Lista de Tickets -->
                     <div id="sw-ticket-list-view" class="sw-ticket-list">
                         <div id="sw-tickets-container" style="text-align:center; padding:20px; color:#64748b; font-size:0.9rem;">Cargando...</div>
                     </div>
 
                     <!-- Vista Chat -->
-                    <div id="sw-chat-view">
+                    <div id="sw-chat-view" style="position: relative;">
                         <div id="sw-chat-messages" class="sw-chat-container"></div>
                         <div class="sw-chat-input-area">
+                            <button id="sw-emoji-btn" class="tc-emoji-btn" onclick="supportWidget.toggleEmojiPicker(event)"><i class="far fa-smile"></i></button>
                             <textarea id="sw-chat-input" class="tc-input" rows="1" placeholder="Escribí un mensaje..."></textarea>
                             <button id="sw-chat-send" class="tc-send-btn" onclick="supportWidget.sendMessage()"><i class="fas fa-paper-plane"></i></button>
                         </div>
+                        <div id="sw-emoji-picker" class="sw-emoji-picker" style="display:none;"></div>
                     </div>
                 </div>
 
@@ -594,7 +644,7 @@ window.supportWidget = (() => {
 
         _isOpen = !_isOpen;
         const popover = document.getElementById('sw-popover');
-        
+
         if (_isOpen) {
             _setMinimized(false);
             popover.classList.add('sw-show');
@@ -716,10 +766,10 @@ window.supportWidget = (() => {
             const resC = await fetch(`/api/backoffice/tickets?token=${_token}&estado=Cerrado`);
             let pending = await resP.json();
             let closed = await resC.json();
-            
+
             pending = Array.isArray(pending) ? pending.filter(t => t.tipo === 'Soporte') : [];
             closed = Array.isArray(closed) ? closed.filter(t => t.tipo === 'Soporte') : [];
-            
+
             const tickets = [...pending, ...closed];
             _activeTicketsCache = tickets;
 
@@ -751,11 +801,11 @@ window.supportWidget = (() => {
                 html += tks.map(t => _renderCard(t)).join('');
             }
             container.innerHTML = html;
-            
+
             const openTicket = tickets.find(t => t.estado === 'Abierto');
             const homeBtn = document.getElementById('sw-home-action-btn');
             if (homeBtn) {
-                homeBtn.innerText = openTicket ? 'Ver Ticket' : 'Enviar un mensaje';
+                homeBtn.innerHTML = openTicket ? '<i class="fas fa-ticket-alt"></i> Ver ticket' : '<i class="fas fa-ticket-alt"></i> Iniciar ticket';
             }
 
             if (_activeTab === 'messages' && openTicket && !_activeTicket) {
@@ -809,6 +859,8 @@ window.supportWidget = (() => {
     function _syncSidebarTrigger() {
         const item = document.getElementById('nav-support-btn');
         if (item) item.classList.toggle('active', _isOpen);
+        const desktopItem = document.getElementById('desktop-support-btn');
+        if (desktopItem) desktopItem.classList.toggle('active', _isOpen);
     }
 
     function openChat(ticketId) {
@@ -818,13 +870,13 @@ window.supportWidget = (() => {
         document.getElementById('sw-ticket-list-view').style.display = 'none';
         document.getElementById('sw-chat-view').style.display = 'flex';
         document.getElementById('sw-back-btn').style.display = 'block';
-        
+
         _updateChatUI();
     }
 
     async function closeChat() {
         if (!_activeTicket) return;
-        
+
         if (_activeTicket.estado === 'Abierto') {
             const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
             const result = await Swal.fire({
@@ -841,7 +893,7 @@ window.supportWidget = (() => {
             });
 
             if (!result.isConfirmed) return;
-            
+
             try {
                 let currentChats = _parseJson(_activeTicket.chats_adjuntos, []);
                 currentChats.push({
@@ -849,11 +901,11 @@ window.supportWidget = (() => {
                     mensaje: 'Ticket cerrado por el usuario.',
                     timestamp: new Date().toISOString()
                 });
-                
+
                 await fetch(`/api/backoffice/tickets/${_activeTicket.id}?token=${_token}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
+                    body: JSON.stringify({
                         estado: 'Cerrado',
                         chats_adjuntos: JSON.stringify(currentChats)
                     })
@@ -873,15 +925,27 @@ window.supportWidget = (() => {
 
     function _updateChatUI() {
         if (!_activeTicket) return;
-        
+
         document.getElementById('sw-msg-title').innerText = _activeTicket.titulo.length > 20 ? _activeTicket.titulo.substring(0, 20) + '...' : _activeTicket.titulo;
-        
+
         const isCerrado = _activeTicket.estado === 'Cerrado';
         document.getElementById('sw-chat-input').disabled = isCerrado;
         document.getElementById('sw-chat-send').disabled = isCerrado;
         document.getElementById('sw-chat-input').placeholder = isCerrado ? "Ticket cerrado." : "Escribí un mensaje...";
 
         _renderChatMessages();
+    }
+
+    function _linkify(text) {
+        if (!text) return '';
+        const urlRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)/gi;
+        return text.replace(urlRegex, function(url) {
+            let href = url;
+            if (!href.toLowerCase().startsWith('http')) {
+                href = 'https://' + href;
+            }
+            return `<a href="${href}" target="_blank" style="color: inherit; text-decoration: underline;">${url}</a>`;
+        });
     }
 
     function _renderChatMessages() {
@@ -895,7 +959,7 @@ window.supportWidget = (() => {
         if (_activeTicket.descripcion) {
             html += `
                 <div class="tc-bubble tc-bubble-client">
-                    <div>${_activeTicket.descripcion.replace(/\\n/g, '<br>')}</div>
+                    <div>${_linkify(_activeTicket.descripcion.replace(/\n/g, '<br>'))}</div>
                     <div class="tc-time">Ticket inicial</div>
                 </div>
             `;
@@ -912,7 +976,7 @@ window.supportWidget = (() => {
                 html += `
                     <div class="tc-bubble ${bubbleClass}">
                         ${isAdmin ? '<div style="font-size:0.65rem; opacity:0.8; margin-bottom:2px; font-weight:bold;">Soporte</div>' : ''}
-                        ${msg.mensaje ? `<div>${msg.mensaje.replace(/\\n/g, '<br>')}</div>` : ''}
+                        ${msg.mensaje ? `<div>${_linkify(msg.mensaje.replace(/\n/g, '<br>'))}</div>` : ''}
                         <div class="tc-time">${timeStr}</div>
                     </div>
                 `;
@@ -923,9 +987,61 @@ window.supportWidget = (() => {
         container.scrollTop = container.scrollHeight;
     }
 
+    // --- Emojis ---
+    const EMOJI_LIST = [
+        '😀','😂','🥰','😎','😭','🙏','👍','👏','🔥','✨','🎉','❤️',
+        '🤔','👀','🙌','💡','✅','❌','⚠️','👋','🚀','💪','💯','😊'
+    ];
+
+    function toggleEmojiPicker(e) {
+        if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        const picker = document.getElementById('sw-emoji-picker');
+        if (!picker) return;
+
+        if (picker.style.display === 'none') {
+            picker.style.display = 'flex';
+            picker.innerHTML = EMOJI_LIST.map(emoji =>
+                `<div class="sw-emoji-item" onclick="supportWidget.insertEmoji('${emoji}')">${emoji}</div>`
+            ).join('');
+        } else {
+            picker.style.display = 'none';
+        }
+    }
+
+    function insertEmoji(emoji) {
+        const input = document.getElementById('sw-chat-input');
+        if (!input) return;
+
+        const start = input.selectionStart;
+        const end = input.selectionEnd;
+        const text = input.value;
+
+        input.value = text.substring(0, start) + emoji + text.substring(end);
+
+        const newPos = start + emoji.length;
+        input.setSelectionRange(newPos, newPos);
+        input.focus();
+
+        document.getElementById('sw-emoji-picker').style.display = 'none';
+    }
+
+    // Close emoji picker if clicked outside
+    document.addEventListener('click', function(e) {
+        const picker = document.getElementById('sw-emoji-picker');
+        const btn = document.getElementById('sw-emoji-btn');
+        if (picker && picker.style.display !== 'none') {
+            if (!picker.contains(e.target) && (!btn || !btn.contains(e.target))) {
+                picker.style.display = 'none';
+            }
+        }
+    });
+
     async function sendMessage() {
         if (!_activeTicket || _activeTicket.estado === 'Cerrado') return;
-        
+
         const input = document.getElementById('sw-chat-input');
         const text = input.value.trim();
         if (!text) return;
@@ -934,7 +1050,7 @@ window.supportWidget = (() => {
         document.getElementById('sw-chat-send').disabled = true;
 
         let currentChats = _parseJson(_activeTicket.chats_adjuntos, []);
-        
+
         currentChats.push({
             rol: 'cliente',
             mensaje: text,
@@ -945,9 +1061,9 @@ window.supportWidget = (() => {
             const res = await fetch(`/api/backoffice/tickets/${_activeTicket.id}?token=${_token}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
+                body: JSON.stringify({
                     chats_adjuntos: JSON.stringify(currentChats)
-                }) 
+                })
             });
 
             if (res.ok) {
@@ -984,6 +1100,8 @@ window.supportWidget = (() => {
         sendMessage,
         handleHomeAction,
         closeWidget,
-        toggleMinimized
+        toggleMinimized,
+        toggleEmojiPicker,
+        insertEmoji
     };
 })();

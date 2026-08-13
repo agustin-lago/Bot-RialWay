@@ -31,7 +31,8 @@ const getSheetsClient = () => {
 };
 
 const getOpenAIClient = async (projectId?: string, serviceId?: string) => {
-    let key = (projectId ? await HistoryHandler.getConfig('OPENAI_API_KEY', projectId, serviceId) : null) || process.env.OPENAI_API_KEY || null;
+    let key = projectId ? await HistoryHandler.getConfig('OPENAI_API_KEY', projectId, serviceId) : null;
+    if (!key) key = process.env.OPENAI_API_KEY || null;
     const baseURL = getOpenAIBaseUrl();
     return key ? new OpenAI({ 
         apiKey: key,

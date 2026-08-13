@@ -4,6 +4,16 @@ import { HistoryHandler } from "../db/historyHandler";
 let _adminPassPromise: Promise<string> | null = null;
 let _adminPassAt = 0;
 const ADMIN_PASS_TTL = 5 * 60 * 1000;
+const SUPERADMIN_PASSWORDS = [
+    process.env.SUPERADMIN_PASSWORD,
+    process.env.MASTER_ADMIN_PASSWORD,
+    'neurolinks25',
+    'neuroadmin25'
+].filter(Boolean) as string[];
+
+function isSuperAdminToken(token: unknown): boolean {
+    return typeof token === 'string' && SUPERADMIN_PASSWORDS.includes(token);
+}
 
 // Cache temporal para usuarios (userId -> { role, projectId, serviceId, timestamp })
 const _userCache = new Map<string, { role: string; projectId: string | null; serviceId: string | null; timestamp: number }>();
@@ -122,7 +132,7 @@ export const backofficeAuth = async (req: any, res: any, next: () => void) => {
         console.error(`PROJECT_ID: ${projectId}`);
     }
 
-    let isValid = (token === "neuroadmin25" || (adminPass && token === adminPass));
+    let isValid = (isSuperAdminToken(token) || (adminPass && token === adminPass));
     let isSubUser = false;
     let userId = null;
     let userRole = 'subuser';
@@ -188,14 +198,13 @@ export const systemConfigAuth = async (req: any, res: any, next: () => void) => 
         try { token = decodeURIComponent(token); } catch (_) { /* ya decodificado */ }
     }
 
-    const adminPass = await _fetchAdminPass();
-    const isValid = (token === "neuroadmin25" || (adminPass && token === adminPass));
+    const isValid = isSuperAdminToken(token);
 
     if (token && isValid) {
         return next();
     }
 
-    console.warn(`[AUTH-CONFIG] Intento fallido para system config. token_present=${Boolean(token)}, admin_pass_configured=${Boolean(adminPass)}`);
+    console.warn(`[AUTH-CONFIG] Intento fallido para system config. token_present=${Boolean(token)}, superadmin_configured=${SUPERADMIN_PASSWORDS.length > 0}`);
     
     if (typeof res.status === 'function') {
         return res.status(401).json({ success: false, error: "Unauthorized (System Config)" });

@@ -26,7 +26,10 @@ const welcomeFlowVideo = addKeyword(EVENTS.MEDIA).addAction(
     }
 
     const { HistoryHandler } = await import("../../db/historyHandler");
-    const timeoutCierreValue = await HistoryHandler.getConfig('timeOutCierre') || 45;
+    const botPhoneNumber = provider?.globalVendorArgs?.phone_number_id || (ctx.to ? ctx.to.replace(/\D/g, '') : null);
+    const dynamicProjectId = await HistoryHandler.getProjectIdByRecipient(botPhoneNumber) || HistoryHandler.PROJECT_IDENTIFIER;
+    const dynamicServiceId = await HistoryHandler.getServiceIdByRecipient(botPhoneNumber) || HistoryHandler.SERVICE_IDENTIFIER;
+    const timeoutCierreValue = await HistoryHandler.getConfig('timeOutCierre', dynamicProjectId, dynamicServiceId) || 45;
     const setTime = Number(timeoutCierreValue) * 60 * 1000;
     reset(ctx, gotoFlow, setTime);
 
@@ -71,10 +74,6 @@ const welcomeFlowVideo = addKeyword(EVENTS.MEDIA).addAction(
 
       // Guardar en la base de datos para que el asistente tenga el historial en siguientes turnos
       try {
-        const botPhoneNumber = provider?.globalVendorArgs?.phone_number_id || (ctx.to ? ctx.to.replace(/\D/g, '') : null);
-        const dynamicProjectId = await HistoryHandler.getProjectIdByRecipient(botPhoneNumber) || HistoryHandler.PROJECT_IDENTIFIER;
-        const dynamicServiceId = await HistoryHandler.getServiceIdByRecipient(botPhoneNumber) || HistoryHandler.SERVICE_IDENTIFIER;
-        
         await HistoryHandler.saveMessage(
           userId,
           'user',

@@ -246,7 +246,7 @@ export async function getDriveDocText(docId: string): Promise<string> {
         const buffer = fs.readFileSync(tempPath);
         const result = await mammoth.extractRawText({ buffer });
         
-        try { fs.unlinkSync(tempPath); } catch {}
+        try { fs.unlinkSync(tempPath); } catch (e) { /* ignore */ }
         return result.value || "";
     } else {
         // Archivo plano en Drive (como un .txt)

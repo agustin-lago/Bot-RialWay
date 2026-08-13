@@ -2,7 +2,7 @@
     const path = window.location.pathname;
     
     // 1. Protección de Backoffice, CRM, Docs e Integraciones
-    if (path.startsWith('/backoffice') || path.startsWith('/crm') ||
+    if (path.startsWith('/conversaciones') || path.startsWith('/crm') ||
         path.startsWith('/documentacion') || path.startsWith('/docs') ||
         path.startsWith('/dashboard') || path.startsWith('/conexion') ||
         path.startsWith('/webchat') || path.startsWith('/meta') ||
@@ -13,15 +13,11 @@
         if (!token) window.location.href = '/login';
     }
     
-    // 2. Protección de Configuración Crítica (Dashboard de Configuración)
+    // 2. Proteccion de Configuracion Critica (Dashboard de Configuracion)
     if (path.startsWith('/system-config')) {
-        let configToken = localStorage.getItem('system_config_token');
-        if (!configToken && localStorage.getItem('backoffice_token') === "neuroadmin25") {
-            configToken = "neuroadmin25";
-            localStorage.setItem('system_config_token', configToken);
-        }
-        if (!configToken || configToken !== "neuroadmin25") {
-            // Si no es el token maestro, forzar login
+        const configToken = localStorage.getItem('system_config_token');
+        const isSuperAdmin = localStorage.getItem('is_superadmin') === 'true';
+        if (!configToken || !isSuperAdmin) {
             window.location.href = '/login?target=system-config';
         }
     }

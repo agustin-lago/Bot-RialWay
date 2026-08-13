@@ -58,6 +58,10 @@ export const initSocketIO = (serverInstance: any, { processUserMessage }: any) =
             }
         });
 
+        historyEvents.on('chat_updated', (payload) => {
+            io.emit('chat_updated', payload);
+        });
+
         historyEvents.on('ticket_updated', (payload) => {
             const ticket = payload.ticket || payload;
             const projId = ticket.project_id || ticket.projectId || payload.projectId;
@@ -86,6 +90,18 @@ export const initSocketIO = (serverInstance: any, { processUserMessage }: any) =
                 io.to(`${projId}:${servId}`).emit('setting_changed', payload);
             } else if (projId) {
                 io.to(`${projId}:*`).emit('setting_changed', payload);
+            }
+        });
+
+        historyEvents.on('whatsapp_line_changed', (payload) => {
+            const projId = payload.project_id || payload.projectId;
+            const servId = payload.service_id || payload.serviceId;
+            if (projId && servId) {
+                io.to(`${projId}:${servId}`).emit('whatsapp_line_changed', payload);
+            } else if (projId) {
+                io.to(`${projId}:*`).emit('whatsapp_line_changed', payload);
+            } else {
+                io.emit('whatsapp_line_changed', payload);
             }
         });
 

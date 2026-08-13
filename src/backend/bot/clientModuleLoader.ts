@@ -1,7 +1,9 @@
 // src/bot/clientModuleLoader.ts
+import { moduleRegistry } from "./toolRegistry";
+import { HistoryHandler } from "../db/historyHandler";
 
-export async function loadActiveClientModule() {
-  const clientSlugRaw = process.env.CLIENT_SLUG;
+export async function loadActiveClientModule(projectId?: string | null, serviceId?: string | null) {
+  const clientSlugRaw = await HistoryHandler.getConfig('CLIENT_SLUG', projectId || null, serviceId || null) || process.env.CLIENT_SLUG;
 
   if (!clientSlugRaw) {
     console.warn("[clientModuleLoader] No hay CLIENT_SLUG configurado en process.env. Se cargará modo base sin módulos de cliente.");

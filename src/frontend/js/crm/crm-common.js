@@ -167,33 +167,6 @@ function _csdRebuild(id) {
     ).join('');
 }
 
-function initTheme() {
-    const savedTheme = localStorage.getItem('theme') || 'light';
-    document.documentElement.setAttribute('data-theme', savedTheme);
-    const cb = document.getElementById('theme-toggle-input');
-    if (cb) cb.checked = savedTheme === 'dark';
-}
-
-function toggleTheme() {
-    const currentTheme = document.documentElement.getAttribute('data-theme');
-    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-    document.documentElement.setAttribute('data-theme', newTheme);
-    localStorage.setItem('theme', newTheme);
-    
-    const cb = document.getElementById('theme-toggle-input');
-    if (cb) cb.checked = newTheme === 'dark';
-    window.dispatchEvent(new Event('themeChanged'));
-}
-
-function logout() {
-    localStorage.removeItem('backoffice_token');
-    localStorage.removeItem('system_config_token');
-    localStorage.removeItem('user_role');
-    localStorage.removeItem('user_id');
-    localStorage.removeItem('user_name');
-    window.location.href = '/login';
-}
-
 /**
  * Retorna el token de autenticación del backoffice listo para usar en URLs.
  * Usa encodeURIComponent para evitar que caracteres especiales (#, &, etc.)
@@ -204,171 +177,6 @@ window.getAuthToken = function() {
     return encodeURIComponent(raw);
 };
 
-// Resaltado automático de la página actual en el Nav
-function highlightActiveNav() {
-    const path = window.location.pathname;
-    const navItems = document.querySelectorAll('.nav-item');
-
-    navItems.forEach(item => {
-        item.classList.remove('active');
-        const route = item.getAttribute('data-route');
-        if (route) {
-            if (route === path) item.classList.add('active');
-            return;
-        }
-        const onclick = item.getAttribute('onclick') || '';
-        if (path === '/backoffice' && onclick.includes('/backoffice')) item.classList.add('active');
-        if (path === '/dashboard' && onclick.includes('/dashboard')) item.classList.add('active');
-        if (path === '/crm' && onclick.includes("'/crm'")) item.classList.add('active');
-        if (path === '/crm-tareas' && onclick.includes("'/crm-tareas'")) item.classList.add('active');
-        if (path === '/webchat' && onclick.includes('/webchat')) item.classList.add('active');
-        if (path === '/system-config' && onclick.includes('/system-config')) item.classList.add('active');
-    });
-
-    // Mensajeria: activo solo en /backoffice (ruta directa del dropdown)
-    const msgBtn = document.getElementById('nav-messaging-btn');
-    if (msgBtn) msgBtn.classList.toggle('active', path === '/backoffice');
-}
-
-// ── Dropdown Mensajeria ────────────────────────────────────────────
-function _closeAllNavDropdowns() {
-    document.querySelectorAll('#navbar .nav-dropdown.open').forEach(el => {
-        el.classList.remove('open');
-        const menu = el.querySelector('.nav-dropdown-menu');
-        if (menu) menu.style.height = '0';
-    });
-}
-
-window.toggleMessagingFlyout = function(e) {
-    if (e) { e.preventDefault(); e.stopPropagation(); }
-    const container = document.getElementById('nav-messaging-btn');
-    if (!container) return;
-    const menu = container.querySelector('.nav-dropdown-menu');
-    if (!menu) return;
-
-    const isOpen = container.classList.contains('open');
-    _closeAllNavDropdowns();
-    if (!isOpen) {
-        container.classList.add('open');
-        menu.style.height = menu.scrollHeight + 'px';
-        // Mark active links
-        const path = window.location.pathname;
-        document.querySelectorAll('#nav-messaging-btn .nav-dropdown-link[data-route]').forEach(item => {
-            item.classList.toggle('active', item.getAttribute('data-route') === path);
-        });
-    }
-};
-
-window.closeMessagingFlyout = function() {
-    const container = document.getElementById('nav-messaging-btn');
-    if (!container) return;
-    container.classList.remove('open');
-    const menu = container.querySelector('.nav-dropdown-menu');
-    if (menu) menu.style.height = '0';
-};
-
-window.toggleIntegracionesFlyout = function(e) {
-    if (e) { e.preventDefault(); e.stopPropagation(); }
-    const container = document.getElementById('nav-integraciones-btn');
-    if (!container) return;
-    const menu = container.querySelector('.nav-dropdown-menu');
-    if (!menu) return;
-    const isOpen = container.classList.contains('open');
-    _closeAllNavDropdowns();
-    if (!isOpen) {
-        container.classList.add('open');
-        menu.style.height = menu.scrollHeight + 'px';
-        const path = window.location.pathname;
-        container.querySelectorAll('.nav-dropdown-link[data-route]').forEach(item => {
-            item.classList.toggle('active', item.getAttribute('data-route') === path);
-        });
-    }
-};
-
-window.closeIntegracionesFlyout = function() {
-    const container = document.getElementById('nav-integraciones-btn');
-    if (!container) return;
-    container.classList.remove('open');
-    const menu = container.querySelector('.nav-dropdown-menu');
-    if (menu) menu.style.height = '0';
-    
-    // Cerrar también el sub-dropdown de Mercado Libre para que no se quede abierto la próxima vez
-    const meliSub = document.getElementById('nav-mercado-libre-sub');
-    if (meliSub) {
-        meliSub.classList.remove('open');
-        const subMenu = meliSub.querySelector('.nav-sub-dropdown-menu');
-        const chevron = meliSub.querySelector('.nav-sub-dropdown-icon');
-        if (subMenu) subMenu.style.height = '0';
-        if (chevron) chevron.style.transform = 'rotate(0deg)';
-    }
-};
-
-window.toggleMeliSubMenu = function(e) {
-    if (e) { e.preventDefault(); e.stopPropagation(); }
-    const container = document.getElementById('nav-mercado-libre-sub');
-    if (!container) return;
-    const menu = container.querySelector('.nav-sub-dropdown-menu');
-    if (!menu) return;
-    const chevron = container.querySelector('.nav-sub-dropdown-icon');
-
-    const isOpen = container.classList.contains('open');
-    if (isOpen) {
-        container.classList.remove('open');
-        menu.style.height = '0';
-        if (chevron) chevron.style.transform = 'rotate(0deg)';
-    } else {
-        container.classList.add('open');
-        menu.style.height = menu.scrollHeight + 'px';
-        if (chevron) chevron.style.transform = 'rotate(180deg)';
-        
-        // Ajustar altura del contenedor padre (Integraciones) para evitar recortes
-        const parentMenu = document.querySelector('#nav-integraciones-btn .nav-dropdown-menu');
-        if (parentMenu) {
-            parentMenu.style.height = 'auto';
-        }
-    }
-};
-
-window.toggleAjustesFlyout = function(e) {
-    if (e) { e.preventDefault(); e.stopPropagation(); }
-    const container = document.getElementById('nav-ajustes-btn');
-    if (!container) return;
-    const menu = container.querySelector('.nav-dropdown-menu');
-    if (!menu) return;
-    const isOpen = container.classList.contains('open');
-    _closeAllNavDropdowns();
-    if (!isOpen) {
-        container.classList.add('open');
-        menu.style.height = menu.scrollHeight + 'px';
-    }
-};
-
-window.closeAjustesFlyout = function() {
-    const container = document.getElementById('nav-ajustes-btn');
-    if (!container) return;
-    container.classList.remove('open');
-    const menu = container.querySelector('.nav-dropdown-menu');
-    if (menu) menu.style.height = '0';
-};
-
-// Manejo inteligente de Paneles laterales desde cualquier página
-window.toggleLeadsPanel = (e) => {
-    if (window.location.pathname !== '/backoffice') {
-        if (typeof window.navigate === 'function') window.navigate('/backoffice?openPanel=leads');
-        else window.location.href = '/backoffice?openPanel=leads';
-        return;
-    }
-    if (typeof window.realToggleLeads === 'function') window.realToggleLeads(e);
-};
-
-window.toggleTicketsPanel = (e) => {
-    if (window.location.pathname !== '/backoffice') {
-        if (typeof window.navigate === 'function') window.navigate('/backoffice?openPanel=tickets');
-        else window.location.href = '/backoffice?openPanel=tickets';
-        return;
-    }
-    if (typeof window.realToggleTickets === 'function') window.realToggleTickets(e);
-};
 
 // Meta vive en /meta view - navegar directamente
 window.toggleMetaPanel = (e) => {
@@ -420,10 +228,10 @@ async function _refreshMetaPanelStatus() {
                         ${config.verified_name ? `<div><strong>Nombre:</strong> ${config.verified_name}</div>` : ''}
                     </div>
                 </div>
-                <button class="btn-primary" onclick="navigate('/meta');" style="width:100%; height:45px; display:flex; align-items:center; justify-content:center; gap:10px; background:#10b981; border:none; border-radius:12px; font-weight:600; cursor:pointer; color:white; margin-top: 20px;">
+                <button class="btn-primary w-full" onclick="navigate('/meta');" style="margin-top: 20px;">
                     <i class="fas fa-layer-group"></i> Abrir Envío Masivo
                 </button>
-                <button class="btn-secondary" onclick="launchMetaOnboarding()" style="width:100%; margin-top:10px; opacity:0.7; font-size:0.8rem;">
+                <button class="btn-secondary w-full" onclick="launchMetaOnboarding()" style="margin-top:10px;">
                     Actualizar Configuración
                 </button>
             `;
@@ -450,7 +258,7 @@ async function _refreshMetaPanelStatus() {
                             <li>Soporte para <strong>Imágenes y Audios</strong> oficiales.</li>
                         </ul>
                     </div>
-                    <button class="btn-primary" onclick="launchMetaOnboarding()" style="width:100%; height:45px; display:flex; align-items:center; justify-content:center; gap:10px; background:#0668E1; border:none; border-radius:12px; font-weight:600; cursor:pointer; color:white; margin-top: 20px;">
+                    <button class="btn-primary w-full" onclick="launchMetaOnboarding()" style="margin-top: 20px;">
                         <i class="fab fa-meta"></i> Vincular con Meta Cloud API
                     </button>
                 `;
@@ -600,96 +408,12 @@ window.updateFieldVisibility = (id, visible) => {
     if (field) field.visible = visible;
 };
 
-// ── Sidebar toggle ────────────────────────────────────────────────
-function _clearFlyoutStyles() {
-    document.querySelectorAll('#navbar .nav-dropdown-menu').forEach(m => {
-        m.classList.remove('flyout-active');
-    });
-}
-
-function _setSidebarCollapsed(collapsed) {
-    const nav = document.getElementById('navbar');
-    if (!nav) return;
-    _closeAllNavDropdowns();
-    nav.classList.toggle('collapsed', collapsed);
-    document.body.classList.toggle('sidebar-collapsed', collapsed);
-    localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '0');
-    _clearFlyoutStyles();
-}
-
-function _initFlyoutHover() {
-    document.querySelectorAll('#navbar .nav-item').forEach(item => {
-        const link = item.querySelector(':scope > .nav-link');
-        const menu = item.querySelector(':scope > .nav-dropdown-menu');
-        if (!link || !menu) return;
-        let _t = null;
-        const show = () => {
-            const nav = document.getElementById('navbar');
-            if (!nav || !nav.classList.contains('collapsed')) return;
-            if (window.innerWidth <= 768) return;
-            clearTimeout(_t);
-            menu.classList.add('flyout-active');
-        };
-        const hide = (delay) => {
-            clearTimeout(_t);
-            _t = setTimeout(() => menu.classList.remove('flyout-active'), delay);
-        };
-        link.addEventListener('mouseenter', show);
-        link.addEventListener('mouseleave', () => hide(120));
-        menu.addEventListener('mouseenter', () => clearTimeout(_t));
-        menu.addEventListener('mouseleave', () => hide(80));
-    });
-}
-
-// Inicialización
+// Inicializacion
 document.addEventListener('DOMContentLoaded', async () => {
-    initTheme();
-    highlightActiveNav();
     updateMetaNavButton();
-
 
     await window.fetchCRMConfig();
     window.applyCRMConfig();
-
-
-    // Sidebar toggle
-    const savedCollapsed = localStorage.getItem('sidebar-collapsed') === '1';
-    const isSmall = window.innerWidth <= 768;
-    _setSidebarCollapsed(isSmall ? true : savedCollapsed);
-
-    if (isSmall) {
-        const t = document.getElementById('sidebar-toggler');
-        if (t) t.style.display = 'none';
-    }
-
-    _initFlyoutHover();
-
-    const toggler = document.getElementById('sidebar-toggler');
-    const mobileBtn = document.getElementById('sidebar-menu-btn');
-    const nav = document.getElementById('navbar');
-    if (toggler && nav) {
-        toggler.addEventListener('click', () => {
-            _closeAllNavDropdowns();
-            _setSidebarCollapsed(!nav.classList.contains('collapsed'));
-        });
-    }
-    if (mobileBtn && nav) {
-        mobileBtn.addEventListener('click', () => {
-            _closeAllNavDropdowns();
-            _setSidebarCollapsed(!nav.classList.contains('collapsed'));
-        });
-    }
-
-    // Mobile: cerrar sidebar al navegar a una seccion
-    if (nav) {
-        nav.addEventListener('click', (e) => {
-            if (window.innerWidth > 768) return;
-            const link = e.target.closest('.nav-link');
-            if (!link) return;
-            if (link.closest('.nav-item.nav-dropdown') && !link.classList.contains('nav-dropdown-link')) return;
-            _setSidebarCollapsed(true);
-        });
-    }
 });
 
 window.autoFitColumns = () => {

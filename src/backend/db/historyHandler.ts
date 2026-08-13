@@ -9,6 +9,24 @@ import { LocalHistoryStore } from "./localHistoryStore";
 
 dotenv.config();
 
+const sanitizeJsonPayload = (payload: any): any => {
+    if (!payload) return null;
+    try {
+        const seen = new WeakSet();
+        return JSON.parse(JSON.stringify(payload, (_key, value) => {
+            if (typeof value === 'bigint') return value.toString();
+            if (typeof value === 'function' || typeof value === 'symbol') return undefined;
+            if (value && typeof value === 'object') {
+                if (seen.has(value)) return '[Circular]';
+                seen.add(value);
+            }
+            return value;
+        }));
+    } catch {
+        return null;
+    }
+};
+
 const supabaseUrl = process.env.SUPABASE_URL || vault.supabaseUrl;
 const supabaseKey = process.env.SUPABASE_KEY || vault.supabaseKey;
 const supabase = createClient(supabaseUrl, supabaseKey);
@@ -29,6 +47,92 @@ export const normalizeTextForCache = (text: string): string => {
 
 // Identificador único para este bot específico
 // Identificador único para este bot específico (Usamos el UUID para consistencia total)
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const isScopedServiceId = (serviceId?: string | null): boolean => {
+    return !!serviceId && serviceId !== 'default' && serviceId !== 'default_service';
+};
+
+const getReplyPreviewContent = (content: any, type: string): string => {
+    if (type !== 'text') {
+        if (type === 'image') return 'Imagen';
+        if (type === 'video') return 'Video';
+        if (type === 'audio' || type === 'voice') return 'Audio';
+        return 'Archivo';
+    }
+
+    return String(content || 'Mensaje')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 120) || 'Mensaje';
+};
+
+const resolveReplyMetadata = async (
+    chatId: string,
+    projectId: string,
+    serviceId: string | null,
+    rawReplyTo: string | null,
+    rawReplyPreview: any,
+    chatObj: any
+): Promise<{ replyTo: string | null; replyPreview: any }> => {
+    if (!rawReplyTo) {
+        return { replyTo: null, replyPreview: rawReplyPreview || null };
+    }
+
+    let referenced: any = null;
+    try {
+        const buildQuery = () => {
+            let query = supabase
+                .from('messages')
+                .select('id, external_id, role, content, type')
+                .in('chat_id', [chatId, `${chatId}@s.whatsapp.net`, `${chatId}@c.us`])
+                .eq('project_id', projectId);
+
+            if (isScopedServiceId(serviceId)) {
+                query = query.eq('service_id', serviceId);
+            }
+
+            return query.limit(1);
+        };
+
+        if (UUID_RE.test(rawReplyTo)) {
+            const { data } = await buildQuery().eq('id', rawReplyTo).maybeSingle();
+            referenced = data;
+        }
+
+        if (!referenced) {
+            const { data } = await buildQuery().eq('external_id', rawReplyTo).maybeSingle();
+            referenced = data;
+        }
+    } catch (err: any) {
+        console.warn('[HistoryHandler] No se pudo resolver reply quoted:', err?.message || err);
+    }
+
+    const replyTo = referenced?.id || rawReplyTo;
+    let replyPreview = rawReplyPreview || null;
+
+    if (referenced) {
+        const replyType = referenced.type || replyPreview?.type || 'text';
+        const author = referenced.role === 'assistant'
+            ? 'Vos'
+            : ((chatObj as any)?.name && (chatObj as any).name !== '[-]')
+                ? (chatObj as any).name
+                : String(chatId).split('@')[0];
+
+        replyPreview = {
+            ...(replyPreview || {}),
+            id: replyPreview?.id || referenced.external_id || referenced.id || rawReplyTo,
+            localId: replyPreview?.localId || referenced.id,
+            role: replyPreview?.role || referenced.role || null,
+            author: replyPreview?.author || author,
+            content: replyPreview?.content || getReplyPreviewContent(referenced.content, replyType),
+            type: replyType
+        };
+    }
+
+    return { replyTo, replyPreview };
+};
 const PROJECT_ID = process.env.RAILWAY_PROJECT_ID || "default_project";
 const PROJECT_NAME = process.env.RAILWAY_SERVICE_NAME || "Bot-RialWay";
 
@@ -55,6 +159,10 @@ export interface Message {
     role: 'user' | 'assistant' | 'system';
     content: string;
     type: 'text' | 'image' | 'audio' | 'video' | 'location' | 'document';
+    external_id?: string | null;
+    reply_to?: string | null;
+    reply_preview?: any;
+    raw_payload?: any;
     created_at?: string;
 }
 
@@ -68,7 +176,6 @@ export class HistoryHandler {
     // In-memory caches to optimize database performance and avoid Disk I/O exhaustion (Supabase Best Practice)
     private static settingsCache = new Map<string, { value: string | null, timestamp: number }>();
     private static chatCache = new Map<string, { data: any, timestamp: number }>();
-    private static systemConfigVisibleTimer: any = null;
     private static readonly CACHE_TTL_MS = 60 * 1000; // Settings cache: 1 minute
     private static readonly CHAT_CACHE_TTL_MS = 15 * 1000; // Chat cache: 15 seconds
 
@@ -127,6 +234,7 @@ export class HistoryHandler {
         this.subscribeToSettingsChanges();
         this.subscribeToTicketChanges();
         this.subscribeToUsersChanges();
+        this.subscribeToChatChanges();
 
         console.log('🔍 [HistoryHandler] Verificando tablas de historial...');
 
@@ -206,6 +314,9 @@ export class HistoryHandler {
                     content TEXT NOT NULL,
                     type TEXT DEFAULT 'text',
                     external_id TEXT UNIQUE,
+                    reply_to TEXT,
+                    reply_preview JSONB,
+                    raw_payload JSONB,
                     status TEXT DEFAULT 'sent',
                     created_at TIMESTAMPTZ DEFAULT NOW(),
                     FOREIGN KEY (chat_id, project_id) REFERENCES chats(id, project_id) ON UPDATE CASCADE ON DELETE CASCADE
@@ -514,6 +625,23 @@ export class HistoryHandler {
                     }
 
                     // Migración para chat_id, attachments y chats_adjuntos en tickets
+                    if (table.name === 'messages') {
+                        const { error: replyColsErr } = await supabase.from('messages').select('reply_to, reply_preview, raw_payload').limit(1);
+                        const missingReplyColumns = replyColsErr && (
+                            replyColsErr.code === '42703' ||
+                            replyColsErr.code === 'PGRST204' ||
+                            String(replyColsErr.message || '').includes('reply_to') ||
+                            String(replyColsErr.message || '').includes('reply_preview') ||
+                            String(replyColsErr.message || '').includes('raw_payload')
+                        );
+                        if (missingReplyColumns) {
+                            console.log(`Agregando columnas reply_to, reply_preview y raw_payload a messages...`);
+                            await supabase.rpc('exec_sql', {
+                                query: `ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to TEXT, ADD COLUMN IF NOT EXISTS reply_preview JSONB, ADD COLUMN IF NOT EXISTS raw_payload JSONB;`
+                            });
+                        }
+                    }
+
                     if (table.name === 'tickets') {
                         const { error: ticketChatIdErr } = await supabase.from('tickets').select('chat_id').limit(1);
                         if (ticketChatIdErr && ticketChatIdErr.code === '42703') {
@@ -609,37 +737,20 @@ export class HistoryHandler {
             console.error('❌ Error fatal creando índices:', err);
         }
 
-        // 5. Iniciar temporizador/verificación de SYSTEM_CONFIG_VISIBLE temporal
+        // 5. Sincronizar SYSTEM_CONFIG_VISIBLE persistente desde DB/env sin modificarlo.
         await this.checkSystemConfigVisibleOnStartup();
 
         console.log('✅ [HistoryHandler] Inicialización completa.');
         this.initialized = true;
     }
 
-    static async activateSystemConfigTemporarily() {
-        console.log(`🔑 [HistoryHandler] Activando SYSTEM_CONFIG_VISIBLE por 60 minutos.`);
-
-        // 1. Guardar en base de datos
+    static async activateSystemConfigManually() {
+        console.log(`[HistoryHandler] Activando SYSTEM_CONFIG_VISIBLE manualmente.`);
         await this.saveSetting('SYSTEM_CONFIG_VISIBLE', 'true');
-
-        // 2. Limpiar timer existente
-        if (this.systemConfigVisibleTimer) {
-            clearTimeout(this.systemConfigVisibleTimer);
-        }
-
-        // 3. Crear nuevo timer
-        this.systemConfigVisibleTimer = setTimeout(async () => {
-            console.log(`⏰ [HistoryHandler] Tiempo cumplido. Desactivando SYSTEM_CONFIG_VISIBLE.`);
-            await this.deactivateSystemConfig();
-        }, 60 * 60 * 1000); // 60 minutos
     }
 
     static async deactivateSystemConfig() {
         await this.saveSetting('SYSTEM_CONFIG_VISIBLE', 'false');
-        if (this.systemConfigVisibleTimer) {
-            clearTimeout(this.systemConfigVisibleTimer);
-            this.systemConfigVisibleTimer = null;
-        }
     }
 
     static async checkSystemConfigVisibleOnStartup() {
@@ -647,7 +758,7 @@ export class HistoryHandler {
             if (!supabase) return;
             const { data, error } = await supabase
                 .from('settings')
-                .select('value, updated_at')
+                .select('value')
                 .eq('project_id', this.PROJECT_IDENTIFIER)
                 .eq('key', 'SYSTEM_CONFIG_VISIBLE')
                 .maybeSingle();
@@ -657,23 +768,9 @@ export class HistoryHandler {
                 return;
             }
 
-            if (data && data.value === 'true' && data.updated_at) {
-                const elapsed = Date.now() - new Date(data.updated_at).getTime();
-                const sixtyMinutes = 60 * 60 * 1000;
-                const remaining = sixtyMinutes - elapsed;
-
-                if (remaining <= 0) {
-                    console.log(`⏰ [HistoryHandler] SYSTEM_CONFIG_VISIBLE estaba activo pero ya expiró. Desactivando.`);
-                    await this.deactivateSystemConfig();
-                } else {
-                    console.log(`⏰ [HistoryHandler] SYSTEM_CONFIG_VISIBLE activo al inicio. Expirará en ${Math.round(remaining / 1000 / 60)} minutos.`);
-                    process.env.SYSTEM_CONFIG_VISIBLE = 'true';
-                    if (this.systemConfigVisibleTimer) clearTimeout(this.systemConfigVisibleTimer);
-                    this.systemConfigVisibleTimer = setTimeout(async () => {
-                        console.log(`⏰ [HistoryHandler] Tiempo cumplido (iniciado antes del reinicio). Desactivando SYSTEM_CONFIG_VISIBLE.`);
-                        await this.deactivateSystemConfig();
-                    }, remaining);
-                }
+            process.env.SYSTEM_CONFIG_VISIBLE = data?.value === 'true' ? 'true' : 'false';
+            if (data?.value === 'true') {
+                console.log(`[HistoryHandler] SYSTEM_CONFIG_VISIBLE activo de forma persistente.`);
             }
         } catch (err) {
             console.error('[HistoryHandler] Error en checkSystemConfigVisibleOnStartup:', err);
@@ -839,9 +936,10 @@ export class HistoryHandler {
     /**
      * Actualiza el último resultado de base de datos para un chat
      */
-    static async updateLastDbResult(rawChatId: string, result: string, forcedProjectId?: string): Promise<boolean> {
+    static async updateLastDbResult(rawChatId: string, result: string, forcedProjectId?: string, forcedServiceId?: string | null): Promise<boolean> {
         const chatId = this.normalizeId(rawChatId);
         const currentProjectId = forcedProjectId || this.PROJECT_IDENTIFIER;
+        const currentServiceId = forcedServiceId || this.SERVICE_IDENTIFIER;
         if (process.env.STORAGE_MODE === "local") {
             return LocalHistoryStore.updateLastDbResult(chatId, result, currentProjectId);
         }
@@ -850,11 +948,17 @@ export class HistoryHandler {
         this.invalidateChatCache(chatId, currentProjectId);
 
         try {
-            const { error } = await supabase
+            let query = supabase
                 .from('chats')
                 .update({ last_db_result: result })
                 .eq('id', chatId)
                 .eq('project_id', currentProjectId);
+
+            if (isScopedServiceId(currentServiceId)) {
+                query = query.eq('service_id', currentServiceId);
+            }
+
+            const { error } = await query;
             if (error) {
                 console.error("[HistoryHandler] Error actualizando last_db_result en chats:", error.message);
                 return false;
@@ -1065,6 +1169,32 @@ export class HistoryHandler {
                 type,
                 created_at: new Date().toISOString()
             };
+            const fallbackRawPayload = (!rawPayload && external_id && resolvedPlatform === 'whatsapp')
+                ? {
+                    id: external_id,
+                    body: content,
+                    type,
+                    role,
+                    platform: resolvedPlatform,
+                    chatId,
+                    projectId: currentProjectId,
+                    serviceId: currentServiceId,
+                    capturedAt: msgData.created_at,
+                    source: 'historyHandlerFallback'
+                }
+                : rawPayload;
+            const rawReplyTo = fallbackRawPayload?.replyTo || fallbackRawPayload?.reply_to || fallbackRawPayload?.context?.id || fallbackRawPayload?.context?.message_id || null;
+            const rawReplyPreview = fallbackRawPayload?.replyPreview || fallbackRawPayload?.reply_preview || null;
+            const { replyTo, replyPreview } = await resolveReplyMetadata(chatId, currentProjectId, currentServiceId, rawReplyTo, rawReplyPreview, chatObj);
+            const enrichedRawPayload = fallbackRawPayload
+                ? {
+                    ...fallbackRawPayload,
+                    replyTo: rawReplyTo,
+                    reply_to: replyTo,
+                    replyPreview
+                }
+                : fallbackRawPayload;
+            const safeRawPayload = sanitizeJsonPayload(enrichedRawPayload);
 
             // --- DEDUPLICACIÓN MULTI-ESTRATEGIA ---
             // 1. Búsqueda exacta por external_id
@@ -1077,6 +1207,27 @@ export class HistoryHandler {
                     .maybeSingle();
 
                 if (!exactError && exactMatch) {
+                    if ((replyTo && !exactMatch.reply_to) || (replyPreview && !exactMatch.reply_preview) || (safeRawPayload && !exactMatch.raw_payload)) {
+                        const updatePayload: any = {};
+                        if (replyTo && !exactMatch.reply_to) updatePayload.reply_to = replyTo;
+                        if (replyPreview && !exactMatch.reply_preview) updatePayload.reply_preview = replyPreview;
+                        if (safeRawPayload && !exactMatch.raw_payload) updatePayload.raw_payload = safeRawPayload;
+                        const { data: updatedRows, error: updateError } = await supabase.from('messages').update(updatePayload).eq('id', exactMatch.id).select();
+                        if (updateError) {
+                            console.warn('[HistoryHandler] No se pudo enriquecer mensaje existente con reply/raw_payload:', updateError.message);
+                        }
+                        const updatedMsg = updatedRows?.[0] || { ...exactMatch, ...updatePayload };
+                        historyEvents.emit('new_message', {
+                            ...updatedMsg,
+                            chat_id: chatId,
+                            chatId,
+                            project_id: currentProjectId,
+                            projectId: currentProjectId,
+                            service_id: currentServiceId,
+                            serviceId: currentServiceId,
+                            rawPayload: updatedMsg.raw_payload
+                        });
+                    }
                     return [exactMatch]; // Ya existe, retornamos sin emitir evento repetido
                 }
             }
@@ -1104,20 +1255,44 @@ export class HistoryHandler {
                 if (existing.external_id && external_id && existing.external_id !== external_id) {
                     // Continuar con la inserción normal
                 } else {
-                    // Si el mensaje existente no tiene external_id y ahora lo tenemos, lo actualizamos
-                    if (!existing.external_id && external_id) {
-                        console.log(`[HistoryHandler] 🔄 Vinculando ID externo a mensaje existente: ${existing.id} -> ${external_id}`);
-                        await supabase
-                            .from('messages')
-                            .update({ external_id })
-                            .eq('id', existing.id);
+                    const shouldEnrichExisting = (!existing.external_id && external_id) || !!replyTo || !!replyPreview || !!safeRawPayload;
+                    if (shouldEnrichExisting) {
+                        if (!existing.external_id && external_id) {
+                            console.log(`[HistoryHandler] 🔄 Vinculando ID externo a mensaje existente: ${existing.id} -> ${external_id}`);
+                        }
+                        const updatePayload: any = {};
+                        if (!existing.external_id && external_id) updatePayload.external_id = external_id;
+                        if (replyTo) updatePayload.reply_to = replyTo;
+                        if (replyPreview) updatePayload.reply_preview = replyPreview;
+                        if (safeRawPayload) updatePayload.raw_payload = safeRawPayload;
+                        if (Object.keys(updatePayload).length > 0) {
+                            const { data: updatedRows, error: updateError } = await supabase
+                                .from('messages')
+                                .update(updatePayload)
+                                .eq('id', existing.id)
+                                .select();
+                            if (updateError) {
+                                console.warn('[HistoryHandler] No se pudo enriquecer mensaje difuso con reply/raw_payload:', updateError.message);
+                            }
+                            const updatedMsg = updatedRows?.[0] || { ...existing, ...updatePayload, chat_id: chatId, role, content, type };
+                            historyEvents.emit('new_message', {
+                                ...updatedMsg,
+                                chat_id: chatId,
+                                chatId,
+                                project_id: currentProjectId,
+                                projectId: currentProjectId,
+                                service_id: currentServiceId,
+                                serviceId: currentServiceId,
+                                rawPayload: updatedMsg.raw_payload
+                            });
+                        }
                     }
                     return recentlySaved;
                 }
             }
 
             // 3. INSERCIÓN NORMAL (Si no se encontró duplicado)
-            const { error: insertError, data: insertedMsg } = await supabase.from('messages').insert({
+            const insertPayload = {
                 chat_id: chatId,
                 project_id: currentProjectId,
                 service_id: currentServiceId,
@@ -1125,9 +1300,28 @@ export class HistoryHandler {
                 content,
                 type,
                 external_id: external_id || null,
+                reply_to: replyTo,
+                reply_preview: replyPreview,
+                raw_payload: safeRawPayload,
                 created_at: msgData.created_at,
                 status: messageStatus
-            }).select();
+            };
+            let { error: insertError, data: insertedMsg } = await supabase.from('messages').insert(insertPayload).select();
+
+            if (insertError && (
+                insertError.code === '42703' ||
+                insertError.code === 'PGRST204' ||
+                String(insertError.message || '').includes('reply_to') ||
+                String(insertError.message || '').includes('reply_preview') ||
+                String(insertError.message || '').includes('raw_payload')
+            )) {
+                await supabase.rpc('exec_sql', {
+                    query: `ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to TEXT, ADD COLUMN IF NOT EXISTS reply_preview JSONB, ADD COLUMN IF NOT EXISTS raw_payload JSONB;`
+                });
+                const retryResult = await supabase.from('messages').insert(insertPayload).select();
+                insertError = retryResult.error;
+                insertedMsg = retryResult.data;
+            }
 
             if (insertError) {
                 // Manejar race conditions de inserción concurrente
@@ -1145,28 +1339,38 @@ export class HistoryHandler {
                 chatUpdate.unread_count = currentUnread + 1;
             }
 
-            await supabase
+            let chatUpdateQuery = supabase
                 .from('chats')
                 .update(chatUpdate)
                 .eq('id', chatId)
                 .eq('project_id', currentProjectId);
+            if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
+                chatUpdateQuery = chatUpdateQuery.eq('service_id', currentServiceId);
+            }
+            await chatUpdateQuery;
 
             this.invalidateChatCache(chatId, currentProjectId);
 
             // Emitir evento para WebSockets (esto actualiza la UI en tiempo real)
+            const emittedMessage: any = insertedMsg?.[0] || {};
             historyEvents.emit('new_message', {
-                chat_id: chatId,
+                ...emittedMessage,
+                chat_id: emittedMessage.chat_id || chatId,
+                chatId,
                 role,
-                content,
-                type,
-                created_at: new Date().toISOString(),
-                external_id: external_id || null,
-                status: messageStatus,
+                content: emittedMessage.content || content,
+                type: emittedMessage.type || type,
+                created_at: emittedMessage.created_at || new Date().toISOString(),
+                external_id: emittedMessage.external_id || external_id || null,
+                status: emittedMessage.status || messageStatus,
+                reply_to: emittedMessage.reply_to || replyTo,
+                reply_preview: emittedMessage.reply_preview || replyPreview,
                 project_id: currentProjectId,
                 projectId: currentProjectId,
                 service_id: currentServiceId,
                 serviceId: currentServiceId,
-                rawPayload
+                raw_payload: emittedMessage.raw_payload || safeRawPayload,
+                rawPayload: emittedMessage.raw_payload || safeRawPayload
             });
 
         } catch (err) {
@@ -1245,24 +1449,31 @@ export class HistoryHandler {
     /**
      * Limpia todo el historial de mensajes para un contacto específico en un proyecto.
      */
-    static async clearChatHistory(rawChatId: string, forcedProjectId?: string): Promise<boolean> {
+    static async clearChatHistory(rawChatId: string, forcedProjectId?: string, forcedServiceId?: string | null): Promise<boolean> {
         const chatId = this.normalizeId(rawChatId);
         const currentProjectId = forcedProjectId || this.PROJECT_IDENTIFIER;
+        const currentServiceId = forcedServiceId || this.SERVICE_IDENTIFIER;
         if (process.env.STORAGE_MODE === "local") {
             const success = await LocalHistoryStore.clearChatHistory(chatId, currentProjectId);
             if (success) {
-                historyEvents.emit('chat_history_cleared', { chatId, projectId: currentProjectId });
+                historyEvents.emit('chat_history_cleared', { chatId, projectId: currentProjectId, serviceId: currentServiceId });
             }
             return success;
         }
 
         try {
             // Eliminar todos los mensajes del chat en el proyecto actual
-            const { error } = await supabase
+            let deleteQuery = supabase
                 .from('messages')
                 .delete()
                 .eq('chat_id', chatId)
                 .eq('project_id', currentProjectId);
+
+            if (currentServiceId && currentServiceId !== 'default_service') {
+                deleteQuery = deleteQuery.eq('service_id', currentServiceId);
+            }
+
+            const { error } = await deleteQuery;
 
             if (error) {
                 console.error('[HistoryHandler] Error al limpiar historial de chat:', error.message);
@@ -1270,20 +1481,31 @@ export class HistoryHandler {
             }
 
             // También reiniciamos unread_count en la tabla chats
-            await supabase
+            let chatUpdateQuery = supabase
                 .from('chats')
                 .update({ unread_count: 0 })
                 .eq('id', chatId)
                 .eq('project_id', currentProjectId);
 
+            if (currentServiceId && currentServiceId !== 'default_service') {
+                chatUpdateQuery = chatUpdateQuery.eq('service_id', currentServiceId);
+            }
+
+            await chatUpdateQuery;
+
             this.invalidateChatCache(chatId, currentProjectId);
 
-            const { data: chatData } = await supabase
+            let chatDataQuery = supabase
                 .from('chats')
                 .select('service_id')
                 .eq('id', chatId)
-                .eq('project_id', currentProjectId)
-                .maybeSingle();
+                .eq('project_id', currentProjectId);
+
+            if (currentServiceId && currentServiceId !== 'default_service') {
+                chatDataQuery = chatDataQuery.eq('service_id', currentServiceId);
+            }
+
+            const { data: chatData } = await chatDataQuery.maybeSingle();
 
             historyEvents.emit('chat_history_cleared', {
                 chatId,
@@ -1362,11 +1584,13 @@ export class HistoryHandler {
         crm_status?: string,
         crm_due_date?: string | null,
         metadata?: any,
-        ticket_title?: string
+        ticket_title?: string,
+        ticket_description?: string
     }, forcedProjectId?: string, forcedServiceId?: string | null) {
         const chatId = this.normalizeId(rawChatId);
         let currentProjectId = forcedProjectId;
         const currentServiceId = forcedServiceId || this.SERVICE_IDENTIFIER;
+        const ticketDescription = (details as any).ticket_description;
 
         const originalCrmStatus = details.crm_status;
         const originalIsLead = details.is_lead;
@@ -1380,12 +1604,14 @@ export class HistoryHandler {
         }
 
         if (process.env.STORAGE_MODE === "local") {
-            const success = await LocalHistoryStore.updateContactDetails(chatId, details as any, currentProjectId || HistoryHandler.PROJECT_IDENTIFIER);
+            const localDetails = { ...(details as any) };
+            delete localDetails.ticket_description;
+            const success = await LocalHistoryStore.updateContactDetails(chatId, localDetails, currentProjectId || HistoryHandler.PROJECT_IDENTIFIER);
             if (success) {
                 historyEvents.emit('contact_updated', {
                     chatId,
                     project_id: currentProjectId || HistoryHandler.PROJECT_IDENTIFIER,
-                    details
+                    details: localDetails
                 });
                 const tickets = LocalHistoryStore.getTicketsList(currentProjectId || HistoryHandler.PROJECT_IDENTIFIER);
                 const activeTicket = tickets.find(t => t.chat_id === chatId);
@@ -1396,7 +1622,7 @@ export class HistoryHandler {
             return { success };
         }
         if (details.name === '[-]') details.name = undefined;
-        const { ticket_title: ticketTitle, newPhone: rawNewPhone, phone: rawPhone, ...chatDetails } = details as any;
+        const { ticket_title: ticketTitle, ticket_description: _ticketDescription, newPhone: rawNewPhone, phone: rawPhone, ...chatDetails } = details as any;
         const targetNewPhone = rawNewPhone || rawPhone;
         let updatedPhoneId: string | null = null;
 
@@ -1512,6 +1738,7 @@ export class HistoryHandler {
                 .select('id, estado')
                 .eq('chat_id', chatId)
                 .eq('project_id', currentProjectId)
+                .eq('tipo', 'Nuevo Lead')
                 .neq('estado', 'Cerrado');
 
             if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
@@ -1523,8 +1750,8 @@ export class HistoryHandler {
             if (!lookupErr && existingTicket && existingTicket.length > 0) {
                 const activeTicketId = existingTicket[0].id;
                 const ticketUpdatePayload: any = { updated_at: new Date().toISOString() };
-                if (details.notes !== undefined) {
-                    ticketUpdatePayload.descripcion = details.notes;
+                if (ticketDescription !== undefined || details.notes !== undefined) {
+                    ticketUpdatePayload.descripcion = ticketDescription ?? details.notes;
                 }
                 if (originalCrmStatus) {
                     ticketUpdatePayload.estado = originalCrmStatus;
@@ -1581,7 +1808,7 @@ export class HistoryHandler {
                     project_id: currentProjectId,
                     chat_id: chatId,
                     titulo: ticketTitle || `Lead: ${name}`,
-                    descripcion: details.notes || 'Lead detectado automáticamente',
+                    descripcion: ticketDescription ?? details.notes ?? 'Lead detectado automáticamente',
                     estado: initialStatus,
                     tipo: 'Nuevo Lead',
                     prioridad: 'Media',
@@ -1784,7 +2011,7 @@ export class HistoryHandler {
         const currentServiceId = serviceId || this.SERVICE_IDENTIFIER;
         if (process.env.STORAGE_MODE === "local") {
             const res = await LocalHistoryStore.toggleBot(chatId, enabled, currentProjectId);
-            historyEvents.emit('bot_toggled', { chatId, enabled, assigned_agent: 'asistente1', projectId: currentProjectId });
+            historyEvents.emit('bot_toggled', { chatId, enabled, assigned_agent: 'asistente1', projectId: currentProjectId, serviceId: currentServiceId });
             return { success: res };
         }
 
@@ -1833,21 +2060,26 @@ export class HistoryHandler {
     /**
      * Actualiza la marca de tiempo de la última intervención humana
      */
-    static async updateLastHumanMessage(rawChatId: string, projectId: string | null = null) {
+    static async updateLastHumanMessage(rawChatId: string, projectId: string | null = null, serviceId: string | null = null) {
         const chatId = this.normalizeId(rawChatId);
         const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
+        const currentServiceId = serviceId || this.SERVICE_IDENTIFIER;
         if (process.env.STORAGE_MODE === "local") {
             return LocalHistoryStore.updateLastHumanMessage(chatId, currentProjectId);
         }
 
         try {
-            const { error } = await supabase
+            let query = supabase
                 .from('chats')
                 .update({
                     last_human_message_at: new Date().toISOString()
                 })
                 .eq('id', chatId)
                 .eq('project_id', currentProjectId);
+            if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
+                query = query.eq('service_id', currentServiceId);
+            }
+            const { error } = await query;
 
             if (error) throw error;
             return true;
@@ -2034,12 +2266,12 @@ export class HistoryHandler {
     static async getMessages(rawChatId: string, limit: number = 50, offset: number = 0, projectId: string | null = null, serviceId: string | null = null) {
         const chatId = this.normalizeId(rawChatId);
         const targetProjectId = projectId || HistoryHandler.PROJECT_IDENTIFIER;
+        const currentServiceId = serviceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || this.SERVICE_IDENTIFIER;
         if (process.env.STORAGE_MODE === "local") {
-            const msgs = await LocalHistoryStore.getMessages(chatId, limit, offset, targetProjectId);
+            const msgs = await LocalHistoryStore.getMessages(chatId, limit, offset, targetProjectId, currentServiceId);
             return msgs.reverse();
         }
         try {
-            const currentServiceId = serviceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || this.SERVICE_IDENTIFIER;
             let query = supabase
                 .from('messages')
                 .select('*')
@@ -2981,6 +3213,14 @@ export class HistoryHandler {
                 console.warn('⚠️ [HistoryHandler] No se pudo migrar al main_token:', swapErr);
             }
 
+            historyEvents.emit('whatsapp_line_changed', {
+                projectId: targetProjectId,
+                project_id: targetProjectId,
+                serviceId: targetServiceId,
+                service_id: targetServiceId,
+                provider: 'meta'
+            });
+
             return { success: true, data };
         } catch (err: any) {
             console.error('[HistoryHandler] Error en saveMetaOnboardingData:', err);
@@ -3200,9 +3440,52 @@ export class HistoryHandler {
             });
     }
 
+    static subscribeToChatChanges() {
+        if (!supabase) return;
+        const projectId = this.PROJECT_IDENTIFIER;
+        supabase
+            .channel(`chats-changes-${projectId}`)
+            .on('postgres_changes', {
+                event: '*',
+                schema: 'public',
+                table: 'chats'
+            }, (payload: any) => {
+                const chat = payload.new || payload.old;
+                if (!chat || chat.project_id !== projectId) return;
+                historyEvents.emit('chat_updated', {
+                    ...chat,
+                    chatId: chat.id,
+                    projectId: chat.project_id,
+                    serviceId: chat.service_id || null,
+                    eventType: payload.eventType
+                });
+            })
+            .subscribe((status: string) => {
+                if (status === 'SUBSCRIBED') {
+                    console.log(`✅ [Realtime] Suscrito a tabla chats para proyecto ${projectId}`);
+                } else if (status === 'CHANNEL_ERROR') {
+                    console.error(`❌ [Realtime] Error en suscripción de chats. Verifica que Realtime esté habilitado en la tabla 'chats' en Supabase.`);
+                }
+            });
+    }
+
     static invalidateSettingCache(key: string, projectId: string | null = null) {
         const targetProjectId = projectId || HistoryHandler.PROJECT_IDENTIFIER;
         this.settingsCache.delete(`${targetProjectId}:${key}`);
+    }
+
+    static async updateMessageExternalId(internalId: string, externalId: string, newStatus?: string): Promise<boolean> {
+        try {
+            const updatePayload: any = { external_id: externalId };
+            if (newStatus) updatePayload.status = newStatus;
+
+            const { error } = await supabase.from('messages').update(updatePayload).eq('id', internalId);
+            if (error) throw error;
+            return true;
+        } catch (err: any) {
+            console.error('[HistoryHandler] Error en updateMessageExternalId:', err.message);
+            return false;
+        }
     }
 
     static async saveSystemLog(
@@ -3804,20 +4087,27 @@ export class HistoryHandler {
         }
     }
 
-    static async assignChatToUser(rawChatId: string, userId: string | null) {
+    static async assignChatToUser(rawChatId: string, userId: string | null, projectId: string | null = null, serviceId: string | null = null) {
         const chatId = this.normalizeId(rawChatId);
+        const currentProjectId = projectId || HistoryHandler.PROJECT_IDENTIFIER;
+        const currentServiceId = serviceId || HistoryHandler.SERVICE_IDENTIFIER;
         try {
-            const { error } = await supabase
+            let query = supabase
                 .from('chats')
                 .update({ assigned_to: userId })
                 .eq('id', chatId)
-                .eq('project_id', HistoryHandler.PROJECT_IDENTIFIER);
+                .eq('project_id', currentProjectId);
+            if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
+                query = query.eq('service_id', currentServiceId);
+            }
+            const { error } = await query;
             if (error) throw error;
 
             // Emitir evento para actualización en tiempo real
             historyEvents.emit('contact_updated', {
                 chatId,
-                project_id: HistoryHandler.PROJECT_IDENTIFIER,
+                project_id: currentProjectId,
+                service_id: currentServiceId,
                 details: { assigned_to: userId }
             });
 

@@ -29,10 +29,13 @@ export const welcomeFlowVoice = addKeyword<any, any>(EVENTS.VOICE_NOTE)
         }
 
         const { HistoryHandler } = await import("~/db/historyHandler");
+        const botPhoneNumber = provider?.globalVendorArgs?.phone_number_id || (ctx.to ? ctx.to.replace(/\D/g, '') : null);
+        const dynamicProjectId = await HistoryHandler.getProjectIdByRecipient(botPhoneNumber) || HistoryHandler.PROJECT_IDENTIFIER;
+        const dynamicServiceId = await HistoryHandler.getServiceIdByRecipient(botPhoneNumber) || HistoryHandler.SERVICE_IDENTIFIER;
 
         console.log(`🎙️ Mensaje de voz recibido de ${userId}`);
 
-        const timeoutCierreValue = await HistoryHandler.getConfig('timeOutCierre') || 45;
+        const timeoutCierreValue = await HistoryHandler.getConfig('timeOutCierre', dynamicProjectId, dynamicServiceId) || 45;
         const setTime = Number(timeoutCierreValue) * 60 * 1000;
         reset(ctx, gotoFlow, setTime);
 
@@ -56,9 +59,6 @@ export const welcomeFlowVoice = addKeyword<any, any>(EVENTS.VOICE_NOTE)
         console.log(`📂 Ruta del archivo de audio: ${localPath}`);
 
         const { supabase } = await import("~/db/historyHandler");
-        const botPhoneNumber = provider?.globalVendorArgs?.phone_number_id || (ctx.to ? ctx.to.replace(/\D/g, '') : null);
-        const dynamicProjectId = await HistoryHandler.getProjectIdByRecipient(botPhoneNumber) || HistoryHandler.PROJECT_IDENTIFIER;
-        const dynamicServiceId = await HistoryHandler.getServiceIdByRecipient(botPhoneNumber) || HistoryHandler.SERVICE_IDENTIFIER;
         const chatId = userId;
         const externalId = ctx.key?.id || ctx.payload?.id || ctx.id;
 
@@ -118,7 +118,7 @@ export const welcomeFlowVoice = addKeyword<any, any>(EVENTS.VOICE_NOTE)
 
         // Verificar si la IA está activa (si existe OPENAI_API_KEY)
         const { getOpenAI } = await import("~/apis/openai/openaiHelper");
-        const openai = await getOpenAI();
+        const openai = await getOpenAI(dynamicProjectId, dynamicServiceId);
 
         if (!openai) {
             console.log(`[welcomeFlowVoice] IA Desactivada (sin OPENAI_API_KEY). Omitiendo transcripción y respuesta del bot.`);
@@ -126,7 +126,7 @@ export const welcomeFlowVoice = addKeyword<any, any>(EVENTS.VOICE_NOTE)
         }
 
         // Transcribir el audio antes de procesarlo
-        const transcription = await transcribeAudioFile(`${localPath}`);
+        const transcription = await transcribeAudioFile(`${localPath}`, dynamicProjectId, dynamicServiceId);
 
         if (!transcription) {
             console.warn(`[welcomeFlowVoice] ⚠️ No se pudo transcribir el audio de ${chatId}. Omitiendo respuesta del bot.`);

@@ -7,7 +7,7 @@ if (!activeToken) window.location.href = '/login';
 
 const userRole = localStorage.getItem('user_role') || 'subuser';
 const userId = localStorage.getItem('user_id');
-const isAdmin = (userRole === 'admin' || activeToken === 'neuroadmin25');
+const isAdmin = (userRole === 'admin' || localStorage.getItem('is_superadmin') === 'true');
 const userName = localStorage.getItem('user_name') || 'Usuario';
 
 let teamUsers = [];
@@ -134,8 +134,6 @@ async function syncCRM(options = {}) {
     }
 
     isSyncingCRM = true;
-    if (!silent) showToast('Sincronizando datos...', 'info');
-
     try {
         const [resLeads, resTickets] = await Promise.all([
             fetch(`/api/backoffice/leads?token=${activeToken}&limit=300`),
@@ -160,7 +158,6 @@ async function syncCRM(options = {}) {
         }
 
         renderBoard();
-        if (!silent) showToast('Tareas Actualizadas', 'success');
     } catch (e) {
         console.error(e);
         if (!silent) showToast('Error al sincronizar datos', 'error');
@@ -289,8 +286,8 @@ function createCardElement(ticket, lead, metadata) {
     card.onclick = (e) => {
         if (e.target.closest('button')) return;
         localStorage.setItem('activeChat', ticket.chat_id);
-        if (typeof window.navigate === 'function') window.navigate('/backoffice');
-        else window.location.href = '/backoffice';
+        if (typeof window.navigate === 'function') window.navigate('/conversaciones');
+        else window.location.href = '/conversaciones';
     };
     
     const tagCount = Array.isArray(lead?.tags) ? lead.tags.filter(Boolean).length : 0;
@@ -722,7 +719,7 @@ window.openClosedLeadsModal = async () => {
                         <div style="font-size:0.8rem; color:var(--accent); margin-top:5px;"><i class="fas fa-calendar-check"></i> Cerrado el: ${closedDate}</div>
                     </div>
                     <div style="display:flex; gap:10px;">
-                        <button class="btn-card-action" onclick="localStorage.setItem('activeChat', '${t.chat_id}'); if(window.navigate) window.navigate('/backoffice'); else window.location.href='/backoffice';" title="Ver Chat">
+                        <button class="btn-card-action" onclick="localStorage.setItem('activeChat', '${t.chat_id}'); if(window.navigate) window.navigate('/conversaciones'); else window.location.href='/conversaciones';" title="Ver Chat">
                             <i class="fas fa-comments"></i>
                         </button>
                     </div>

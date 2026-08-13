@@ -156,14 +156,14 @@ export async function createUserSelenium(
 
             // 8. Esperar a que se procese la creación
             console.log("[Cas-EPC] Enviando formulario de creación final...");
-            
+
             const result: any = await driver.wait(async (d) => {
                 try {
                     // 1. Verificar si hay un mensaje de éxito ("Exito" o "Éxito") en la pantalla
                     const pageSource = await d.getPageSource();
                     if (pageSource.includes("Exito") || pageSource.includes("Éxito") || pageSource.includes("exito")) {
                         console.log("[Cas-EPC] ¡Mensaje de éxito detectado en el modal!");
-                        
+
                         // Intentar cerrar el modal haciendo click en el botón 'X'
                         const closeBtnXPath = "//button[contains(@class, 'close')] | //a[contains(@class, 'close')] | //*[contains(@class, 'close-icon')] | //button[@data-dismiss='modal']";
                         try {
@@ -193,7 +193,7 @@ export async function createUserSelenium(
                     // Si el modal ya no existe o da error de stale, es que se cerró
                     return { success: true };
                 }
-                
+
                 // Buscar cartel de error en pantalla
                 const errorElements = await d.findElements(By.xpath(
                     "//*[contains(@class, 'swal') or contains(@class, 'modal') or contains(@class, 'alert') or contains(@class, 'toast') or contains(@class, 'popup') or contains(@class, 'notification') or contains(@class, 'dialog')]" +

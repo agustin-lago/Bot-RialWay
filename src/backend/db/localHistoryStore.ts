@@ -73,6 +73,11 @@ export interface LocalMessage {
     content: string;
     type: string;
     external_id: string | null;
+    reply_to?: string | null;
+    reply_preview?: any;
+    raw_payload?: any;
+    rawPayload?: any;
+    reaction?: string;
     status?: string;
     created_at: string;
 }
@@ -180,7 +185,7 @@ export class LocalHistoryStore {
 
     static async updateContactDetails(
         chatId: string,
-        details: Partial<LocalChat> & { ticket_title?: string },
+        details: Partial<LocalChat> & { ticket_title?: string, ticket_description?: string },
         projectId: string
     ): Promise<boolean> {
         const chats = this.getChats(projectId);
@@ -197,7 +202,7 @@ export class LocalHistoryStore {
                 details.crm_status = null;
             }
 
-            const { ticket_title: ticketTitle, ...chatDetails } = details as any;
+            const { ticket_title: ticketTitle, ticket_description: ticketDescription, ...chatDetails } = details as any;
             chats[idx] = { ...chats[idx], ...chatDetails };
             this.saveChats(projectId, chats);
 
@@ -228,11 +233,11 @@ export class LocalHistoryStore {
             }
 
             const tickets = this.getTicketsList(projectId);
-            const activeTicketIdx = tickets.findIndex(t => t.chat_id === chatId && t.estado !== 'Cerrado');
+            const activeTicketIdx = tickets.findIndex(t => t.chat_id === chatId && t.tipo === 'Nuevo Lead' && t.estado !== 'Cerrado');
 
             if (activeTicketIdx !== -1) {
-                if (details.notes !== undefined) {
-                    tickets[activeTicketIdx].descripcion = details.notes;
+                if (ticketDescription !== undefined || details.notes !== undefined) {
+                    tickets[activeTicketIdx].descripcion = ticketDescription ?? details.notes ?? '';
                 }
                 if (originalCrmStatus) {
                     tickets[activeTicketIdx].estado = originalCrmStatus;
@@ -250,7 +255,7 @@ export class LocalHistoryStore {
                     project_id: projectId,
                     chat_id: chatId,
                     titulo: ticketTitle || `Lead: ${chats[idx].name || chatId}`,
-                    descripcion: details.notes || 'Lead detectado automáticamente',
+                    descripcion: ticketDescription ?? details.notes ?? 'Lead detectado automáticamente',
                     estado: initialStatus,
                     prioridad: 'Media',
                     tipo: 'Nuevo Lead',
@@ -378,6 +383,10 @@ export class LocalHistoryStore {
             content: content,
             type: type,
             external_id: externalId,
+            reply_to: rawPayload?.replyTo || rawPayload?.reply_to || null,
+            reply_preview: rawPayload?.replyPreview || rawPayload?.reply_preview || null,
+            raw_payload: rawPayload || null,
+            rawPayload,
             status: status,
             created_at: nowStr
         };
@@ -387,14 +396,29 @@ export class LocalHistoryStore {
         return newMessage;
     }
 
-    static async getMessages(chatId: string, limit: number, offset: number, projectId: string): Promise<LocalMessage[]> {
+    static async getMessages(chatId: string, limit: number, offset: number, projectId: string, serviceId?: string | null): Promise<LocalMessage[]> {
         const messages = this.getMessagesList(projectId);
-        const filtered = messages.filter(m => m.chat_id === chatId);
+        const filtered = messages.filter(m => {
+            if (m.chat_id !== chatId) return false;
+            if (!serviceId || serviceId === 'default' || serviceId === 'default_service') return true;
+            return m.service_id === serviceId;
+        });
         
         // Sort by created_at descending
         filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
         
         return filtered.slice(offset, offset + limit);
+    }
+
+    static async updateMessageReaction(messageId: string, reaction: string, projectId: string): Promise<boolean> {
+        const messages = this.getMessagesList(projectId);
+        const idx = messages.findIndex(m => m.id === messageId || m.external_id === messageId);
+        if (idx !== -1) {
+            messages[idx].reaction = reaction;
+            this.saveMessagesList(projectId, messages);
+            return true;
+        }
+        return false;
     }
 
     static async deleteMessage(messageId: string, projectId: string): Promise<boolean> {
