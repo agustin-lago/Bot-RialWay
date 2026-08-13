@@ -1083,20 +1083,26 @@ class MetaCloudProvider extends ProviderClass {
                         let isValidPhoneId = false;
                         if (value.metadata?.phone_number_id) {
                             const incomingPhoneId = String(value.metadata.phone_number_id);
+                            const { HistoryHandler } = await import('../db/historyHandler');
+                            const currentProject = HistoryHandler.PROJECT_IDENTIFIER;
+                            const currentService = HistoryHandler.SERVICE_IDENTIFIER;
+
                             if (phone_number_id && incomingPhoneId === String(phone_number_id)) {
                                 isValidPhoneId = true;
                             } else {
-                                const { HistoryHandler } = await import('../db/historyHandler');
                                 const resolvedProject = await HistoryHandler.getProjectIdByRecipient(incomingPhoneId);
                                 const resolvedService = await HistoryHandler.getServiceIdByRecipient(incomingPhoneId);
-                                const currentProject = HistoryHandler.PROJECT_IDENTIFIER;
-                                const currentService = HistoryHandler.SERVICE_IDENTIFIER;
 
-                                if (
-                                    (resolvedProject && currentProject && resolvedProject === currentProject) ||
-                                    (resolvedService && currentService && resolvedService === currentService)
-                                ) {
-                                    isValidPhoneId = true;
+                                if (resolvedProject && currentProject && resolvedProject === currentProject) {
+                                    if (currentService && currentService !== 'default_service') {
+                                        if (resolvedService && resolvedService === currentService) {
+                                            isValidPhoneId = true;
+                                        }
+                                    } else {
+                                        if (!resolvedService || resolvedService === 'default_service') {
+                                            isValidPhoneId = true;
+                                        }
+                                    }
                                 }
                             }
                         }
