@@ -1097,6 +1097,26 @@ class MetaCloudProvider extends ProviderClass {
                                     if (currentService && currentService !== 'default_service') {
                                         if (resolvedService && resolvedService === currentService) {
                                             isValidPhoneId = true;
+                                        } else if (resolvedService) {
+                                            // Reenviar webhook a la URL del servicio destino en segundo plano
+                                            const supabase = HistoryHandler.getSupabase();
+                                            if (supabase) {
+                                                const { data: routeData } = await supabase
+                                                    .from('routing_table')
+                                                    .select('project_url')
+                                                    .eq('service_id', resolvedService)
+                                                    .maybeSingle();
+                                                
+                                                if (routeData?.project_url) {
+                                                    const targetUrl = `${routeData.project_url.replace(/\/$/, '')}/webhook`;
+                                                    console.log(`📡 [MetaCloudProvider] Reenviando webhook para Phone ID ${incomingPhoneId} -> ${targetUrl}`);
+                                                    axios.post(targetUrl, body, {
+                                                        headers: { 'Content-Type': 'application/json' }
+                                                    }).catch(err => {
+                                                        console.error(`❌ [MetaCloudProvider] Error al reenviar webhook:`, err.message);
+                                                    });
+                                                }
+                                            }
                                         }
                                     } else {
                                         if (!resolvedService || resolvedService === 'default_service') {
