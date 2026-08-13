@@ -348,7 +348,7 @@ export class HistoryHandler {
             {
                 name: 'meta_onboarding',
                 sql: `CREATE TABLE IF NOT EXISTS meta_onboarding (
-                    project_id TEXT PRIMARY KEY,
+                    project_id TEXT,
                     service_id TEXT,
                     waba_id TEXT,
                     phone_number_id TEXT,
@@ -357,7 +357,8 @@ export class HistoryHandler {
                     owner_id uuid REFERENCES users(id),
                     status TEXT DEFAULT 'active',
                     created_at TIMESTAMPTZ DEFAULT NOW(),
-                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                    updated_at TIMESTAMPTZ DEFAULT NOW(),
+                    PRIMARY KEY (project_id, service_id)
                 );
                 GRANT ALL ON TABLE meta_onboarding TO service_role;
                 GRANT ALL ON TABLE meta_onboarding TO authenticated;

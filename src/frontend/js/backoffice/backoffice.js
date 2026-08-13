@@ -2916,6 +2916,8 @@ function launchMetaOnboarding() {
             url.searchParams.append('projectUrl', currentOrigin);
             url.searchParams.append('redirectUri', `${currentOrigin}/api/backoffice/whatsapp/onboard-callback?serviceId=${sId}`);
             url.searchParams.append('state', `${data.railwayProjectId}:${sId}`);
+            url.searchParams.append('serviceId', sId);
+            url.searchParams.append('railwayServiceId', sId);
 
             const width = 600;
             const height = 800;

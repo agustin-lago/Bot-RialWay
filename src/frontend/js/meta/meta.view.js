@@ -693,6 +693,8 @@ window.metaView = (() => {
                 url.searchParams.append('projectUrl', origin);
                 url.searchParams.append('redirectUri', `${origin}/api/backoffice/whatsapp/onboard-callback?serviceId=${sId}`);
                 url.searchParams.append('state', `${data.railwayProjectId}:${sId}`);
+                url.searchParams.append('serviceId', sId);
+                url.searchParams.append('railwayServiceId', sId);
 
                 popup.location.href = url.toString();
 
