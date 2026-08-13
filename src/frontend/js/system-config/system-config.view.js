@@ -29,6 +29,11 @@ window.systemConfigView = {
                             <p class="description">ID tecnico del proyecto Railway.</p>
                             <div class="project-identity-value project-identity-id" title="${window.railwayProjectId || ''}">${window.railwayProjectId || 'Sin project_id'}</div>
                         </div>
+                        <div class="variable-group">
+                            <h3>SERVICE_ID</h3>
+                            <p class="description">ID del servicio de Railway.</p>
+                            <div class="project-identity-value project-identity-id" title="${window.railwayServiceId || ''}">${window.railwayServiceId || 'Sin service_id'}</div>
+                        </div>
                     </div>
 
                     <!-- Seccion 1: OpenAI & Asistentes -->

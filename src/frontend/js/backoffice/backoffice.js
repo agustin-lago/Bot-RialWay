@@ -381,6 +381,8 @@ function initMessageLongPressMenu() {
         targetMsg = null;
     };
 
+    let longPressTriggered = false;
+
     container.addEventListener('touchstart', (event) => {
         if (window.innerWidth > 769) return;
         if (event.target.closest('button, a, input, textarea, .msg-dropdown-menu, .msg-reaction-badge')) return;
@@ -391,27 +393,53 @@ function initMessageLongPressMenu() {
         startX = touch.clientX;
         startY = touch.clientY;
         targetMsg = msg;
+        longPressTriggered = false;
+
+        if (targetMsg) {
+            targetMsg.style.transform = 'scale(0.98)';
+            targetMsg.style.transition = 'transform 0.15s ease';
+        }
+
         timer = setTimeout(() => {
+            longPressTriggered = true;
             const msgId = targetMsg?.dataset?.id;
             if (msgId && window.toggleMsgDropdown) {
-                if (event.cancelable) event.preventDefault();
+                if (targetMsg) {
+                    targetMsg.style.transform = 'scale(1)';
+                    targetMsg.style.opacity = '0.6';
+                    setTimeout(() => { targetMsg.style.opacity = ''; }, 300);
+                }
                 window.toggleMsgDropdown(msgId);
             }
             clearTimer();
-        }, 520);
-    }, { passive: false });
+        }, 500);
+    }, { passive: true });
 
     container.addEventListener('touchmove', (event) => {
         if (!timer) return;
         const touch = event.touches && event.touches[0];
         if (!touch) return;
-        if (Math.abs(touch.clientX - startX) > 12 || Math.abs(touch.clientY - startY) > 12) clearTimer();
+        if (Math.abs(touch.clientX - startX) > 12 || Math.abs(touch.clientY - startY) > 12) {
+            if (targetMsg) targetMsg.style.transform = 'scale(1)';
+            clearTimer();
+        }
     }, { passive: true });
 
-    container.addEventListener('touchend', clearTimer, { passive: true });
-    container.addEventListener('touchcancel', clearTimer, { passive: true });
+    container.addEventListener('touchend', (event) => {
+        if (targetMsg) targetMsg.style.transform = 'scale(1)';
+        clearTimer();
+        if (longPressTriggered) {
+            if (event.cancelable) event.preventDefault();
+            longPressTriggered = false;
+        }
+    }, { passive: false });
+
+    container.addEventListener('touchcancel', (event) => {
+        if (targetMsg) targetMsg.style.transform = 'scale(1)';
+        clearTimer();
+    }, { passive: true });
+
     container.addEventListener('contextmenu', (event) => {
-        if (window.innerWidth > 769) return;
         const msg = event.target.closest('.msg');
         if (!msg || !container.contains(msg)) return;
         event.preventDefault();
@@ -994,14 +1022,8 @@ function renderChatList(listToRender = chats) {
         const displayCount = unreadCount > 99 ? '+99' : unreadCount;
         
         const hasUnread = _notificationsActive && unreadCount > 0;
-        const timeColor = hasUnread ? '#25d366' : 'var(--text-muted, rgba(255,255,255,0.7))';
-        const timeFontWeight = hasUnread ? '600' : '400';
-        
-        const timeHtml = `<span style="font-size: 0.72rem; color: ${timeColor}; font-weight: ${timeFontWeight};">${timeStr}</span>`;
-        
-        const unreadHtml = hasUnread 
-            ? `<div style="background: #25d366; color: #111; font-size: 0.7rem; font-weight: 700; min-width: 20px; height: 20px; border-radius: 10px; display: flex; align-items: center; justify-content: center; padding: 0 6px;">${displayCount}</div>` 
-            : '';
+        const timeHtml = `<span style="font-size: 0.65rem; opacity: 0.7; font-weight: 500; margin-bottom: 2px;">${timeStr}</span>`;
+        const unreadHtml = hasUnread ? `<div class="unread-badge">${displayCount}</div>` : '';
 
         const isBotActive = isBotEffectivelyEnabled(chat);
         const botIconColor = isBotActive ? '#22c55e' : '#f87171';
@@ -1048,7 +1070,7 @@ function renderChatList(listToRender = chats) {
                                 ${crmStatusHtml}
                             </div>
                         </div>
-                        <div style="display:flex; flex-direction:column; align-items:flex-end; justify-content:center; flex-shrink:0; min-width: 45px; gap: 4px;">
+                        <div style="display:flex; flex-direction:column; align-items:flex-end; justify-content:center; flex-shrink:0; min-width: 45px; gap: 2px;">
                             ${timeHtml}
                             ${unreadHtml}
                         </div>
@@ -1631,9 +1653,6 @@ function generateMessageHtml(m, isNew = false) {
     else checkHtml = ' <i class="fas fa-check-double" style="opacity:0.75;font-size:0.62rem;"></i>';
 
     const dropdownHtml = `
-            <button class="msg-dropdown-toggle" onclick="event.stopPropagation(); window.toggleMsgDropdown('${externalId}')">
-                <i class="fas fa-chevron-down"></i>
-            </button>
             <div id="dropdown-${externalId}" class="msg-dropdown-menu" onclick="event.stopPropagation();">
                 <div class="msg-reactions-bar">
                     <button class="msg-reaction-btn" onclick="window.reactToMessage('${externalId}', '👍')">👍</button>
