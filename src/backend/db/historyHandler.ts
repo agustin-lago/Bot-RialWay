@@ -3591,7 +3591,7 @@ export class HistoryHandler {
         }
     }
 
-    static async getSetting(key: string, projectId: string | null = null, serviceId: string | null = null): Promise<string | null> {
+    static async getSetting(key: string, projectId: string | null = null, serviceId: string | null = null, strictService: boolean = false): Promise<string | null> {
         if (!supabase) return null;
         const targetProjectId = projectId || HistoryHandler.PROJECT_IDENTIFIER;
         const rawServiceId = serviceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || HistoryHandler.SERVICE_IDENTIFIER;
@@ -3622,6 +3622,8 @@ export class HistoryHandler {
 
         if (targetServiceId) {
             query = query.eq('service_id', targetServiceId);
+        } else if (strictService) {
+            query = query.is('service_id', null);
         }
 
         const { data: mainData, error } = await query.maybeSingle();
@@ -3633,7 +3635,7 @@ export class HistoryHandler {
         let data = mainData;
 
         // Fallback: Si no lo encontró con service_id específico, buscar solo por project_id
-        if (!data && targetServiceId) {
+        if (!data && targetServiceId && !strictService) {
             const fallbackRes = await supabase
                 .from('settings')
                 .select('value')

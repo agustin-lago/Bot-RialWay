@@ -5453,7 +5453,7 @@ Hemos recibido tu pago con Ã©xito.
                 }
             }
 
-            const isSuperAdmin = await depsHistoryHandler.getSetting('SUPER_ADMIN_MODE', projectId, serviceId);
+            const isSuperAdmin = await depsHistoryHandler.getSetting('SUPER_ADMIN_MODE', projectId, serviceId, true);
 
             res.json({
                 success: true,

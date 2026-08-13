@@ -332,11 +332,11 @@ export async function saveDriveDocText(docId: string, newText: string, projectId
 }
 
 export async function getVisibleServiceIds(projectId: string, currentServiceId: string): Promise<string[]> {
-    const isSuperAdmin = await HistoryHandler.getSetting('SUPER_ADMIN_MODE', projectId, currentServiceId);
+    const isSuperAdmin = await HistoryHandler.getSetting('SUPER_ADMIN_MODE', projectId, currentServiceId, true);
     if (isSuperAdmin !== 'true') {
         return [currentServiceId];
     }
-    const visibleStr = await HistoryHandler.getSetting('SUPER_ADMIN_VISIBLE_SERVICES', projectId, currentServiceId);
+    const visibleStr = await HistoryHandler.getSetting('SUPER_ADMIN_VISIBLE_SERVICES', projectId, currentServiceId, true);
     if (visibleStr && visibleStr.trim() !== '') {
         const list = visibleStr.split(',').map(s => s.trim()).filter(Boolean);
         // Garantizar que incluya al menos el suyo propio
