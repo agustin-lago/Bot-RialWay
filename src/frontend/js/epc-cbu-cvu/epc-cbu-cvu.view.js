@@ -304,7 +304,7 @@ window.epcCbuCvuView = (() => {
 
         _isSaving = true;
         try {
-            const res = await fetch('/api/backoffice/save-setting', {
+            const res = await fetch(`/api/backoffice/save-setting?token=${_token}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

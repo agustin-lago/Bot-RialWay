@@ -11,6 +11,7 @@ import { SystemLogger } from '../utils/logger.js';
  * Incluye soporte para coexistencia y envío directo por API.
  */
 class MetaCloudProvider extends ProviderClass {
+    private static recentBulkErrors = new Map<string, number>();
     private config: any;
     globalVendorArgs: any;
 
@@ -1351,6 +1352,18 @@ class MetaCloudProvider extends ProviderClass {
             let description = '';
             
             const isBulk = options.isBulk === true || options.bulk === true;
+            
+            if (isBulk) {
+                const cacheKey = `${projectId}:${serviceId || 'default'}:${code}`;
+                const now = Date.now();
+                const lastTime = MetaCloudProvider.recentBulkErrors.get(cacheKey);
+                if (lastTime && (now - lastTime < 5 * 60 * 1000)) {
+                    console.log(`📡 [MetaErrorNotifier] Omitiendo notificación duplicada en memoria para error ${code} en envío masivo.`);
+                    return;
+                }
+                MetaCloudProvider.recentBulkErrors.set(cacheKey, now);
+            }
+
             let contactLabel = isBulk ? 'envío masivo' : `contacto ${recipient}`;
             
             if (!isBulk && recipient) {
