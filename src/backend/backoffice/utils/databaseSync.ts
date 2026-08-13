@@ -96,7 +96,7 @@ export async function getTablesMetadata(projectId: string, serviceId?: string): 
     return tables;
 }
 
-export async function syncTableToGoogleSheet(tableName: string, sheetId: string, sheetTitle: string, headers: string[], projectId: string) {
+export async function syncTableToGoogleSheet(tableName: string, sheetId: string, sheetTitle: string, headers: string[], projectId: string, serviceId?: string) {
     const supabase = HistoryHandler.getSupabase();
     if (!supabase) return;
 
@@ -166,7 +166,7 @@ export async function syncTableToGoogleSheet(tableName: string, sheetId: string,
     // Trigger update in background to generate json and upload
     setTimeout(async () => {
         try {
-            await updateAllSheets({ projectId });
+            await updateAllSheets({ projectId, serviceId, skipDb: true });
         } catch (err) {
             console.error('[DatabaseSync] Error actualizando vector store post-sync:', err);
         }

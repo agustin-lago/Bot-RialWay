@@ -42,7 +42,7 @@ const getOpenAIClient = async (projectId?: string, serviceId?: string) => {
 
 
 // Función principal para procesar todos los sheets
-export async function updateAllSheets(options: { forceRecreate?: boolean; projectId?: string; serviceId?: string } = {}) {
+export async function updateAllSheets(options: { forceRecreate?: boolean; projectId?: string; serviceId?: string; skipDb?: boolean } = {}) {
     if (!supabase) {
         console.log("⚠️ [GoogleSheets] Supabase no disponible para actualizar sheets.");
         return;
@@ -188,7 +188,7 @@ async function ensureTableExists(tableName: string, headers: string[]) {
 }
 
 // Procesa un sheet por ID, obtiene el nombre real y ejecuta la lógica
-async function processSheetById(SHEET_ID: string, projectId: string, serviceId: string | undefined, options: { forceRecreate?: boolean } = {}) {
+async function processSheetById(SHEET_ID: string, projectId: string, serviceId: string | undefined, options: { forceRecreate?: boolean; skipDb?: boolean } = {}) {
     const sheets = getSheetsClient();
     try {
         // Obtener metadatos para el nombre real de la hoja principal
@@ -302,7 +302,7 @@ async function processSheetById(SHEET_ID: string, projectId: string, serviceId: 
         console.log(`📂 Datos guardados en archivo de texto: ${TXT_PATH}`);
 
         // --- SUPABASE INTEGRATION START ---
-        if (supabase) {
+        if (supabase && !options.skipDb) {
             const headersSanitized = activeColumns.map(col => col.sanitized);
             
             if (options.forceRecreate) {

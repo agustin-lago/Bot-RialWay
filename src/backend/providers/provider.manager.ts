@@ -649,12 +649,17 @@ export const hasActiveSession = async (adapterProvider: any, groupProvider: any 
                 // 4. Actualizar en la base de datos en segundo plano
                 const supabase = HistoryHandler.getSupabase();
                 if (supabase) {
-                    supabase.from('meta_onboarding')
+                    let updateQuery = supabase.from('meta_onboarding')
                         .update({ onboarding_data: metaOnboarding.onboarding_data })
-                        .eq('project_id', metaOnboarding.project_id)
-                        .then(({ error }) => {
-                            if (error) console.error("Error actualizando stats de Meta en DB:", error.message);
-                        });
+                        .eq('project_id', metaOnboarding.project_id);
+                    
+                    if (metaOnboarding.service_id) {
+                        updateQuery = updateQuery.eq('service_id', metaOnboarding.service_id);
+                    }
+
+                    updateQuery.then(({ error }) => {
+                        if (error) console.error("Error actualizando stats de Meta en DB:", error.message);
+                    });
                 }
 
             } catch (err: any) {

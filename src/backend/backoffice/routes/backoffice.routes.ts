@@ -5534,8 +5534,9 @@ Hemos recibido tu pago con Ã©xito.
             if (insError) throw insError;
 
             // 2. Sincronizar hacia Google Sheets
+            const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
             const { syncTableToGoogleSheet } = await import('../utils/databaseSync.js');
-            await syncTableToGoogleSheet(tableName, sheetId, sheetTitle, headers, projectId);
+            await syncTableToGoogleSheet(tableName, sheetId, sheetTitle, headers, projectId, serviceId);
 
             res.json({ success: true });
         } catch (e: any) {
@@ -5565,8 +5566,9 @@ Hemos recibido tu pago con Ã©xito.
             if (updError) throw updError;
 
             // 2. Sincronizar hacia Google Sheets
+            const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
             const { syncTableToGoogleSheet } = await import('../utils/databaseSync.js');
-            await syncTableToGoogleSheet(tableName, sheetId, sheetTitle, headers, projectId);
+            await syncTableToGoogleSheet(tableName, sheetId, sheetTitle, headers, projectId, serviceId);
 
             res.json({ success: true });
         } catch (e: any) {
@@ -5595,8 +5597,9 @@ Hemos recibido tu pago con Ã©xito.
             if (delError) throw delError;
 
             // 2. Sincronizar hacia Google Sheets
+            const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
             const { syncTableToGoogleSheet } = await import('../utils/databaseSync.js');
-            await syncTableToGoogleSheet(tableName, sheetId, sheetTitle, headers, projectId);
+            await syncTableToGoogleSheet(tableName, sheetId, sheetTitle, headers, projectId, serviceId);
 
             res.json({ success: true });
         } catch (e: any) {
