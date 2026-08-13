@@ -23,6 +23,9 @@
   body {
     @apply antialiased;
     color: rgba(255, 255, 255, 0.85);
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
   }
 
   /* Global fix for view wrappers so they don't get clipped by the topbar */

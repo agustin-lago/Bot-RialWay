@@ -992,11 +992,25 @@ function renderChatList(listToRender = chats) {
         const timeStr = formatLastMessageTime(chat.last_message_at);
         const unreadCount = chat.unread_count || 0;
         const displayCount = unreadCount > 99 ? '+99' : unreadCount;
-        const unreadHtml = (_notificationsActive && unreadCount > 0) ? `<div class="unread-badge">${displayCount}</div>` : '';
+        
+        const hasUnread = _notificationsActive && unreadCount > 0;
+        const timeColor = hasUnread ? '#25d366' : 'var(--text-muted, rgba(255,255,255,0.7))';
+        const timeFontWeight = hasUnread ? '600' : '400';
+        
+        const timeHtml = `<span style="font-size: 0.72rem; color: ${timeColor}; font-weight: ${timeFontWeight};">${timeStr}</span>`;
+        
+        const unreadHtml = hasUnread 
+            ? `<div style="background: #25d366; color: #111; font-size: 0.7rem; font-weight: 700; min-width: 20px; height: 20px; border-radius: 10px; display: flex; align-items: center; justify-content: center; padding: 0 6px;">${displayCount}</div>` 
+            : '';
 
-        const statusBadge = isBotEffectivelyEnabled(chat)
-            ? `<div style="text-align:right;"><i class="fas fa-robot" style="color:#22c55e; font-size:0.8rem;"></i><br/><span style="font-size:0.65rem; opacity:0.7;">${timeStr}</span></div>`
-            : `<div style="text-align:right;"><i class="fas fa-user" style="color:#f87171; font-size:0.8rem;"></i><br/><span style="font-size:0.65rem; opacity:0.7;">${timeStr}</span></div>`;
+        const isBotActive = isBotEffectivelyEnabled(chat);
+        const botIconColor = isBotActive ? '#22c55e' : '#f87171';
+        const botIconClass = isBotActive ? 'fa-robot' : 'fa-user';
+        const avatarBotBadge = `
+            <div class="chat-bot-badge">
+                <i class="fas ${botIconClass}" style="color: ${botIconColor}; font-size: 0.65rem; width: 14px; height: 14px; display: flex; align-items: center; justify-content: center;"></i>
+            </div>
+        `;
 
         // CRM Status Badge
         let crmStatusHtml = '';
@@ -1016,9 +1030,10 @@ function renderChatList(listToRender = chats) {
 
         return `
             <div class="chat-item ${activeChatId === chat.id ? 'active' : ''}" onclick="selectChat('${chat.id}')">
-                <div class="chat-avatar" style="background:${bg};">
+                <div class="chat-avatar" style="background:${bg}; position: relative; overflow: visible;">
                     <span>${initials}</span>
                     ${iconOverlayHtml}
+                    ${avatarBotBadge}
                 </div>
                 <div class="chat-info">
                     <div style="display:flex; justify-content:space-between; align-items:center; gap:4px;">
@@ -1033,8 +1048,8 @@ function renderChatList(listToRender = chats) {
                                 ${crmStatusHtml}
                             </div>
                         </div>
-                        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:2px; flex-shrink:0;">
-                            ${statusBadge}
+                        <div style="display:flex; flex-direction:column; align-items:flex-end; justify-content:center; flex-shrink:0; min-width: 45px; gap: 4px;">
+                            ${timeHtml}
                             ${unreadHtml}
                         </div>
                     </div>
@@ -1043,7 +1058,9 @@ function renderChatList(listToRender = chats) {
         `;
     }).join('');
 
-    list.scrollTop = prevScrollTop;
+    requestAnimationFrame(() => {
+        if (list) list.scrollTop = prevScrollTop;
+    });
 }
 
 

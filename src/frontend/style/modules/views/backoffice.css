@@ -449,6 +449,24 @@
     background: #ef4444;
   }
 
+  .chat-bot-badge {
+    position: absolute;
+    bottom: -2px;
+    left: -4px;
+    background: #111b21;
+    border-radius: 50%;
+    padding: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    z-index: 2;
+  }
+
+  [data-theme="light"] .chat-bot-badge {
+    background: #f0f2f5;
+  }
+
   /* tag-pill se define fuera de @layer â€” ver al final del archivo */
   .platform-icon-overlay {
     @apply absolute -bottom-0.5 -right-0.5 w-[18px] h-[18px] rounded-full flex items-center justify-center text-[10px] z-10;
