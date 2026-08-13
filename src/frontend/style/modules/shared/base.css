@@ -25,6 +25,16 @@
     color: rgba(255, 255, 255, 0.85);
   }
 
+  /* Global fix for view wrappers so they don't get clipped by the topbar */
+  #view-content-root > div,
+  #view-content-root > main,
+  #view-content-root > section {
+    height: 100% !important;
+    min-height: 100% !important;
+    max-height: 100% !important;
+    box-sizing: border-box;
+  }
+
   [data-theme="light"] body {
     color: #111827;
   }

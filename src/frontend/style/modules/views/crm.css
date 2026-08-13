@@ -373,8 +373,7 @@
   }
 
   .conexion-main {
-    min-height: 100dvh;
-    height: auto;
+    height: 100%;
     overflow-y: auto;
     overflow-x: hidden;
     padding-bottom: max(1.5rem, env(safe-area-inset-bottom)) !important;
@@ -382,7 +381,7 @@
   }
 
   .conexion-page {
-    min-height: calc(100dvh - 5rem);
+    min-height: 100%;
     padding: 2rem clamp(1rem, 3vw, 2.5rem) calc(2rem + env(safe-area-inset-bottom));
   }
 
@@ -746,14 +745,13 @@
 
   @media (max-width: 1024px) {
     .conexion-main {
-      min-height: 100dvh;
-      height: auto;
+      height: 100%;
       overflow-y: auto;
       overflow-x: hidden;
     }
 
     .conexion-page {
-      min-height: 100dvh;
+      min-height: 100%;
       padding: 1rem clamp(0.75rem, 4vw, 1.25rem) calc(3rem + env(safe-area-inset-bottom));
     }
 
