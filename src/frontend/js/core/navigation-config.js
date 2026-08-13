@@ -13,6 +13,7 @@
         '/documentacion':            '/js/docs/docs.view.js',
         '/webchat':                  '/js/webchat/webchat.view.js',
         '/meta':                     '/js/meta/meta.view.js',
+        '/database':                 '/js/database/database.view.js',
         '/mercado-libre':            '/js/mercado-libre/mercado-libre.view.js',
         '/mercado-libre-productos':  '/js/mercado-libre/mercado-libre-productos.view.js',
         '/mercado-libre-bot':        '/js/mercado-libre/mercado-libre-bot.view.js',
@@ -37,6 +38,7 @@
             { label: 'CRM', icon: 'fas fa-id-card-clip', route: '/crm', dotId: 'dot-crm', requires: 'crm' },
             { label: 'Tareas', icon: 'fas fa-calendar-check', route: '/crm-tareas', dotId: 'dot-tareas', requires: 'crm' },
             { label: 'Meta', icon: 'fab fa-meta', route: '/meta', requires: 'backoffice' },
+            { label: 'Base de Datos', icon: 'fas fa-database', route: '/database' },
             {
                 label: 'Mercado Libre',
                 icon: 'fas fa-handshake',
