@@ -336,7 +336,7 @@ window.metaView = (() => {
                     <div class="meta-card-desc">${cleanText}</div>
                     <div style="font-size:0.7rem; color:var(--text-muted); display:flex; flex-wrap:wrap; gap:8px; margin-top:auto; padding-top:10px; border-top:1px solid rgba(0,0,0,0.05);">
                         <span style="background:rgba(6,104,225,0.05); padding:2px 6px; border-radius:4px; font-weight:600;"><i class="fas fa-fingerprint"></i> ID: ${t.id || 'N/A'}</span>
-                        <span style="background:rgba(0,0,0,0.05); padding:2px 6px; border-radius:4px;"><i class="fas fa-globe"></i> ${t.language.toUpperCase()}</span>
+                        <span style="background:rgba(0,0,0,0.05); padding:2px 6px; border-radius:4px;"><i class="fas fa-globe"></i> ${(t.language || '').toUpperCase()}</span>
                         <span style="background:rgba(0,0,0,0.05); padding:2px 6px; border-radius:4px;"><i class="fas fa-tag"></i> ${t.category}</span>
                     </div>
                 </div>`;

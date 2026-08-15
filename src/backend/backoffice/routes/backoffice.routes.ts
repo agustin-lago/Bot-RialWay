@@ -2608,37 +2608,97 @@ export const registerBackofficeRoutes = (app: any) => {
 
     app.get('/api/backoffice/whatsapp/templates', backofficeAuth, async (req: any, res: any) => {
         try {
-            await syncMetaProvider(resolveProjectId(req), resolveServiceId(req));
-            if (!adapterProvider) return res.status(503).json({ success: false, error: 'Provider not ready' });
-            // Detectar si el provider soporta getTemplates
-            const provider = (adapterProvider.constructor.name === 'MetaCloudProvider') ? adapterProvider : groupProvider;
-            if (!provider || typeof provider.getTemplates !== 'function') {
-                return res.status(400).json({ success: false, error: 'El proveedor actual no soporta plantillas oficiales (Meta).' });
+            const projectId = resolveProjectId(req);
+            const serviceId = resolveServiceId(req);
+            
+            let wabaId = null;
+            let token = null;
+
+            const provider = (adapterProvider && adapterProvider.constructor.name === 'MetaCloudProvider') ? adapterProvider : groupProvider;
+            if (provider && provider.constructor.name === 'MetaCloudProvider') {
+                wabaId = provider.config.waba_id;
+                token = provider.config.access_token;
+            } else {
+                const config = await depsHistoryHandler.getMetaOnboardingData(projectId || process.env.RAILWAY_PROJECT_ID, false, serviceId);
+                if (config) {
+                    wabaId = config.whatsappBusinessId || config.waba_id;
+                    token = config.whatsappToken || config.access_token;
+                }
             }
 
-            const templates = await provider.getTemplates();
+            if (!wabaId || !token || wabaId === 'PENDING' || token === 'PENDING') {
+                return res.status(400).json({ success: false, error: 'El proveedor Meta no está configurado para este servicio.' });
+            }
+
+            const axios = (await import('axios')).default;
+            const url = `https://graph.facebook.com/v25.0/${wabaId}/message_templates?fields=id,name,status,components,language,category,parameter_format&limit=1000`;
+            const response = await axios.get(url, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const templates = response.data?.data || [];
             res.json({ success: true, templates });
         } catch (error: any) {
-            res.status(500).json({ success: false, error: error.message });
+            console.error('❌ [BackofficeRoutes] Error obteniendo plantillas:', error?.response?.data || error.message);
+            res.status(500).json({ success: false, error: error?.response?.data?.error?.message || error.message });
         }
     });
 
     app.get('/api/backoffice/whatsapp/library-templates', backofficeAuth, async (req: any, res: any) => {
         try {
-            await syncMetaProvider(resolveProjectId(req), resolveServiceId(req));
-            if (!adapterProvider) return res.status(503).json({ success: false, error: 'Provider not ready' });
-            const provider = (adapterProvider.constructor.name === 'MetaCloudProvider') ? adapterProvider : groupProvider;
-            if (!provider || typeof provider.getLibraryTemplates !== 'function') {
-                return res.status(400).json({ success: false, error: 'El proveedor actual no soporta la biblioteca de Meta.' });
+            const projectId = resolveProjectId(req);
+            const serviceId = resolveServiceId(req);
+            
+            let token = null;
+
+            const provider = (adapterProvider && adapterProvider.constructor.name === 'MetaCloudProvider') ? adapterProvider : groupProvider;
+            if (provider && provider.constructor.name === 'MetaCloudProvider') {
+                token = provider.config.access_token;
+            } else {
+                const config = await depsHistoryHandler.getMetaOnboardingData(projectId || process.env.RAILWAY_PROJECT_ID, false, serviceId);
+                if (config) {
+                    token = config.whatsappToken || config.access_token;
+                }
             }
 
-            console.log('¡ [BACKOFFICE-ROUTES] Solicitando plantillas de biblioteca...');
-            const templates = await provider.getLibraryTemplates();
-            console.log(`✅ [BACKOFFICE-ROUTES] Se obtuvieron ${templates?.length || 0} plantillas.`);
+            if (!token || token === 'PENDING') {
+                return res.status(400).json({ success: false, error: 'El proveedor Meta no está configurado para este servicio.' });
+            }
 
-            res.json({ success: true, templates });
+            const axios = (await import('axios')).default;
+            let allTemplates: any[] = [];
+            
+            // 1. Intentar obtener de la Biblioteca Oficial de Meta (Paginado)
+            try {
+                let nextUrl: string | null = `https://graph.facebook.com/v25.0/message_template_library?fields=id,name,components,language,category,status&limit=100`;
+                while (nextUrl && allTemplates.length < 1000) {
+                    const response = await axios.get(nextUrl, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    const data = response.data?.data || [];
+                    allTemplates = [...allTemplates, ...data];
+                    nextUrl = response.data?.paging?.next || null;
+                }
+            } catch (err: any) {
+                console.warn('⚠️ Error en Biblioteca Global, intentando Master WABA:', err?.response?.data || err.message);
+            }
+
+            // 2. Fallback: Biblioteca Maestra
+            if (allTemplates.length === 0) {
+                try {
+                    const MASTER_WABA_ID = '146603058535041';
+                    const urlMaster = `https://graph.facebook.com/v25.0/${MASTER_WABA_ID}/message_templates?fields=id,name,components,language,category,status&limit=100`;
+                    const responseMaster = await axios.get(urlMaster, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    allTemplates = responseMaster.data?.data || [];
+                    allTemplates = allTemplates.map((t: any) => ({ ...t, isShared: true }));
+                } catch (masterErr: any) {
+                    console.error('⚠️ Error consultando Biblioteca Maestra:', masterErr?.response?.data || masterErr.message);
+                }
+            }
+
+            res.json({ success: true, templates: allTemplates });
         } catch (error: any) {
-            console.error('❌ [BACKOFFICE-ROUTES] Error en library-templates:', error);
             res.status(500).json({ success: false, error: error.message });
         }
     });
