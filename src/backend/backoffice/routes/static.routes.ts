@@ -9,6 +9,47 @@ import { getIdsByHost } from '../utils/routingResolver';
 let _visibilityCache: { wa: string; ig: string; ms: string; crm: string; sysConfig: string } | null = null;
 let _visibilityCacheAt = 0;
 const VISIBILITY_TTL = 10 * 1000;
+const getAppVersion = () => {
+    try {
+        const packagePath = path.join(process.cwd(), 'package.json');
+        const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+        return packageJson.version || process.env.APP_VERSION || process.env.npm_package_version || '8.0.0';
+    } catch {
+        return process.env.APP_VERSION || process.env.npm_package_version || '8.0.0';
+    }
+};
+
+const getAssetVersion = () => {
+    const assetNames = [
+        'favicon.ico',
+        'favicon-16x16.png',
+        'favicon-32x32.png',
+        'apple-touch-icon.png',
+        'android-chrome-192x192.png',
+        'android-chrome-512x512.png',
+        'site.webmanifest',
+    ];
+
+    const mtimes = assetNames
+        .map(name => path.join(process.cwd(), 'assets', name))
+        .filter(filePath => fs.existsSync(filePath))
+        .map(filePath => fs.statSync(filePath).mtimeMs);
+
+    return String(Math.max(Date.now(), ...mtimes));
+};
+
+const getSpaRoutes = (): string[] => {
+    const navConfigPath = path.join(process.cwd(), 'src', 'frontend', 'js', 'core', 'navigation-config.js');
+    const navConfig = fs.readFileSync(navConfigPath, 'utf8');
+    const routesBlock = navConfig.match(/const\s+APP_ROUTES\s*=\s*\{([\s\S]*?)\n\s*\};/);
+    if (!routesBlock) throw new Error('APP_ROUTES no encontrado en navigation-config.js');
+
+    const routes = Array.from(routesBlock[1].matchAll(/['"]([^'"]+)['"]\s*:/g))
+        .map(match => match[1])
+        .filter(route => route.startsWith('/'));
+
+    return Array.from(new Set([...routes, '/tickets']));
+};
 
 export const invalidateVisibilityCache = () => { _visibilityCache = null; };
 
@@ -120,6 +161,8 @@ export const registerStaticRoutes = (app: any, { __dirname }: { __dirname: strin
                     htmlContent = htmlContent.replace(/{{PROJECT_NAME}}/g, projectName);
                     htmlContent = htmlContent.replace(/{{PROJECT_ID}}/g, projectId);
                     htmlContent = htmlContent.replace(/{{SERVICE_ID}}/g, serviceId);
+                    htmlContent = htmlContent.replace(/{{APP_VERSION}}/g, getAppVersion());
+                    htmlContent = htmlContent.replace(/{{ASSET_VERSION}}/g, getAssetVersion());
                     htmlContent = htmlContent.replace(/{{SHOW_BACKOFFICE_STYLE}}/g, showBackoffice);
                     htmlContent = htmlContent.replace(/{{SHOW_CRM_STYLE}}/g, showCRM);
                     htmlContent = htmlContent.replace(/{{SHOW_SYSTEM_CONFIG_STYLE}}/g, showSystemConfig);
@@ -152,40 +195,19 @@ export const registerStaticRoutes = (app: any, { __dirname }: { __dirname: strin
     // Paginas standalone (no forman parte del SPA shell)
     serveHtmlPage("/login", "login.html");
 
-    // Rutas SPA: todas sirven shell.html; el router JS carga la view correspondiente.
-    // agregar más rutas para que cuando se haga "refresh" no tire errores.
-    serveHtmlPage("/conversaciones", "shell.html");
-    serveHtmlPage("/dashboard", "shell.html");
-    serveHtmlPage("/conexion-chatbot", "shell.html");
-    serveHtmlPage("/conexion", "shell.html");
-    serveHtmlPage("/webchat", "shell.html");
-    serveHtmlPage("/system-config", "shell.html");
-    serveHtmlPage("/crm", "shell.html");
-    serveHtmlPage("/crm-tareas", "shell.html");
-    serveHtmlPage("/documentacion", "shell.html");
-    serveHtmlPage("/docs", "shell.html");
-    serveHtmlPage("/meta", "shell.html");
-    serveHtmlPage("/mercado-libre", "shell.html");
-    serveHtmlPage("/mercado-libre-productos", "shell.html");
-    serveHtmlPage("/mercado-libre-bot", "shell.html");
-    serveHtmlPage("/mercado-pago", "shell.html");
-    serveHtmlPage("/lista-negra", "shell.html");
-    serveHtmlPage("/reportes", "shell.html");
-    serveHtmlPage("/tickets", "shell.html");
-    serveHtmlPage("/usuarios", "shell.html");
-    serveHtmlPage("/webhooks", "shell.html");
-    serveHtmlPage("/epc-cbu-cvu", "shell.html");
+    // Rutas SPA: se leen desde navigation-config.js para evitar duplicar rutas front/back.
+    getSpaRoutes().forEach(route => serveHtmlPage(route, "shell.html"));
 
-    // Favicon directo (browsers lo piden en / automáticamente) — busca en src/assets primero, luego en assets/
+    // Favicon directo: priorizar assets/ porque ahí se actualizan los iconos públicos.
     app.get("/favicon.ico", (_req: any, res: any) => {
         const candidates = [
-            path.join(process.cwd(), "src", "backend", "assets", "favicon.ico"),
             path.join(process.cwd(), "assets", "favicon.ico"),
+            path.join(process.cwd(), "src", "backend", "assets", "favicon.ico"),
         ];
         const p = candidates.find(c => fs.existsSync(c));
         if (p) {
             res.setHeader("Content-Type", "image/x-icon");
-            res.setHeader("Cache-Control", "public, max-age=86400");
+            res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
             fs.createReadStream(p).pipe(res);
         } else {
             res.statusCode = 204; res.end();
@@ -198,8 +220,8 @@ export const registerStaticRoutes = (app: any, { __dirname }: { __dirname: strin
     });
     app.use("/js", serve(path.join(process.cwd(), "src", "frontend", "js")));
     app.use("/style", serve(path.join(process.cwd(), "src", "frontend", "style")));
-    app.use("/assets", serve(path.join(process.cwd(), "src", "backend", "assets")));
     app.use("/assets", serve(path.join(process.cwd(), "assets")));
+    app.use("/assets", serve(path.join(process.cwd(), "src", "backend", "assets")));
     // Vendor packages instalados localmente
     app.use("/vendor/toast", serve(path.join(process.cwd(), "node_modules", "nextjs-toast-notify", "dist")));
     app.use("/vendor/fontawesome", serve(path.join(process.cwd(), "node_modules", "@fortawesome", "fontawesome-free")));

@@ -4,9 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Acceso - {{BOT_NAME}}</title>
-    <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png">
-    <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
-    <script>(function(){var v='?v=2';document.querySelectorAll('link[rel*="icon"]').forEach(function(e){e.href=e.href.split('?')[0]+v;});}());</script>
+    <link rel="icon" href="/assets/favicon.ico?v={{ASSET_VERSION}}" sizes="any">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png?v={{ASSET_VERSION}}">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png?v={{ASSET_VERSION}}">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png?v={{ASSET_VERSION}}">
+    <link rel="manifest" href="/assets/site.webmanifest?v={{ASSET_VERSION}}">
     <!-- Evitar flash de tema incorrecto -->
     <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('theme') || 'light');</script>
     <link rel="stylesheet" href="/style/vendor/fontawesome/css/all.min.css">

@@ -3873,12 +3873,12 @@ async function startContactSync() {
         const data = await res.json();
 
         if (data.success) {
-            const { contacts, labels, associations, meta_sync_triggered } = data.summary;
+            const { contacts, labels, associations, meta_sync_triggered, history_skipped } = data.summary;
             if (meta_sync_triggered) {
                 summaryText.innerHTML = `
                     <div style="color: #059669; margin-bottom: 10px;"><i class="fab fa-whatsapp"></i> <b>Sincronización Oficial Meta Solicitada</b></div>
                     La petición ha sido enviada a los servidores de Meta.<br/>
-                    Los contactos y el historial se cargarán en segundo plano.
+                    Los contactos se cargarán en segundo plano.${history_skipped ? '<br/>El historial anterior ya no está disponible por ventana de Meta.' : '<br/>El historial se cargará en segundo plano.'}
                 `;
             } else {
                 summaryText.innerHTML = `
@@ -3899,7 +3899,10 @@ async function startContactSync() {
         console.error('[Sync] Error:', e);
         loading.style.display = 'none';
         modal.style.display = 'none';
-        showToast('❌ Error: ' + e.message, 'error');
+        const syncError = String(e.message || '').includes('outside of allowed time window')
+            ? 'Meta ya no permite importar historial. Los chats entran al escribir.'
+            : e.message;
+        showToast('Error: ' + syncError, 'error');
     }
 }
 

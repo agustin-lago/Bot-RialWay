@@ -267,7 +267,7 @@ export const registerExternalApiRoutes = (app: any, deps: any) => {
                     parameters: parameters
                 }] : [];
 
-                const resApi = await provider.sendTemplate(firstPhone, templateName, finalLanguage, components);
+                const resApi = await provider.sendTemplate(firstPhone, templateName, finalLanguage, components, { projectId: resolvedProjectId, serviceId: resolvedServiceId });
                 
                 if (resApi?.messages) {
                     firstMsgId = resApi.messages[0].id;
@@ -397,7 +397,7 @@ export const registerExternalApiRoutes = (app: any, deps: any) => {
                 if (!bodyText) {
                     return res.status(400).json({ success: false, error: "Falta el campo text.body para mensajes de tipo text." });
                 }
-                providerResponse = await provider.sendMessage(targetJid, bodyText);
+                providerResponse = await provider.sendMessage(targetJid, bodyText, { projectId: resolvedProjectId, serviceId: resolvedServiceId });
                 historyContent = bodyText;
             } else if (type === 'image') {
                 const caption = req.body.image?.caption || '';
@@ -405,7 +405,7 @@ export const registerExternalApiRoutes = (app: any, deps: any) => {
                 if (!media) {
                     return res.status(400).json({ success: false, error: "Falta el campo image.link o image.id para mensajes de tipo image." });
                 }
-                providerResponse = await provider.sendMessage(targetJid, caption, { media });
+                providerResponse = await provider.sendMessage(targetJid, caption, { media, projectId: resolvedProjectId, serviceId: resolvedServiceId });
                 historyContent = media;
             } else if (type === 'video') {
                 const caption = req.body.video?.caption || '';
@@ -413,7 +413,7 @@ export const registerExternalApiRoutes = (app: any, deps: any) => {
                 if (!media) {
                     return res.status(400).json({ success: false, error: "Falta el campo video.link o video.id para mensajes de tipo video." });
                 }
-                providerResponse = await provider.sendMessage(targetJid, caption, { media });
+                providerResponse = await provider.sendMessage(targetJid, caption, { media, projectId: resolvedProjectId, serviceId: resolvedServiceId });
                 historyContent = media;
             } else if (type === 'document') {
                 const caption = req.body.document?.caption || '';
@@ -422,14 +422,14 @@ export const registerExternalApiRoutes = (app: any, deps: any) => {
                 if (!media) {
                     return res.status(400).json({ success: false, error: "Falta el campo document.link o document.id para mensajes de tipo document." });
                 }
-                providerResponse = await provider.sendMessage(targetJid, caption, { media, fileName: filename });
+                providerResponse = await provider.sendMessage(targetJid, caption, { media, fileName: filename, projectId: resolvedProjectId, serviceId: resolvedServiceId });
                 historyContent = media;
             } else if (type === 'audio') {
                 const media = req.body.audio?.link || req.body.audio?.id;
                 if (!media) {
                     return res.status(400).json({ success: false, error: "Falta el campo audio.link o audio.id para mensajes de tipo audio." });
                 }
-                providerResponse = await provider.sendMessage(targetJid, '', { media });
+                providerResponse = await provider.sendMessage(targetJid, '', { media, projectId: resolvedProjectId, serviceId: resolvedServiceId });
                 historyContent = media;
             } else {
                 return res.status(400).json({ success: false, error: `Tipo de message no soportado: ${type}` });
@@ -507,7 +507,7 @@ async function processExternalBulk(
                 parameters: parameters
             }] : [];
 
-            const resApi = await provider.sendTemplate(phone, templateName, languageCode, components);
+            const resApi = await provider.sendTemplate(phone, templateName, languageCode, components, { isBulk: true, projectId, serviceId });
             
             if (resApi?.messages) {
                 sent++;

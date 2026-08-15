@@ -39,43 +39,45 @@ window.conexionView = {
                                 </div>
                             </div>
                             <div id="session-error" class="mb-3"></div>
-                            <div id="baileys-start-container" style="display:none;" class="conexion-start-panel">
-                                <p class="info-text mb-4">La conexion de Baileys no esta activa. Elegi el metodo de vinculacion:</p>
-                                <div class="conexion-start-options">
-                                    <div>
-                                        <button id="generate-qr-btn" class="btn w-full">
-                                            <i class="fas fa-qrcode"></i> Generar QR Baileys
-                                        </button>
-                                    </div>
-                                    <div class="conexion-option-divider">O BIEN</div>
-                                    <div class="flex flex-col gap-2">
-                                        <input type="text" id="pairing-phone-input" class="input text-center" placeholder="Ej: 5491122334455">
-                                        <button id="generate-pairing-btn" class="btn-primary w-full">
-                                            <i class="fas fa-key"></i> Vincular con codigo
-                                        </button>
-                                    </div>
-                                </div>
-                                <div id="generate-qr-loading" style="display:none;" class="mt-4 flex flex-col items-center gap-2">
-                                    <i class="fas fa-spinner animate-spin-loader text-accent-bright text-2xl"></i>
-                                    <p class="info-text text-center">Iniciando motor de WhatsApp... esto puede tardar unos segundos.</p>
-                                </div>
-                            </div>
-                            <div id="qr-section" style="display:none;" class="conexion-qr-section">
-                                <div class="conexion-qr-card">
-                                    <h3 id="qr-section-title">Escanea con WhatsApp</h3>
-                                    <div class="conexion-qr-frame">
-                                        <div id="qr-skeleton" class="conexion-qr-skeleton" style="display:none;" aria-hidden="true">
-                                            <span class="skeleton-title"></span>
-                                            <span class="skeleton-text"></span>
-                                            <span class="skeleton-text"></span>
+                            <div class="conexion-link-grid">
+                                <div id="baileys-start-container" style="display:none;" class="conexion-start-panel">
+                                    <p class="info-text mb-4">Vinculacion auxiliar de Baileys por QR o codigo para grupos.</p>
+                                    <div class="conexion-start-options">
+                                        <div>
+                                            <button id="generate-qr-btn" class="btn w-full">
+                                                <i class="fas fa-qrcode"></i> Generar QR Baileys
+                                            </button>
                                         </div>
-                                        <img id="baileys-qr-img" src="/qr.png" class="qr" alt="Codigo QR"
-                                            onerror="this.style.display='none';document.getElementById('qr-empty-message').style.display='block'">
-                                        <p id="qr-empty-message" class="qr-error-msg" style="display:none;">Generando QR... por favor espera.</p>
+                                        <div class="conexion-option-divider">O BIEN</div>
+                                        <div class="flex flex-col gap-2">
+                                            <input type="text" id="pairing-phone-input" class="input text-center" placeholder="Ej: 5491122334455">
+                                            <button id="generate-pairing-btn" class="btn-primary w-full">
+                                                <i class="fas fa-key"></i> Vincular con codigo
+                                            </button>
+                                        </div>
                                     </div>
-                                    <div id="pairing-code-container" class="conexion-pairing-code" style="display:none;"></div>
+                                    <div id="generate-qr-loading" style="display:none;" class="mt-4 flex flex-col items-center gap-2">
+                                        <i class="fas fa-spinner animate-spin-loader text-accent-bright text-2xl"></i>
+                                        <p class="info-text text-center">Iniciando motor de WhatsApp... esto puede tardar unos segundos.</p>
+                                    </div>
                                 </div>
-                                <p class="info-text mt-4 text-xs">La pagina se actualizara automaticamente cuando estes vinculado.</p>
+                                <div id="qr-section" style="display:block;" class="conexion-qr-section">
+                                    <div class="conexion-qr-card">
+                                        <h3 id="qr-section-title">Vinculacion pendiente</h3>
+                                        <div class="conexion-qr-frame">
+                                            <div id="qr-skeleton" class="conexion-qr-skeleton" style="display:none;" aria-hidden="true">
+                                                <span class="skeleton-title"></span>
+                                                <span class="skeleton-text"></span>
+                                                <span class="skeleton-text"></span>
+                                            </div>
+                                            <img id="baileys-qr-img" src="/qr.png" class="qr" alt="Codigo QR" style="display:none;"
+                                                onerror="this.style.display='none';document.getElementById('qr-empty-message').style.display='block'">
+                                            <p id="qr-empty-message" class="qr-error-msg" style="display:block;">Genera un QR o solicita un codigo para iniciar la vinculacion.</p>
+                                        </div>
+                                        <div id="pairing-code-container" class="conexion-pairing-code" style="display:none;"></div>
+                                    </div>
+                                    <p class="info-text mt-4 text-xs">La pagina se actualizara automaticamente cuando estes vinculado.</p>
+                                </div>
                             </div>
                             <div id="session-info" style="display:none;" class="conexion-session-info"></div>
                             <div id="whatsapp-link-container" style="display:none;" class="mt-5">

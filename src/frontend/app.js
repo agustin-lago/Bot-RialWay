@@ -3,6 +3,7 @@
 // Carga views dinamicamente y maneja la navegacion sin recargar la pagina
 
 const ROUTES = window.__APP_ROUTES || {};
+const APP_DOCUMENT_TITLE = 'Backoffice - Neurolinks';
 
 const _loadedScripts = {};
 let _currentView = null;
@@ -59,23 +60,18 @@ function persistNotificationDotState() {
 }
 
 function getDefaultSectionRoute(section) {
-    if (window.navigationRouter) return window.navigationRouter.getDefaultSectionRoute(section);
     if (section === 'integrations') return window.__CRM_VISIBLE === false ? '/meta' : '/crm';
     return '/dashboard';
 }
 
 function getSectionForPath(path) {
-    if (window.navigationRouter) return window.navigationRouter.getSectionForPath(path);
     if (SECTION_ROUTES.messaging.includes(path)) return 'messaging';
     if (SECTION_ROUTES.integrations.includes(path)) return 'integrations';
     return null;
 }
 
+
 function rememberSectionRoute(path) {
-    if (window.navigationRouter) {
-        window.navigationRouter.rememberSectionRoute(path);
-        return;
-    }
     const section = getSectionForPath(path);
     if (!section) return;
     try {
@@ -85,11 +81,8 @@ function rememberSectionRoute(path) {
     }
 }
 
+
 window.navigateToLastSectionRoute = function(section) {
-    if (window.navigationRouter) {
-        window.navigationRouter.navigateToLastSectionRoute(section);
-        return;
-    }
     const allowedRoutes = SECTION_ROUTES[section] || [];
     let route = '';
     try {
@@ -126,9 +119,6 @@ window.openSupportWidget = async function(e) {
         e.preventDefault();
         e.stopPropagation();
     }
-    if (typeof window.closeMessagingFlyout === 'function') window.closeMessagingFlyout();
-    if (typeof window.closeIntegracionesFlyout === 'function') window.closeIntegracionesFlyout();
-    if (typeof window.closeAjustesFlyout === 'function') window.closeAjustesFlyout();
     if (window.notificationsWidget && typeof window.notificationsWidget.close === 'function') {
         window.notificationsWidget.close();
     }
@@ -144,9 +134,6 @@ window.openNotificationsModal = async function(e) {
         e.preventDefault();
         e.stopPropagation();
     }
-    if (typeof window.closeMessagingFlyout === 'function') window.closeMessagingFlyout();
-    if (typeof window.closeIntegracionesFlyout === 'function') window.closeIntegracionesFlyout();
-    if (typeof window.closeAjustesFlyout === 'function') window.closeAjustesFlyout();
     await loadViewScript('/js/notifications/notifications.modal.js');
     if (window.notificationsWidget) {
         window.notificationsWidget.init();
@@ -161,21 +148,18 @@ function getViewName(scriptPath) {
 }
 
 function highlightActiveNav(path) {
-    document.querySelectorAll('#navbar .nav-item[data-route]').forEach(item => {
-        item.classList.toggle('active', item.getAttribute('data-route') === path);
-    });
-    const messagingPaths = SECTION_ROUTES.messaging;
-    const integrationPaths = SECTION_ROUTES.integrations;
-    const settingsPaths = ['/usuarios'];
-
-    // Gestion section button
-    const msgBtn = document.getElementById('nav-messaging-btn');
-    if (msgBtn) msgBtn.classList.toggle('active', messagingPaths.includes(path));
-    // Section tabs de Gestion
-    document.querySelectorAll('#nav-messaging-btn .nav-dropdown-link[data-route]').forEach(item => {
-        item.classList.toggle('active', item.getAttribute('data-route') === path);
-    });
     const params = new URLSearchParams(window.location.search);
+    document.querySelectorAll('.app-sidemenu-link[data-route]').forEach(item => {
+        const route = item.getAttribute('data-route') || '';
+        const matchRoutes = (item.getAttribute('data-match-routes') || '').split(',').filter(Boolean);
+        const routeMatch = route === path || (route === '/docs' && path === '/documentacion');
+        item.classList.toggle('active', Boolean(routeMatch || matchRoutes.includes(path)));
+    });
+    document.querySelectorAll('.app-sidemenu-details').forEach(details => {
+        const active = Boolean(details.querySelector('.app-sidemenu-link.active'));
+        details.classList.toggle('active', active);
+        if (active) details.open = true;
+    });
     document.querySelectorAll('.section-tabs .section-tab').forEach(tab => {
         const route = tab.getAttribute('data-route') || '';
         const panel = tab.getAttribute('data-panel') || '';
@@ -189,41 +173,6 @@ function highlightActiveNav(path) {
     document.querySelectorAll('.section-tabs .section-tab-menu-item[data-route]').forEach(item => {
         item.classList.toggle('active', item.getAttribute('data-route') === path);
     });
-    // Integraciones section button
-    const intBtn = document.getElementById('nav-integraciones-btn');
-    const isIntegrationPath = integrationPaths.includes(path);
-    if (intBtn) intBtn.classList.toggle('active', isIntegrationPath);
-    // Dropdown links de Integraciones
-    document.querySelectorAll('#nav-integraciones-btn .nav-dropdown-link[data-route]').forEach(item => {
-        item.classList.toggle('active', item.getAttribute('data-route') === path);
-    });
-    const userBtn = document.getElementById('nav-usuarios-btn');
-    if (userBtn) userBtn.classList.toggle('active', settingsPaths.includes(path));
-
-    // Expandir y activar sub-dropdown de Mercado Libre si corresponde
-    const meliSub = document.getElementById('nav-mercado-libre-sub');
-    if (meliSub) {
-        const isMeliPath = ['/mercado-libre-productos', '/mercado-libre-bot', '/mercado-pago'].includes(path);
-        meliSub.classList.toggle('active', isMeliPath);
-        const subMenu = meliSub.querySelector('.nav-sub-dropdown-menu');
-        const chevron = meliSub.querySelector('.nav-sub-dropdown-icon');
-        if (isMeliPath) {
-            meliSub.classList.add('open');
-            if (subMenu) subMenu.style.height = subMenu.scrollHeight + 'px';
-            if (chevron) chevron.style.transform = 'rotate(180deg)';
-        } else {
-            meliSub.classList.remove('open');
-            if (subMenu) subMenu.style.height = '0';
-            if (chevron) chevron.style.transform = 'rotate(0deg)';
-        }
-    }
-
-    // Cerrar flyouts al navegar (solo si no es ruta interna de integraciones que necesite mantenerlas abiertas en mobile)
-    if (typeof window.closeMessagingFlyout === 'function') window.closeMessagingFlyout();
-    if (typeof window.closeIntegracionesFlyout === 'function') window.closeIntegracionesFlyout();
-    if (typeof window.closeAjustesFlyout === 'function') window.closeAjustesFlyout();
-    if (typeof window.syncSidebarDropdownState === 'function') window.syncSidebarDropdownState(path);
-    if (window.navigationRouter) window.navigationRouter.updateActiveState(path);
 }
 window.highlightActiveNav = highlightActiveNav;
 
@@ -245,8 +194,8 @@ async function mountView(path) {
 
     // Validar que exista el token correspondiente antes de proceder al montaje o llamadas a la API
     const isSystemConfig = cleanPath === '/system-config';
-    let token = isSystemConfig 
-        ? localStorage.getItem('system_config_token') 
+    let token = isSystemConfig
+        ? localStorage.getItem('system_config_token')
         : localStorage.getItem('backoffice_token');
 
     if (!token) {
@@ -302,8 +251,7 @@ async function mountView(path) {
         root.innerHTML = view.getHTML ? view.getHTML() : '';
         if (nonce !== _mountNonce) return;
 
-        if (view.title) document.title = view.title;
-        if (typeof window.renderDesktopSidebarMenus === 'function') window.renderDesktopSidebarMenus();
+        document.title = APP_DOCUMENT_TITLE;
         highlightActiveNav(cleanPath);
         applyCachedNotificationDots();
         _currentView = view;
@@ -424,17 +372,18 @@ async function updateNotificationDots() {
             desktopBadgeNotifications.innerText = notificationsLabel;
             desktopBadgeNotifications.style.display = showNotificationsBadge ? 'inline-flex' : 'none';
         }
+        document.querySelectorAll('[data-notifications-badge]').forEach(badge => {
+            badge.innerText = notificationsLabel;
+            badge.style.display = showNotificationsBadge ? 'inline-flex' : 'none';
+        });
 
         // --- Conversaciones ---
-        // En chats el pendiente real es el unread count, incluso si la pestaña
+        // En chats el pendiente real es el unread count, incluso si la pestaÃ±a
         // Conversaciones esta montada: puede haber chats sin leer dentro.
         const showConversaciones = data.unread_chats_count > 0;
         setNotificationDot('dot-conversaciones', showConversaciones);
-        // --- Tickets (Ahora en Support Widget) ---
-        const lastTicketsVisit = parseInt(localStorage.getItem('last_visited_tickets') || '0');
-        const latestTicketTime = data.latest_ticket_time ? new Date(data.latest_ticket_time).getTime() : 0;
-        const showTickets = latestTicketTime > lastTicketsVisit;
-        setNotificationDot('sw-badge', showTickets, 'block');
+        // --- Tickets (Ahora en Support Widget, manejado de forma independiente) ---
+
 
         // --- Reportes ---
         const lastReportesVisit = parseInt(localStorage.getItem('last_visited_reportes') || '0');
@@ -471,7 +420,7 @@ window.updateNotificationDots = updateNotificationDots;
 // Iniciar en DOMContentLoaded
 document.addEventListener('DOMContentLoaded', () => {
     mountView(window.location.pathname);
-    
+
     // Cargar Support Widget Globalmente
     loadViewScript('/js/tickets/support.widget.js').then(() => {
         if (window.supportWidget) {
@@ -479,17 +428,19 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Verificar si el cliente EPC está activo para mostrar el menú CBU/CVU/ALIAS
+    // Verificar si el cliente EPC estÃ¡ activo para mostrar el menÃº CBU/CVU/ALIAS
     const backofficeTokenForSlug = localStorage.getItem('backoffice_token');
     if (backofficeTokenForSlug) {
         fetch(`/api/dashboard-status?token=${encodeURIComponent(backofficeTokenForSlug)}`)
             .then(res => res.json())
             .then(data => {
                 window.__EPC_VISIBLE = data.clientSlug === 'cas-epc' || data.clientSlug === 'casepc';
+                if (typeof window.renderSideMenu === 'function') {
+                    window.renderSideMenu();
+                }
                 if (typeof window.updateSectionHeader === 'function') {
                     window.updateSectionHeader(window.location.pathname, { force: true });
                 }
-                if (window.navigationRouter) window.navigationRouter.render();
             })
             .catch(err => console.error('[Router] Error checking client slug:', err));
     }
@@ -509,12 +460,14 @@ document.addEventListener('DOMContentLoaded', () => {
             if (typeof window.updateSystemConfigNavVisibility === 'function') {
                 window.updateSystemConfigNavVisibility();
             }
+            if (typeof window.renderSideMenu === 'function') {
+                window.renderSideMenu();
+            }
             const label = enabled ? 'Activado: Developer Settings' : 'Desactivado: Developer Settings';
             showToast(label, enabled ? 'success' : 'info');
             if (typeof window.updateSectionHeader === 'function') {
                 window.updateSectionHeader(window.location.pathname, { force: true });
             }
-            if (window.navigationRouter) window.navigationRouter.render();
             if (!enabled && window.location.pathname === '/system-config') {
                 navigate('/dashboard');
             }

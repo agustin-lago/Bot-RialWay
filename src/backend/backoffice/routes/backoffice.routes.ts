@@ -127,25 +127,33 @@ const NOT_FOUND_TTL = 1000 * 60 * 10; // 10 minutos
 
 
 /**
- * Helper para disparar la sincronizaciÃ³n de Meta SMB (Contactos + Historial)
+ * Helper para disparar la sincronizacion de Meta SMB (contactos + historial).
  */
 async function triggerMetaSync(accessToken: string, phoneId: string) {
-    console.log(`ðŸ“¡ [SMB-SYNC] Iniciando sincronizaciÃ³n automÃ¡tica para ${phoneId}...`);
-    // 1. Sincronizar Contactos
+    console.log(`[SMB-SYNC] Iniciando sincronizacion automatica para ${phoneId}...`);
     await axios.post(`https://graph.facebook.com/v25.0/${phoneId}/smb_app_data`,
         { messaging_product: 'whatsapp', sync_type: 'smb_app_state_sync' },
         { headers: { 'Authorization': `Bearer ${accessToken}` } }
     );
-    console.log(`âœ… [SMB-SYNC] Solicitud de Contactos enviada.`);
+    console.log('[SMB-SYNC] Solicitud de contactos enviada.');
 
-    // 2. Sincronizar Historial
-    await axios.post(`https://graph.facebook.com/v25.0/${phoneId}/smb_app_data`,
-        { messaging_product: 'whatsapp', sync_type: 'history' },
-        { headers: { 'Authorization': `Bearer ${accessToken}` } }
-    );
-    console.log(`âœ… [SMB-SYNC] Solicitud de Historial enviada.`);
+    try {
+        await axios.post(`https://graph.facebook.com/v25.0/${phoneId}/smb_app_data`,
+            { messaging_product: 'whatsapp', sync_type: 'history' },
+            { headers: { 'Authorization': `Bearer ${accessToken}` } }
+        );
+        console.log('[SMB-SYNC] Solicitud de historial enviada.');
+        return { contacts: true, history: true, historySkipped: false };
+    } catch (historyErr: any) {
+        const errorData = historyErr?.response?.data || {};
+        const details = errorData.error?.error_data?.details || errorData.error?.message || historyErr.message;
+        if (String(details).includes('outside of allowed time window')) {
+            console.warn('[SMB-SYNC] Historial fuera de ventana; contactos solicitados correctamente.');
+            return { contacts: true, history: false, historySkipped: true };
+        }
+        throw historyErr;
+    }
 }
-
 /** FunciÃ³n unificada para procesar el envÃ­o de mensajes e historial */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -353,7 +361,7 @@ export const processSendMessage = async (
 
                 if (providerIsMeta) {
                     if (finalType === 'sticker') opts.type = 'sticker';
-                    providerResponse = await providerToSend.sendMessage(jid, message || '', opts);
+                    providerResponse = await providerToSend.sendMessage(jid, message || '', { ...opts, serviceId: targetServiceId, projectId: currentProjectId });
                 } else if (baileysQuoted && providerToSend.vendor && typeof providerToSend.vendor.sendMessage === 'function') {
                     const mediaContent: any = {};
                     if (finalType === 'image') mediaContent.image = { url: absolutePath };
@@ -370,25 +378,25 @@ export const processSendMessage = async (
                 } else if (finalType === 'sticker') {
                     opts.type = 'sticker';
                     if (typeof (providerToSend as any).sendSticker === 'function') {
-                        providerResponse = await (providerToSend as any).sendSticker(jid, absolutePath);
+                        providerResponse = await (providerToSend as any).sendSticker(jid, absolutePath, { serviceId: targetServiceId, projectId: currentProjectId });
                     } else {
                         providerResponse = await providerToSend.sendMessage(jid, '', { ...opts, serviceId: targetServiceId, projectId: currentProjectId });
                     }
                 } else if (finalType === 'image') {
                     if (typeof providerToSend.sendImage === 'function') {
-                        providerResponse = await providerToSend.sendImage(jid, absolutePath, message || '');
+                        providerResponse = await providerToSend.sendImage(jid, absolutePath, message || '', { serviceId: targetServiceId, projectId: currentProjectId });
                     } else {
                         providerResponse = await providerToSend.sendMessage(jid, message || '', { ...opts, serviceId: targetServiceId, projectId: currentProjectId });
                     }
                 } else if (finalType === 'video') {
                     if (typeof (providerToSend as any).sendVideo === 'function') {
-                        providerResponse = await (providerToSend as any).sendVideo(jid, absolutePath, message || '');
+                        providerResponse = await (providerToSend as any).sendVideo(jid, absolutePath, message || '', { serviceId: targetServiceId, projectId: currentProjectId });
                     } else {
                         providerResponse = await providerToSend.sendMessage(jid, message || '', { ...opts, serviceId: targetServiceId, projectId: currentProjectId });
                     }
                 } else if (finalType === 'audio') {
                     if (typeof (providerToSend as any).sendAudio === 'function') {
-                        providerResponse = await (providerToSend as any).sendAudio(jid, absolutePath, message || file.originalname);
+                        providerResponse = await (providerToSend as any).sendAudio(jid, absolutePath, message || file.originalname, { serviceId: targetServiceId, projectId: currentProjectId });
                     } else {
                         opts.media = { url: absolutePath, mimetype: file.mimetype };
                         providerResponse = await providerToSend.sendMessage(jid, message || '', { ...opts, serviceId: targetServiceId, projectId: currentProjectId });
@@ -396,9 +404,9 @@ export const processSendMessage = async (
                 } else {
                     opts.fileName = file.originalname;
                     if (providerToSend.constructor.name === 'MetaCloudProvider') {
-                        providerResponse = await providerToSend.sendMessage(jid, message || '', opts);
+                        providerResponse = await providerToSend.sendMessage(jid, message || '', { ...opts, serviceId: targetServiceId, projectId: currentProjectId });
                     } else if (typeof (providerToSend as any).sendFile === 'function') {
-                        providerResponse = await (providerToSend as any).sendFile(jid, absolutePath, message || file.originalname);
+                        providerResponse = await (providerToSend as any).sendFile(jid, absolutePath, message || file.originalname, { serviceId: targetServiceId, projectId: currentProjectId });
                     } else {
                         providerResponse = await providerToSend.sendMessage(jid, message || '', { ...opts, serviceId: targetServiceId, projectId: currentProjectId });
                     }
@@ -810,7 +818,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
 
             try {
                 console.log(`[BULK] Preparando envío para ${phone}. Componentes:`, JSON.stringify(components, null, 2));
-                const resApi = await provider.sendTemplate(phone, templateName, languageCode || 'es_AR', components, { isBulk: true });
+                const resApi = await provider.sendTemplate(phone, templateName, languageCode || 'es_AR', components, { isBulk: true, projectId, serviceId });
 
                 if (resApi?.messages) {
                     const msgId = resApi.messages[0].id;
@@ -965,23 +973,36 @@ export const registerBackofficeRoutes = (app: any) => {
         try {
             const projectId = resolveProjectId(req) || HistoryHandlerClass.PROJECT_IDENTIFIER;
             let nombre = 'Usuario';
+            let email: string | null = null;
+            let plan_tipo: string | null = null;
+            const clientResult = await supabase.from('clientes').select('nombre,email,plan_tipo').eq('id', projectId).maybeSingle();
+            const clientData: any = clientResult.data;
+            if (clientData) {
+                plan_tipo = clientData.plan_tipo || null;
+            }
 
             if (req.auth && req.auth.isSubUser && req.auth.userId) {
                 const user = await depsHistoryHandler.getUserById(req.auth.userId);
                 if (user) {
                     nombre = user.full_name || user.username || 'Usuario';
+                    email = user.email || user.username || null;
                 }
             } else {
-                const { data } = await supabase.from('clientes').select('nombre').eq('id', projectId).maybeSingle();
+                let data: any = clientData;
+                if (clientResult.error) {
+                    const fallback = await supabase.from('clientes').select('nombre,email').eq('id', projectId).maybeSingle();
+                    data = fallback.data;
+                }
                 if (data && data.nombre) {
                     nombre = data.nombre;
+                    email = data.email || null;
                 } else {
                     nombre = process.env.RAILWAY_SERVICE_NAME || process.env.PROJECT_NAME || 'Admin';
                 }
             }
-            res.json({ success: true, nombre });
+            res.json({ success: true, nombre, email, plan_tipo });
         } catch (e) {
-            res.json({ success: true, nombre: 'Usuario' });
+            res.json({ success: true, nombre: 'Usuario', email: null, plan_tipo: null });
         }
     });
 
@@ -1503,26 +1524,27 @@ export const registerBackofficeRoutes = (app: any) => {
                 console.log(`¡ [SYNC] Sincronización Meta detectada. Solicitando historial SMB...`);
                 try {
                     const tokenForSync = metaConfig.onboarding_data?.client_token || metaConfig.access_token;
-                    await triggerMetaSync(tokenForSync, metaConfig.phone_number_id);
+                    const syncResult = await triggerMetaSync(tokenForSync, metaConfig.phone_number_id);
                     return res.json({
                         success: true,
                         summary: {
                             contacts: 'Meta Sync Triggered',
                             labels: 'N/A',
                             associations: 0,
-                            meta_sync_triggered: true
+                            meta_sync_triggered: true,
+                            history_skipped: syncResult.historySkipped
                         }
                     });
                 } catch (metaErr: any) {
                     const errorData = metaErr?.response?.data || {};
                     const details = errorData.error?.error_data?.details || errorData.error?.message || metaErr.message;
 
-                    console.error('❌ [SMB-SYNC] Falló la sincronización de Meta:', details);
+                    console.error('[SMB-SYNC] Fallo la sincronizacion de Meta:', details);
 
                     if (details.includes('outside of allowed time window')) {
                         return res.status(403).json({
                             success: false,
-                            error: 'Meta solo permite la sincronización de historial dentro de las primeras 24 horas después de la vinculación inicial. Pasado este tiempo, los contactos se sincronizarán automáticamente a medida que escriban.'
+                            error: 'Meta ya no permite importar historial. Los chats entran al escribir.'
                         });
                     }
 
@@ -1968,6 +1990,13 @@ export const registerBackofficeRoutes = (app: any) => {
         try {
             const isGroup = chatId.includes('@g.us');
             const providerToSend = (isGroup && groupProvider) ? groupProvider : adapterProvider;
+            const currentProjectId = resolveProjectId(req) || HistoryHandlerClass.PROJECT_IDENTIFIER;
+            let targetServiceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+            if ((!targetServiceId || targetServiceId === 'default' || targetServiceId === 'default_service') && chatId) {
+                const chatObj = await depsHistoryHandler.getChat(chatId.split('@')[0], currentProjectId);
+                if (chatObj?.service_id) targetServiceId = chatObj.service_id;
+            }
+
 
             if (!providerToSend) {
                 return res.status(503).json({ success: false, error: 'WhatsApp provider not initialized' });
@@ -2029,30 +2058,30 @@ export const registerBackofficeRoutes = (app: any) => {
 
             // Enviar usando el método adecuado del proveedor
             if (finalType === 'text') {
-                providerResponse = await providerToSend.sendMessage(jid, mediaUrl, {});
+                providerResponse = await providerToSend.sendMessage(jid, mediaUrl, { projectId: currentProjectId, serviceId: targetServiceId });
             } else if (finalType === 'sticker') {
                 if (typeof (providerToSend as any).sendSticker === 'function') {
-                    providerResponse = await (providerToSend as any).sendSticker(jid, absolutePath);
+                    providerResponse = await (providerToSend as any).sendSticker(jid, absolutePath, { serviceId: targetServiceId, projectId: currentProjectId });
                 } else {
-                    providerResponse = await providerToSend.sendMessage(jid, '', { media: absolutePath, type: 'sticker' });
+                    providerResponse = await providerToSend.sendMessage(jid, '', { media: absolutePath, type: 'sticker', projectId: currentProjectId, serviceId: targetServiceId });
                 }
             } else if (finalType === 'image') {
                 if (typeof providerToSend.sendImage === 'function') {
-                    providerResponse = await providerToSend.sendImage(jid, absolutePath, '');
+                    providerResponse = await providerToSend.sendImage(jid, absolutePath, '', { serviceId: targetServiceId, projectId: currentProjectId });
                 } else {
-                    providerResponse = await providerToSend.sendMessage(jid, '', { media: absolutePath });
+                    providerResponse = await providerToSend.sendMessage(jid, '', { media: absolutePath, projectId: currentProjectId, serviceId: targetServiceId });
                 }
             } else if (finalType === 'video') {
                 if (typeof providerToSend.sendVideo === 'function') {
-                    providerResponse = await providerToSend.sendVideo(jid, absolutePath, '');
+                    providerResponse = await providerToSend.sendVideo(jid, absolutePath, '', { serviceId: targetServiceId, projectId: currentProjectId });
                 } else {
-                    providerResponse = await providerToSend.sendMessage(jid, '', { media: absolutePath });
+                    providerResponse = await providerToSend.sendMessage(jid, '', { media: absolutePath, projectId: currentProjectId, serviceId: targetServiceId });
                 }
             } else {
                 if (typeof providerToSend.sendFile === 'function') {
-                    providerResponse = await providerToSend.sendFile(jid, absolutePath, path.basename(absolutePath));
+                    providerResponse = await providerToSend.sendFile(jid, absolutePath, path.basename(absolutePath), { serviceId: targetServiceId, projectId: currentProjectId });
                 } else {
-                    providerResponse = await providerToSend.sendMessage(jid, '', { media: absolutePath, fileName: path.basename(absolutePath) });
+                    providerResponse = await providerToSend.sendMessage(jid, '', { media: absolutePath, fileName: path.basename(absolutePath), projectId: currentProjectId, serviceId: targetServiceId });
                 }
             }
 
@@ -2062,10 +2091,9 @@ export const registerBackofficeRoutes = (app: any) => {
             const { trackSentMessage } = await import('../../providers/provider.manager');
             trackSentMessage(externalId);
 
-            const projectId = resolveProjectId(req);
-            await depsHistoryHandler.saveMessage(chatId, 'assistant', mediaUrl, finalType, undefined, undefined, externalId, 'whatsapp', projectId || undefined);
-            await depsHistoryHandler.updateLastHumanMessage(chatId, projectId, resolveServiceId(req));
-            await depsHistoryHandler.toggleBot(chatId, false, projectId, resolveServiceId(req));
+            await depsHistoryHandler.saveMessage(chatId, 'assistant', mediaUrl, finalType, undefined, undefined, externalId, 'whatsapp', currentProjectId || undefined, targetServiceId || undefined);
+            await depsHistoryHandler.updateLastHumanMessage(chatId, currentProjectId, targetServiceId);
+            await depsHistoryHandler.toggleBot(chatId, false, currentProjectId, targetServiceId);
 
             res.json({ success: true, message: 'Archivo reenviado correctamente' });
         } catch (e: any) {
@@ -2076,20 +2104,22 @@ export const registerBackofficeRoutes = (app: any) => {
 
     app.post('/api/backoffice/baileys/start', bodyParser.json(), async (req: any, res: any) => {
         const { isGroup, usePairingCode, phoneNumber } = req.body;
-        const provider = isGroup ? groupProvider : adapterProvider;
+        const adapterIsMeta = adapterProvider?.constructor?.name === 'MetaCloudProvider';
+        const targetIsGroup = Boolean(isGroup) || Boolean(adapterIsMeta && groupProvider);
+        const provider = targetIsGroup ? groupProvider : adapterProvider;
 
         if (!provider) {
             return res.status(404).json({ success: false, error: 'Proveedor no configurado o no disponible' });
         }
 
         const { hasActiveSession } = await import('../../providers/provider.manager');
-        const statusObj = await hasActiveSession(adapterProvider, groupProvider);
-        const providerStatus = isGroup ? statusObj.group : statusObj.adapter;
+        const statusObj = await hasActiveSession(adapterProvider, groupProvider, req.body?.projectId || null, req.body?.serviceId || null);
+        const providerStatus = targetIsGroup ? statusObj.group : statusObj.adapter;
         if (providerStatus?.active) {
             return res.json({ success: true, message: 'El proveedor ya está conectado' });
         }
 
-        console.log(`[BACKOFFICE] Iniciando vinculación para Baileys (Grupo: ${!!isGroup}, PairingCode: ${!!usePairingCode})...`);
+        console.log(`[BACKOFFICE] Iniciando vinculación para Baileys (Grupo: ${!!targetIsGroup}, PairingCode: ${!!usePairingCode})...`);
 
         try {
             if (provider.globalVendorArgs) {
@@ -2106,17 +2136,17 @@ export const registerBackofficeRoutes = (app: any) => {
             // Configurar timeout de 5 minutos (300000 ms) para frenar si no se escanea
             setTimeout(async () => {
                 try {
-                    const currentStatus = await hasActiveSession(adapterProvider, groupProvider);
-                    const currentProvStatus = isGroup ? currentStatus.group : currentStatus.adapter;
+                    const currentStatus = await hasActiveSession(adapterProvider, groupProvider, req.body?.projectId || null, req.body?.serviceId || null);
+                    const currentProvStatus = targetIsGroup ? currentStatus.group : currentStatus.adapter;
 
                     if (currentProvStatus && !currentProvStatus.active) {
-                        console.log(`[TIMEOUT] Pasaron 5 minutos y no se escaneó el QR. Deteniendo proveedor Baileys (Grupo: ${!!isGroup}) para ahorrar recursos.`);
+                        console.log(`[TIMEOUT] Pasaron 5 minutos y no se escaneó el QR. Deteniendo proveedor Baileys (Grupo: ${!!targetIsGroup}) para ahorrar recursos.`);
                         if (typeof provider.stopProvider === 'function') {
                             await provider.stopProvider();
                         }
 
                         if ((adapterProvider as any).server?.io) {
-                            (adapterProvider as any).server.io.emit('baileys_stopped', { isGroup });
+                            (adapterProvider as any).server.io.emit('baileys_stopped', { isGroup: targetIsGroup });
                         }
                     }
                 } catch (e: any) {
@@ -3067,7 +3097,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 }
             }
 
-            const resApi = await provider.sendTemplate(targetPhone, templateName, lang, finalComponents);
+            const resApi = await provider.sendTemplate(targetPhone, templateName, lang, finalComponents, { projectId, serviceId });
 
             if (resApi?.messages?.[0]?.id) {
                 const msgId = resApi.messages[0].id;
@@ -3310,7 +3340,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 for (const chat of chatsList) {
                     const phone = chat.id.split('@')[0];
                     try {
-                        const resApi = await provider.sendTemplate(phone, templateName, languageCode || template.language || 'es', components, { isBulk: true });
+                        const resApi = await provider.sendTemplate(phone, templateName, languageCode || template.language || 'es', components, { isBulk: true, projectId, serviceId });
                         if (resApi?.messages) {
                             const msgId = resApi.messages[0].id;
 
@@ -4483,6 +4513,13 @@ export const registerBackofficeRoutes = (app: any) => {
             // 6. Enviar mensaje de confirmaciÃ³n por WhatsApp
             const cleanChatId = chatId.includes('@') ? chatId : `${chatId}@s.whatsapp.net`;
             const isGroup = cleanChatId.includes('@g.us');
+            let refServiceId = depsHistoryHandler.SERVICE_IDENTIFIER;
+            try {
+                const chatData = await depsHistoryHandler.getChat(chatId.split('@')[0], refProjectId);
+                if (chatData?.service_id) refServiceId = chatData.service_id;
+            } catch (_) {
+                // Mantener fallback del servicio por defecto.
+            }
 
             const { getAdapterProvider, getGroupProvider } = await import('../../providers/instances');
             const activeAdapter = getAdapterProvider();
@@ -4506,11 +4543,11 @@ Hemos recibido tu pago con Ã©xito.
 Â¡Muchas gracias!`;
 
             try {
-                const providerResponse = await providerToSend.sendMessage(cleanChatId, confMessage, {});
+                const providerResponse = await providerToSend.sendMessage(cleanChatId, confMessage, { projectId: refProjectId, serviceId: refServiceId });
                 console.log(`[MP Webhook] Mensaje enviado correctamente a ${cleanChatId}`);
 
                 const externalId = providerResponse?.key?.id || providerResponse?.messages?.[0]?.id || providerResponse?.id || null;
-                await depsHistoryHandler.saveMessage(chatId, 'assistant', confMessage, 'text', undefined, undefined, externalId, 'whatsapp', refProjectId);
+                await depsHistoryHandler.saveMessage(chatId, 'assistant', confMessage, 'text', undefined, undefined, externalId, 'whatsapp', refProjectId, refServiceId);
             } catch (sendErr: any) {
                 console.error('[MP Webhook] Error al enviar confirmaciÃ³n de WhatsApp:', sendErr.message);
             }

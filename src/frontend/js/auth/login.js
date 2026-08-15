@@ -78,6 +78,11 @@ async function login() {
             localStorage.setItem('user_role', result.role || 'subuser');
             localStorage.setItem('user_id', result.userId || '');
             localStorage.setItem('user_name', result.user || user);
+            if (result.email) {
+                localStorage.setItem('user_email', result.email);
+            } else {
+                localStorage.removeItem('user_email');
+            }
             localStorage.setItem('is_superadmin', isSuperAdmin ? 'true' : 'false');
 
             if (target === 'system-config') {

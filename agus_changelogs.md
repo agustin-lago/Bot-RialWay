@@ -960,3 +960,168 @@ La pantalla desaprovechaba espacio, parecia lenta mientras cargaba el proveedor 
 
 Que ocasionaba sin el arreglo:
 El selector parecia tener efectos inconsistentes, el usuario no podia cerrar el desplegable tocando el mismo control, la vinculacion de grupos parpadeaba por el polling y las notificaciones quedaban en una pantalla de carga innecesaria.
+
+## Padding y layout estable en vistas principales
+
+Problema:
+Los elementos principales de la vista (especialmente a la derecha en la sección "Conexión & Chatbot") quedaban cortados o pegados al borde de la pantalla sin márgenes respirables consistentes en todas las resoluciones.
+
+Causa:
+Las clases globales del layout (`#view-root`, `page-container`, `section-header`) no aplicaban padding consistente de forma responsiva y dependían de que las cards internas aportaran su propio espaciado, lo cual fallaba en contenedores flexibles grandes.
+
+Arreglo:
+Se normalizó `#view-root` y el contenedor interior para asegurar un padding perimetral unificado (`p-6` en desktop, ajustado en mobile). Ahora todo el contenido se adapta sin cortarse ni llegar a los márgenes absolutos del navegador.
+
+Que ocasionaba sin el arreglo:
+Las pantallas se veían asimétricas y en resoluciones específicas el contenido del borde derecho quedaba inaccesible o cortado visualmente.
+
+## Configuración de ID de Servicio (Service ID)
+
+Problema:
+En el panel de `System Config`, solo se veía el `PROJECT_ID`, pero era necesario visualizar también el `SERVICE_ID` para asegurar el aislamiento y conexión correcta de los entornos multi-cliente.
+
+Causa:
+El markup del panel no contemplaba este bloque de información.
+
+Arreglo:
+Se agregó el bloque de `SERVICE_ID` directamente debajo del `PROJECT_ID` en `system-config.view.js`, leyendo su valor de las variables inyectadas de entorno/Railway, manteniendo el diseño de caja descriptiva.
+
+Que ocasionaba sin el arreglo:
+Falta de visibilidad sobre qué instancia/servicio estaba ejecutando el superadmin.
+
+## Menú Mercado Libre como flyout a la derecha
+
+Problema:
+El menú anidado de Mercado Libre, cuando el sidebar estaba expandido, se abría empujando el contenido hacia abajo. El usuario deseaba que se comportara siempre como un menú lateral (flyout a la derecha), idéntico a cómo funciona cuando el sidebar está contraído.
+
+Causa:
+Las clases CSS `nav-sub-dropdown` tenían un comportamiento por defecto para apilar el contenido verticalmente cuando el menú estaba expandido (`display: flex; flex-direction: column;`).
+
+Arreglo:
+Se estandarizó el comportamiento de `nav-sub-dropdown` para que **siempre** actúe como un menú flotante lateral absoluto a la derecha del ítem padre, independientemente de si el sidebar principal está expandido o contraído, usando `position: absolute; left: 100%;`.
+
+Que ocasionaba sin el arreglo:
+La navegación perdía previsibilidad e inconsistencia visual dependiendo del estado global del sidebar, ocupando espacio vertical no deseado.
+
+## Rediseño del menú contextual en mensajes (Click Derecho & Long Press)
+
+Problema:
+El menú contextual de los mensajes aparecía con un botón flotante al hacer hover, el cual molestaba visualmente. Además, en dispositivos táctiles, mantener pulsado (long press) abría el menú pero al soltar el dedo el menú se cerraba instantáneamente, haciendo imposible su uso, y la acción carecía de feedback visual.
+
+Causa:
+1. El botón flotante estaba fijado por CSS en el hover del mensaje.
+2. Los eventos táctiles `touchend` limpiaban el estado prematuramente sin anular la pulsación en el menú recién abierto.
+3. No se implementaban eventos `contextmenu` reales de navegador en desktop.
+
+Arreglo:
+1. **Desktop:** Se eliminó el botón flotante. Se implementó el click derecho real (`contextmenu`) sobre el mensaje para abrir el menú en la posición correspondiente (izquierda o derecha según el remitente).
+2. **Táctil (Mobile/Tablet):** Se corrigió el timer del long press para que el menú permanezca abierto al soltar el dedo.
+3. **Feedback táctil:** Se agregó una animación sutil: un efecto de "hundido" (`scale(0.98)`) al tocar, y un rápido parpadeo de opacidad (`opacity: 0.6`) a los 500ms indicando que el menú se abrió con éxito y se puede soltar el dedo.
+4. Se corrigió un error que ponía el fondo transparente y se le aplicó fondo sólido a los badges superpuestos de "bot" y "humano" de los chats para que resalten.
+
+Que ocasionaba sin el arreglo:
+En escritorio el diseño se veía sucio con flechas sobrepuestas, y en móviles los usuarios literalmente no podían interactuar con las acciones del chat porque el menú desaparecía al soltar el touch.
+
+## Ubicación unificada para Soporte y Notificaciones
+
+Problema:
+El panel de notificaciones se abría en el extremo derecho de la pantalla mientras el menú de cuenta se despliega junto al sidebar, generando una experiencia inconsistente. Además, soporte y notificaciones podían quedar abiertos al mismo tiempo.
+
+Causa:
+Los widgets tenían su posición fija anclada a `right: 24px`, independiente del sidebar, y el widget de soporte no cerraba notificaciones al abrirse.
+
+Arreglo:
+Se reubicaron ambos widgets para que se abran desde el borde derecho del sidebar, con el mismo origen visual del menú de cuenta. También se agregó cierre cruzado: al abrir soporte se cierran notificaciones, y notificaciones ya cerraba soporte.
+
+Que ocasionaba sin el arreglo:
+El usuario veía menús flotantes en zonas distintas para acciones relacionadas y podía terminar con capas superpuestas en pantalla.
+
+## Email de usuario en footer y posicion original de widgets
+
+Problema:
+El footer del sidebar mostraba el texto generico "Usuario activo" y los widgets de Soporte/Notificaciones quedaron anclados junto al sidebar, pero visualmente no funcionaban bien en esa ubicacion.
+
+Causa:
+El front no consumia el email del usuario/proyecto desde `/api/backoffice/me`, y los widgets habian cambiado su anclaje desde el margen derecho del viewport hacia el borde del sidebar.
+
+Arreglo:
+Se amplio `/api/backoffice/me` para devolver `email` desde `users` o `clientes.email`, el sidebar lo carga y cachea en `localStorage`, y Soporte/Notificaciones volvieron a abrirse en su posicion original inferior derecha.
+
+Que ocasionaba sin el arreglo:
+El usuario no podia identificar rapidamente la cuenta activa y los widgets quedaban visualmente corridos respecto del patron previo.
+
+## Footer de cuenta sin parpadeo generico
+
+Problema:
+Al refrescar, el footer del sidebar mostraba "Usuario activo" antes de resolver el usuario real.
+
+Causa:
+El HTML tenia un texto fijo inicial y el JavaScript lo reemplazaba recien despues de cargar localStorage o consultar `/api/backoffice/me`.
+
+Arreglo:
+Se quito el texto fijo del HTML y el sidebar ahora pinta inmediatamente el email cacheado o el usuario cacheado antes de consultar al backend.
+
+Que ocasionaba sin el arreglo:
+Se veia un parpadeo visual con un estado generico que no correspondia a la cuenta real.
+
+## Rutas SPA centralizadas
+
+Problema:
+Al navegar a secciones como Contactos y refrescar la pagina, el servidor podia responder `Not Found` aunque la navegacion interna funcionara.
+
+Causa:
+Las rutas estaban duplicadas: el frontend tenia `/contactos` en `navigation-config.js`, pero el backend no lo registraba en `static.routes.ts` para servir `shell.html` al refrescar.
+
+Arreglo:
+El backend ahora lee las rutas SPA desde `navigation-config.js` y registra automaticamente esas rutas para servir `shell.html`, manteniendo `/tickets` como ruta legacy.
+
+Que ocasionaba sin el arreglo:
+Cada nueva vista necesitaba tocar dos archivos distintos y era facil que el refresh directo de una seccion fallara.
+
+## Limpieza de rutas SPA duplicadas
+
+Problema:
+Aunque las rutas SPA ya se leian desde `navigation-config.js`, `static.routes.ts` conservaba una lista larga de respaldo con las mismas rutas.
+
+Causa:
+La migracion inicial mantuvo un fallback amplio para seguridad, pero eso seguia duplicando informacion de navegacion.
+
+Arreglo:
+Se redujo el fallback del backend a una ruta minima de emergencia y se dejo `navigation-config.js` como fuente principal de rutas SPA.
+
+Que ocasionaba sin el arreglo:
+La navegacion quedaba mas dificil de mantener porque futuras vistas podian volver a depender de listas duplicadas.
+
+## Rutas SPA sin fallback duplicado
+
+Problema:
+El registro de rutas SPA seguia teniendo una ruta fallback dentro de `static.routes.ts`.
+
+Causa:
+Quedo una proteccion de emergencia despues de centralizar las rutas en `navigation-config.js`.
+
+Arreglo:
+Se elimino el fallback y ahora el backend exige leer `APP_ROUTES` desde `navigation-config.js` como unica fuente.
+
+Que ocasionaba sin el arreglo:
+Segu�a existiendo una segunda fuente, aunque minima, para rutas del shell.
+
+## 27. Meta Cloud API por service_id en plantillas y errores
+
+Problema:
+Los envios de plantillas podian usar la configuracion global de Meta en vez de la linea del servicio real.
+
+Causa:
+`sendTemplate` leia `this.config` directamente y varios endpoints no pasaban `projectId/serviceId` al provider. Ademas, el registro de errores de Meta resolvia el proyecto desde la config global.
+
+Arreglo:
+Se centralizo la resolucion de credenciales Meta por `projectId + serviceId`, se pasaron esos datos en envios de plantillas/backoffice/API externa y las notificaciones de error ahora priorizan el servicio del envio. Tambien se agrego un mensaje breve para el codigo 131049.
+
+Que ocasionaba sin el arreglo:
+Una plantilla podia salir desde otra linea, guardarse en un servicio distinto o registrar el error en el proyecto incorrecto. En entornos multi-servicio esto generaba diagnosticos falsos y fallas intermitentes en reenvios/campanias.
+
+## 28. Conexion: QR Baileys estable por service_id
+
+- Problema: despues del redisenio visual de Conexion & Chatbot, el boton de generar QR podia inferir mal si debia iniciar Baileys principal o Baileys de grupos usando el texto visible del boton. En proyectos con Meta como proveedor principal, eso podia intentar iniciar el proveedor equivocado y no generar QR real.
+- Arreglo: el frontend ahora guarda explicitamente el target de vinculacion (primary/groups), envia projectId y serviceId al endpoint de inicio, y consulta el estado con esos mismos parametros.
+- Impacto: Meta sigue leyendo su configuracion por proyecto/servicio, y Baileys inicia el proveedor correcto para QR o codigo sin depender del texto/render visual.
