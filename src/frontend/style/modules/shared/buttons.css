@@ -222,4 +222,20 @@
 
 .swal2-styled:hover {
   background-image: none !important;
+  box-shadow: none !important;
+}
+
+.swal2-styled.swal2-confirm:hover {
+  color: #fff !important;
+  background: linear-gradient(135deg, #16a34a, #22c55e) !important;
+}
+
+.swal2-styled.swal2-cancel:hover {
+  color: #cbd5e1 !important;
+  background: rgba(30, 41, 59, 0.78) !important;
+}
+
+[data-theme="light"] .swal2-styled.swal2-cancel:hover {
+  color: #475569 !important;
+  background: #f3f4f6 !important;
 }

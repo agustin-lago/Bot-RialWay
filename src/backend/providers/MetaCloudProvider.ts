@@ -344,14 +344,78 @@ class MetaCloudProvider extends ProviderClass {
     /**
      * Envía un mensaje basado en una plantilla oficial
      */
+    private async resolveTenantSendConfig(number: string, options: any = {}) {
+        let phone_number_id = this.config.phone_number_id || this.config.numberId;
+        let access_token = this.config.access_token || this.config.jwtToken;
+        let waba_id = this.config.waba_id || this.config.businessId;
+        let targetProjectId = options?.projectId || null;
+        let targetServiceId = options?.serviceId || null;
+
+        try {
+            const { HistoryHandler } = await import('../db/historyHandler');
+            targetProjectId = targetProjectId || HistoryHandler.PROJECT_IDENTIFIER;
+
+            if (!targetServiceId && number) {
+                const chatId = String(number).includes('@') ? String(number).split('@')[0] : String(number).replace(/\D/g, '');
+                const supabase = HistoryHandler.getSupabase();
+                if (supabase && chatId) {
+                    const { data: chatData } = await supabase
+                        .from('chats')
+                        .select('service_id')
+                        .eq('id', chatId)
+                        .eq('project_id', targetProjectId)
+                        .maybeSingle();
+
+                    if (chatData?.service_id) {
+                        targetServiceId = chatData.service_id;
+                    }
+                }
+            }
+
+            const canUseTenantConfig = targetServiceId && targetServiceId !== 'default' && targetServiceId !== 'default_service';
+            if (canUseTenantConfig) {
+                const tenantOnboarding = await HistoryHandler.getMetaOnboardingData(targetProjectId, false, targetServiceId);
+                const tenantToken = tenantOnboarding?.whatsappToken || tenantOnboarding?.access_token;
+                const tenantPhoneId = tenantOnboarding?.phoneNumberId || tenantOnboarding?.whatsappNumberId || tenantOnboarding?.phone_number_id;
+                const tenantWabaId = tenantOnboarding?.whatsappBusinessId || tenantOnboarding?.waba_id;
+
+                if (tenantToken && tenantPhoneId && tenantToken !== 'PENDING' && tenantPhoneId !== 'PENDING') {
+                    access_token = tenantToken;
+                    phone_number_id = tenantPhoneId;
+                    waba_id = tenantWabaId || waba_id;
+                }
+            }
+
+            return {
+                phone_number_id,
+                access_token,
+                waba_id,
+                projectId: targetProjectId,
+                serviceId: targetServiceId || HistoryHandler.SERVICE_IDENTIFIER
+            };
+        } catch (e: any) {
+            console.error('[MetaCloudProvider] Error resolviendo credenciales dinamicas:', e.message);
+            return {
+                phone_number_id,
+                access_token,
+                waba_id,
+                projectId: targetProjectId,
+                serviceId: targetServiceId
+            };
+        }
+    }
+
     public async sendTemplate(number: string, templateName: string, languageCode: string = 'es', components: any[] = [], options: any = {}): Promise<any> {
-        const { phone_number_id, access_token } = this.config;
+        const sendConfig = await this.resolveTenantSendConfig(number, options);
+        const { phone_number_id, access_token } = sendConfig;
+        const sendOptions = { ...options, projectId: sendConfig.projectId, serviceId: sendConfig.serviceId, metaPhoneNumberId: phone_number_id };
         if (!phone_number_id || !access_token) {
-            console.error('❌ [MetaCloudProvider] sendTemplate: Faltan IDs o token');
+            console.error('[MetaCloudProvider] sendTemplate: Faltan IDs o token');
             return null;
         }
 
-        const url = `https://graph.facebook.com/v25.0/${phone_number_id}/messages`;
+        const apiVersion = process.env.META_API_VERSION || 'v25.0';
+        const url = `https://graph.facebook.com/${apiVersion}/${phone_number_id}/messages`;
 
         // Limpiar número: solo dígitos y remover el '9' si corresponde
         const cleanNumber = this.formatNumberForMeta(number);
@@ -380,7 +444,7 @@ class MetaCloudProvider extends ProviderClass {
         } catch (error: any) {
             const errorDetail = error?.response?.data || error.message;
             console.error('❌ [MetaCloudProvider] Error enviando plantilla:', JSON.stringify(errorDetail, null, 2));
-            await this.handleMetaError(error, number, options);
+            await this.handleMetaError(error, number, sendOptions);
             throw error; // Lanzamos el error para que el proceso masivo lo capture
         }
     }
@@ -536,8 +600,9 @@ class MetaCloudProvider extends ProviderClass {
     /**
      * Sube un archivo local a Meta para obtener un media_id
      */
-    public async uploadMedia(filePath: string, mimeType?: string, originalFilename?: string): Promise<string | null> {
-        const { phone_number_id, access_token } = this.config;
+    public async uploadMedia(filePath: string, mimeType?: string, originalFilename?: string, sendConfig: any = null): Promise<string | null> {
+        const phone_number_id = sendConfig?.phone_number_id || this.config.phone_number_id || this.config.numberId;
+        const access_token = sendConfig?.access_token || this.config.access_token || this.config.jwtToken;
         if (!fs.existsSync(filePath)) {
             console.error(`❌ [MetaCloudProvider] uploadMedia: El archivo no existe en ${filePath}`);
             return null;
@@ -656,41 +721,10 @@ class MetaCloudProvider extends ProviderClass {
      * Envía mensajes a través de la API oficial de Meta
      */
     public async sendMessage(number: string, message: string, options: any = {}): Promise<any> {
-        let phone_number_id = this.config.phone_number_id;
-        let access_token = this.config.access_token;
-
-        try {
-            const { HistoryHandler } = await import('../db/historyHandler');
-            const targetProjectId = options?.projectId || HistoryHandler.PROJECT_IDENTIFIER;
-            let targetServiceId = options?.serviceId;
-
-            if (!targetServiceId && number) {
-                const jid = number.includes('@') ? number.split('@')[0] : number;
-                const supabase = HistoryHandler.getSupabase();
-                if (supabase) {
-                    const { data: chatData } = await supabase
-                        .from('chats')
-                        .select('service_id')
-                        .eq('id', jid)
-                        .eq('project_id', targetProjectId)
-                        .maybeSingle();
-                    
-                    if (chatData?.service_id) {
-                        targetServiceId = chatData.service_id;
-                    }
-                }
-            }
-
-            if (targetServiceId && targetServiceId !== 'default_service') {
-                const tenantOnboarding = await HistoryHandler.getMetaOnboardingData(targetProjectId, false, targetServiceId);
-                if (tenantOnboarding?.whatsappToken && tenantOnboarding?.phoneNumberId) {
-                    access_token = tenantOnboarding.whatsappToken;
-                    phone_number_id = tenantOnboarding.phoneNumberId;
-                }
-            }
-        } catch (e: any) {
-            console.error('[MetaCloudProvider] Error resolviendo credenciales dinámicas en sendMessage:', e.message);
-        }
+        const sendConfig = await this.resolveTenantSendConfig(number, options);
+        const phone_number_id = sendConfig.phone_number_id;
+        const access_token = sendConfig.access_token;
+        const sendOptions = { ...options, projectId: sendConfig.projectId, serviceId: sendConfig.serviceId, metaPhoneNumberId: phone_number_id };
 
         if (!phone_number_id || !access_token) {
             console.error('❌ [MetaCloudProvider] Error: Falta phone_number_id o access_token en la configuración');
@@ -757,7 +791,7 @@ class MetaCloudProvider extends ProviderClass {
                     console.log(`📤 [MetaCloudProvider] Subiendo archivo local a Meta: ${finalPath}`);
                     const customFilenameForUpload = options.fileName || options.filename || options.name || (typeof mediaSource === 'object' ? (mediaSource.fileName || mediaSource.filename || mediaSource.name) : null);
 
-                    const mediaId = await this.uploadMedia(finalPath, mimeType, customFilenameForUpload);
+                    const mediaId = await this.uploadMedia(finalPath, mimeType, customFilenameForUpload, sendConfig);
                     if (mediaId) {
                         const mediaData = { id: mediaId };
                         const finalLowerPath = finalPath.toLowerCase();
@@ -855,7 +889,7 @@ class MetaCloudProvider extends ProviderClass {
             const clientPhone = toFormat;
             
             // Registrar notificación de error comercial
-            await this.handleMetaError(error, clientPhone, options);
+            await this.handleMetaError(error, clientPhone, sendOptions);
             
             let humanMessage = `Error [${errorCode}]: Falló el envío de mensaje de WhatsApp a [${clientPhone}]. Detalle: ${errorMsg}`;
 
@@ -899,23 +933,23 @@ class MetaCloudProvider extends ProviderClass {
         }
     }
 
-    public async sendImage(number: string, media: string, caption: string = ''): Promise<any> {
-        return this.sendMessage(number, caption, { media: { url: media, mimetype: 'image/png' } });
+    public async sendImage(number: string, media: string, caption: string = '', options: any = {}): Promise<any> {
+        return this.sendMessage(number, caption, { ...options, media: { url: media, mimetype: 'image/png' } });
     }
 
-    public async sendSticker(number: string, media: string): Promise<any> {
-        return this.sendMessage(number, '', { media: { url: media, mimetype: 'image/webp' }, type: 'sticker' });
+    public async sendSticker(number: string, media: string, options: any = {}): Promise<any> {
+        return this.sendMessage(number, '', { ...options, media: { url: media, mimetype: 'image/webp' }, type: 'sticker' });
     }
 
-    public async sendVideo(number: string, media: string, caption: string = ''): Promise<any> {
-        return this.sendMessage(number, caption, { media: { url: media, mimetype: 'video/mp4' } });
+    public async sendVideo(number: string, media: string, caption: string = '', options: any = {}): Promise<any> {
+        return this.sendMessage(number, caption, { ...options, media: { url: media, mimetype: 'video/mp4' } });
     }
 
-    public async sendAudio(number: string, media: string, caption: string = ''): Promise<any> {
-        return this.sendMessage(number, caption, { media: { url: media, mimetype: 'audio/mp4' } });
+    public async sendAudio(number: string, media: string, caption: string = '', options: any = {}): Promise<any> {
+        return this.sendMessage(number, caption, { ...options, media: { url: media, mimetype: 'audio/mp4' } });
     }
 
-    public async sendFile(number: string, media: string, caption: string = ''): Promise<any> {
+    public async sendFile(number: string, media: string, caption: string = '', options: any = {}): Promise<any> {
         let mimetype = 'application/pdf';
         try {
             const mime = await import('mime-types') as any;
@@ -927,7 +961,7 @@ class MetaCloudProvider extends ProviderClass {
         } catch {
             // Fallback
         }
-        return this.sendMessage(number, caption, { media: { url: media, mimetype } });
+        return this.sendMessage(number, caption, { ...options, media: { url: media, mimetype } });
     }
 
     /**
@@ -1047,7 +1081,7 @@ class MetaCloudProvider extends ProviderClass {
                                             code: err.code,
                                             message: `${err.message} - ${err.error_data?.details || ''}`
                                         };
-                                        await this.handleMetaError(errorObj, status.recipient_id, { isBulk: false });
+                                        await this.handleMetaError(errorObj, status.recipient_id, { isBulk: false, projectId, serviceId, metaPhoneNumberId: phoneNumberId });
                                     }
                                 }
 
@@ -1072,7 +1106,9 @@ class MetaCloudProvider extends ProviderClass {
                     // 1. MANEJO DE SINCRONIZACIÓN DE CONTACTOS (smb_app_state_sync)
                     if (fieldName === 'smb_app_state_sync' && contactData && Array.isArray(contactData)) {
                         console.log(`📡 [MetaCloudProvider] Recibida sincronización de ${contactData.length} contactos SMB`);
-                        this.emit('contacts_sync', contactData);
+                        this.emit('contacts_sync', contactData, {
+                            recipientPhoneId: value.metadata?.phone_number_id || phone_number_id
+                        });
                         continue;
                     }
 
@@ -1338,9 +1374,9 @@ class MetaCloudProvider extends ProviderClass {
     private async handleMetaError(error: any, recipient: string, options: any = {}) {
         try {
             const { HistoryHandler } = await import('../db/historyHandler.js');
-            const phoneNumberId = this.config.phone_number_id || this.config.numberId;
-            const resolvedProject = await HistoryHandler.getProjectIdByRecipient(phoneNumberId);
-            const resolvedService = await HistoryHandler.getServiceIdByRecipient(phoneNumberId);
+            const phoneNumberId = options.metaPhoneNumberId || options.phone_number_id || this.config.phone_number_id || this.config.numberId;
+            const resolvedProject = options.projectId || (await HistoryHandler.getProjectIdByRecipient(phoneNumberId));
+            const resolvedService = options.serviceId || (await HistoryHandler.getServiceIdByRecipient(phoneNumberId));
             const projectId = resolvedProject || HistoryHandler.PROJECT_IDENTIFIER;
             const serviceId = resolvedService || HistoryHandler.SERVICE_IDENTIFIER;
 
@@ -1387,6 +1423,9 @@ class MetaCloudProvider extends ProviderClass {
             } else if (code === 131016) {
                 title = 'Cuenta comercial restringida';
                 description = `Meta ha suspendido o restringido temporalmente tu cuenta de WhatsApp Business. Revisa la Calidad de la Cuenta en Meta Business Suite.`;
+            } else if (code === 131049) {
+                title = 'Entrega limitada por Meta';
+                description = `Meta no entrego el mensaje a ${contactLabel} por calidad o interaccion del ecosistema. Revisa opt-in, calidad de la linea y frecuencia de envios.`;
             } else {
                 description = `Error de envío a ${contactLabel} (Código ${code}): ${message}`;
             }

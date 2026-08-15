@@ -645,8 +645,8 @@ window.reportesView = (() => {
                     flex-wrap: wrap;
                 }
                 .reportes-page {
-                    height: calc(100dvh - var(--mobile-nav-height, 52px));
-                    max-height: calc(100dvh - var(--mobile-nav-height, 52px));
+                    height: 100dvh;
+                    max-height: 100dvh;
                     overflow-y: auto;
                     overflow-x: hidden;
                 }
@@ -820,15 +820,15 @@ window.reportesView = (() => {
                 <div class="modal-body" style="display:flex; flex-direction:column; gap:16px;">
                     <div>
                         <label style="display:block; font-size:0.82rem; font-weight:600; color:var(--text-main); margin-bottom:6px;">Nombre del Grupo</label>
-                        <input type="text" id="waba-group-name" placeholder="Ej: Equipo Ventas" 
+                        <input type="text" id="waba-group-name" placeholder="Ej: Equipo Ventas"
                             style="width:100%; box-sizing:border-box; padding:10px 12px; border-radius:8px; background:rgba(255,255,255,0.04); border:1px solid var(--border); color:var(--text-main); font-size:0.88rem; outline:none; transition:border-color 0.2s;"
                             onfocus="this.style.borderColor='rgba(0,153,255,0.4)'" onblur="this.style.borderColor='var(--border)'">
                     </div>
-                    
+
                     <div>
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                             <label style="font-size:0.82rem; font-weight:600; color:var(--text-main);">Contactos (MÃ¡x 8)</label>
-                            <button type="button" onclick="reportesView._addGroupContactRow()" id="waba-group-add-contact-btn" 
+                            <button type="button" onclick="reportesView._addGroupContactRow()" id="waba-group-add-contact-btn"
                                 style="background:transparent; border:none; color:#0099FF; cursor:pointer; font-size:0.8rem; font-weight:600; display:flex; align-items:center; gap:4px;">
                                 <i class="fas fa-plus-circle"></i> Agregar Contacto
                             </button>
@@ -1099,11 +1099,11 @@ window.reportesView = (() => {
         const title = document.getElementById('waba-group-modal-title');
         const nameInput = document.getElementById('waba-group-name');
         const container = document.getElementById('waba-group-contacts-container');
-        
+
         _editingGroupId = groupId;
         if (container) container.innerHTML = '';
         if (nameInput) nameInput.value = '';
-        
+
         if (groupId) {
             if (title) title.innerHTML = '<i class="fas fa-edit modal-h3-icon" style="color:#0099FF; margin-right:6px;"></i> Editar Grupo de WhatsApp';
             const group = _wabaGroups.find(g => g.id === groupId);
@@ -1116,7 +1116,7 @@ window.reportesView = (() => {
             if (title) title.innerHTML = '<i class="fas fa-users modal-h3-icon" style="color:#0099FF; margin-right:6px;"></i> Nuevo Grupo de WhatsApp';
             _addContactRowHTML('', '');
         }
-        
+
         _updateAddContactButtonState();
         if (modal) modal.classList.add('active');
     }
@@ -1130,7 +1130,7 @@ window.reportesView = (() => {
     function _addContactRowHTML(name = '', phone = '') {
         const container = document.getElementById('waba-group-contacts-container');
         if (!container) return;
-        
+
         const row = document.createElement('div');
         row.className = 'waba-contact-row';
         row.style = 'display:flex; gap:8px; align-items:center; width:100%;';
@@ -1141,7 +1141,7 @@ window.reportesView = (() => {
             <input type="text" placeholder="TelÃ©fono (ej: 54911...)" value="${_escAttr(phone)}" class="waba-contact-phone-input"
                 style="flex:1.2; padding:8px 10px; border-radius:6px; background:rgba(255,255,255,0.03); border:1px solid var(--border); color:var(--text-main); font-size:0.82rem; outline:none; transition:border-color 0.2s;"
                 onfocus="this.style.borderColor='rgba(0,153,255,0.4)'" onblur="this.style.borderColor='var(--border)'">
-            <button type="button" onclick="this.parentElement.remove(); reportesView._updateAddContactButtonState();" 
+            <button type="button" onclick="this.parentElement.remove(); reportesView._updateAddContactButtonState();"
                 style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; padding:6px; border-radius:6px; display:flex; align-items:center; justify-content:center;"
                 onmouseenter="this.style.color='#ef4444'; this.style.background='rgba(239,68,68,0.07)'"
                 onmouseleave="this.style.color='var(--text-muted)'; this.style.background='transparent'">
@@ -1163,7 +1163,7 @@ window.reportesView = (() => {
         const container = document.getElementById('waba-group-contacts-container');
         const btn = document.getElementById('waba-group-add-contact-btn');
         if (!container || !btn) return;
-        
+
         const count = container.children.length;
         if (count >= 8) {
             btn.style.opacity = '0.5';
@@ -1191,15 +1191,15 @@ window.reportesView = (() => {
 
         const contacts = [];
         let hasErrors = false;
-        
+
         const rows = container.querySelectorAll('.waba-contact-row');
         rows.forEach(row => {
             const nameIn = row.querySelector('.waba-contact-name-input');
             const phoneIn = row.querySelector('.waba-contact-phone-input');
-            
+
             const contactName = nameIn ? nameIn.value.trim() : '';
             const contactPhone = phoneIn ? phoneIn.value.trim().replace(/[^0-9]/g, '') : '';
-            
+
             if (!contactPhone) {
                 if (phoneIn) phoneIn.style.borderColor = '#ef4444';
                 hasErrors = true;
@@ -1235,7 +1235,7 @@ window.reportesView = (() => {
                 body: JSON.stringify(body)
             });
             const data = await res.json();
-            
+
             if (data.success) {
                 showToast && showToast(_editingGroupId ? 'Grupo actualizado con Ã©xito' : 'Grupo creado con Ã©xito', 'success');
                 _closeGroupModal();

@@ -494,9 +494,11 @@ const main = async () => {
             res.json({ name });
         });
         app.get("/api/dashboard-status", async (req: any, res: any) => {
-            const sessionStatus = await hasActiveSession(adapterProvider, groupProvider);
+            const requestedProjectId = typeof req.query.projectId === 'string' ? req.query.projectId : null;
+            const requestedServiceId = typeof req.query.serviceId === 'string' ? req.query.serviceId : null;
+            const sessionStatus = await hasActiveSession(adapterProvider, groupProvider, requestedProjectId, requestedServiceId);
             const projectId = sessionStatus.activeProjectId || HistoryHandler.PROJECT_IDENTIFIER;
-            const serviceId = process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || HistoryHandler.SERVICE_IDENTIFIER;
+            const serviceId = requestedServiceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || HistoryHandler.SERVICE_IDENTIFIER;
             const clientSlug = await HistoryHandler.getConfig('CLIENT_SLUG', projectId, serviceId);
             res.json({
                 ...sessionStatus,

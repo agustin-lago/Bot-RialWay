@@ -2,8 +2,12 @@
 let currentProjectId = window.railwayProjectId || 'default';
 let _conexionIntervals = [];
 let _qrSkeletonTimer = null;
+let _qrNoResultTimer = null;
 let _lastRenderedQrSource = null;
 let _qrRequestPendingUntil = 0;
+let _stableGroupStatus = null;
+let _groupCandidateStatus = null;
+let _groupCandidateCount = 0;
 
 function isQrRequestPending() {
     return _qrRequestPendingUntil > Date.now();
@@ -15,11 +19,180 @@ function markQrRequestPending() {
 
 function clearQrRequestPending() {
     _qrRequestPendingUntil = 0;
+    if (_qrNoResultTimer) {
+        clearTimeout(_qrNoResultTimer);
+        _qrNoResultTimer = null;
+    }
+}
+
+function scheduleQrNoResultGuard(message = 'No se pudo generar el QR') {
+    if (_qrNoResultTimer) clearTimeout(_qrNoResultTimer);
+    _qrNoResultTimer = setTimeout(() => {
+        if (!isQrRequestPending()) return;
+        clearQrRequestPending();
+        showQrError(message);
+        setConnectionButtonsBusy(false);
+    }, 30000);
+}
+function getGroupStatusKey(status) {
+    if (!status) return 'none';
+    if (status.qr) return 'qr';
+    if (status.pairingCode) return 'pairing';
+    if (status.active) return 'active';
+    return 'inactive';
+}
+
+function getStableGroupStatus(status) {
+    if (!status) {
+        _stableGroupStatus = null;
+        _groupCandidateStatus = null;
+        _groupCandidateCount = 0;
+        return status;
+    }
+
+    const currentKey = getGroupStatusKey(status);
+
+    if (!_stableGroupStatus) {
+        if (currentKey === 'active') {
+            if (_groupCandidateStatus === currentKey) {
+                _groupCandidateCount += 1;
+            } else {
+                _groupCandidateStatus = currentKey;
+                _groupCandidateCount = 1;
+            }
+
+            if (_groupCandidateCount >= 2) {
+                _stableGroupStatus = status;
+                _groupCandidateStatus = null;
+                _groupCandidateCount = 0;
+                return _stableGroupStatus;
+            }
+
+            return { ...status, active: false, message: 'Desconectado' };
+        }
+
+        _stableGroupStatus = status;
+        _groupCandidateStatus = null;
+        _groupCandidateCount = 0;
+        return _stableGroupStatus;
+    }
+
+    const stableKey = getGroupStatusKey(_stableGroupStatus);
+    if (currentKey === stableKey) {
+        _stableGroupStatus = status;
+        _groupCandidateStatus = null;
+        _groupCandidateCount = 0;
+        return _stableGroupStatus;
+    }
+
+    if (_groupCandidateStatus === currentKey) {
+        _groupCandidateCount += 1;
+    } else {
+        _groupCandidateStatus = currentKey;
+        _groupCandidateCount = 1;
+    }
+
+    const requiredRepeats = currentKey === 'active' ? 2 : stableKey === 'active' && currentKey === 'inactive' ? 3 : 1;
+    if (_groupCandidateCount >= requiredRepeats) {
+        _stableGroupStatus = status;
+        _groupCandidateStatus = null;
+        _groupCandidateCount = 0;
+    }
+
+    return _stableGroupStatus;
 }
 
 function getConexionServiceId() {
     return window.railwayServiceId || undefined;
 }
+
+function getConexionStatusUrl() {
+    const token = localStorage.getItem('backoffice_token') || '';
+    const params = new URLSearchParams({ token });
+    if (currentProjectId && currentProjectId !== 'default') params.set('projectId', currentProjectId);
+    const serviceId = getConexionServiceId();
+    if (serviceId) params.set('serviceId', serviceId);
+    return `/api/dashboard-status?${params.toString()}`;
+}
+
+function setConnectionProviderTarget(target) {
+    const qrBtn = document.getElementById('generate-qr-btn');
+    const pairingBtn = document.getElementById('generate-pairing-btn');
+    [qrBtn, pairingBtn].forEach((button) => {
+        if (button) button.dataset.providerTarget = target;
+    });
+}
+
+function isGroupConnectionTarget() {
+    return document.getElementById('generate-qr-btn')?.dataset.providerTarget === 'groups';
+}
+
+function renderMetaConnectionInfo(metaOnboarding, isPrimaryMeta) {
+    const obData = metaOnboarding?.onboarding_data || {};
+    const phoneDisplay = obData.display_phone_number || metaOnboarding?.phone_number || metaOnboarding?.display_phone_number || metaOnboarding?.phone_number_id || metaOnboarding?.whatsappNumberId || 'No configurado';
+    const phoneId = metaOnboarding?.phone_number_id || metaOnboarding?.whatsappNumberId || obData.id || 'No configurado';
+    const wabaId = metaOnboarding?.waba_id || metaOnboarding?.whatsappBusinessId || obData.waba_id || 'No configurado';
+    const verifiedName = obData.verified_name || metaOnboarding?.verified_name || metaOnboarding?.business_name || 'Sin Nombre de Marca';
+    const metaStatus = obData.status || metaOnboarding?.status || 'Desconocido';
+    const accountReview = obData.account_review_status || metaOnboarding?.account_review_status || 'UNKNOWN';
+
+    let metaStatusLabel = '<span class="meta-status-badge" style="background:#94a3b8;color:white;padding:2px 8px;border-radius:10px;font-size:.8rem;display:inline-block;">' + metaStatus + '</span>';
+    if (metaStatus === 'CONNECTED' || metaStatus === 'APPROVED' || metaStatus === 'active') {
+        metaStatusLabel = '<span class="meta-status-badge" style="background:#10b981;color:white;padding:2px 8px;border-radius:10px;font-size:.8rem;display:inline-block;"><i class="fas fa-circle-check"></i> Conectado</span>';
+    } else if (metaStatus === 'BANNED') {
+        metaStatusLabel = '<span class="meta-status-badge" style="background:#ef4444;color:white;padding:2px 8px;border-radius:10px;font-size:.8rem;display:inline-block;"><i class="fas fa-ban"></i> Baneado / Bloqueado</span>';
+    } else if (metaStatus === 'RESTRICTED' || metaStatus === 'FLAGGED' || metaStatus === 'rejected') {
+        metaStatusLabel = '<span class="meta-status-badge" style="background:#f59e0b;color:white;padding:2px 8px;border-radius:10px;font-size:.8rem;display:inline-block;"><i class="fas fa-triangle-exclamation"></i> ' + metaStatus + '</span>';
+    }
+
+    const quality = obData.quality_rating || 'UNKNOWN';
+    let qualityLabel = '<span style="font-weight:600;color:#94a3b8;">Desconocida</span>';
+    if (quality === 'GREEN') qualityLabel = '<span style="font-weight:600;color:#10b981;">Alta (Verde)</span>';
+    else if (quality === 'YELLOW') qualityLabel = '<span style="font-weight:600;color:#f59e0b;">Media (Amarillo)</span>';
+    else if (quality === 'RED') qualityLabel = '<span style="font-weight:600;color:#ef4444;">Baja (Rojo)</span>';
+
+    const isVerified = (obData.is_official_business_account === true) ||
+        (obData.code_verification_status === 'verified' || obData.code_verification_status === 'VERIFIED') ||
+        (obData.name_status === 'APPROVED' || obData.name_status === 'VERIFIED');
+    const vStatusLabel = isVerified
+        ? '<span style="color:#10b981;font-weight:600;">Verificado</span>'
+        : '<span style="color:#ef4444;font-weight:600;">No Verificado</span>';
+
+    let wabaReviewLabel = '<span style="font-weight:600;color:#94a3b8;">Pendiente</span>';
+    if (accountReview === 'APPROVED') wabaReviewLabel = '<span style="color:#10b981;font-weight:600;">Aprobada</span>';
+    else if (accountReview === 'REJECTED') wabaReviewLabel = '<span style="color:#ef4444;font-weight:600;">Rechazada</span>';
+    else if (accountReview === 'NEEDS_COMPLIANCE_REVIEW') wabaReviewLabel = '<span style="color:#f59e0b;font-weight:600;">Requiere revision</span>';
+
+    const tier = obData.messaging_limit_tier || obData.messagingLimit || 'Desconocido';
+    const tierMap = {
+        TIER_50: '50 conversaciones / 24h',
+        TIER_250: '250 conversaciones / 24h',
+        TIER_1K: '1,000 conversaciones / 24h',
+        TIER_2K: '2,000 conversaciones / 24h',
+        TIER_10K: '10,000 conversaciones / 24h',
+        TIER_100K: '100,000 conversaciones / 24h',
+        TIER_UNLIMITED: 'Conversaciones ilimitadas',
+        UNTIERED: 'Sin limite definido'
+    };
+    const tierHuman = tierMap[tier] || tier;
+    const title = isPrimaryMeta ? 'Meta Cloud API Activa' : 'Meta Cloud API registrada';
+
+    return `
+        <div><strong>Configuracion:</strong> ${title}</div>
+        <div class="meta-stats" style="margin-top:15px;padding:15px;background:rgba(6,104,225,0.05);border-radius:12px;border:1px solid rgba(6,104,225,0.15);display:flex;flex-direction:column;gap:10px;text-align:left;font-size:.95rem;">
+            <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(6,104,225,0.1);padding-bottom:8px;"><strong>Marca / Nombre:</strong><span style="font-weight:600;">${verifiedName}</span></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;"><strong>Numero de Telefono:</strong><span style="font-weight:600;">${phoneDisplay}</span></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;"><strong>ID del Telefono (Phone ID):</strong><span style="font-family:monospace;font-size:.85rem;color:#64748b;">${phoneId}</span></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(6,104,225,0.1);padding-bottom:8px;"><strong>ID de WABA:</strong><span style="font-family:monospace;font-size:.85rem;color:#64748b;">${wabaId}</span></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;"><strong>Estado del Canal:</strong>${metaStatusLabel}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;"><strong>Calificacion de Calidad:</strong>${qualityLabel}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;"><strong>Verificacion del Numero:</strong>${vStatusLabel}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;"><strong>Revision de WABA:</strong>${wabaReviewLabel}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid rgba(6,104,225,0.1);padding-top:8px;"><strong>Limite de Mensajes (Tier):</strong><span class="meta-status-badge" style="background:#0668E1;color:white;padding:3px 10px;border-radius:12px;font-size:.85rem;font-weight:600;display:inline-block;">${tierHuman}</span></div>
+        </div>
+    `;
+}
+
 
 async function runBotCommand(command, chatId) {
     const token = localStorage.getItem('backoffice_token');
@@ -75,6 +248,8 @@ function setConnectionButtonsBusy(isBusy) {
 
 function showQrLoading(titleText) {
     const { section, title, skeleton, img, empty, pairing } = getQrElements();
+    const loading = document.getElementById('generate-qr-loading');
+    if (loading) loading.style.display = 'none';
     if (!section) return;
     section.style.display = 'block';
     if (title) title.textContent = titleText || 'Generando QR';
@@ -82,6 +257,19 @@ function showQrLoading(titleText) {
     if (img) img.style.display = 'none';
     if (empty) empty.style.display = 'none';
     if (pairing) pairing.style.display = 'none';
+}
+
+function showQrError(message = 'No se pudo generar el QR') {
+    const { section, title, skeleton, img, empty, pairing } = getQrElements();
+    if (section) section.style.display = 'block';
+    if (title) title.textContent = message;
+    if (skeleton) skeleton.style.display = 'none';
+    if (img) img.style.display = 'none';
+    if (pairing) pairing.style.display = 'none';
+    if (empty) {
+        empty.textContent = 'Reintenta la vinculacion o revisa el estado del proveedor.';
+        empty.style.display = 'block';
+    }
 }
 
 function renderQrImage(source, titleText) {
@@ -128,22 +316,28 @@ function renderPairingCode(code, titleText) {
     if (value) value.textContent = String(code || '');
 }
 
-function hideQrPresentation() {
-    const { section, skeleton, img, empty, pairing } = getQrElements();
+function showQrIdle(titleText = 'Vinculacion pendiente') {
+    const { section, title, skeleton, img, empty, pairing } = getQrElements();
     if (_qrSkeletonTimer) clearTimeout(_qrSkeletonTimer);
     _qrSkeletonTimer = null;
     _lastRenderedQrSource = null;
-    if (section) section.style.display = 'none';
+    if (section) section.style.display = 'block';
+    if (title) title.textContent = titleText;
     if (skeleton) skeleton.style.display = 'none';
     if (img) img.style.display = 'none';
-    if (empty) empty.style.display = 'none';
+    if (empty) {
+        empty.textContent = 'Genera un QR o solicita un codigo para iniciar la vinculacion.';
+        empty.style.display = 'block';
+    }
     if (pairing) pairing.style.display = 'none';
 }
 
-async function fetchStatus() {
-    const token = localStorage.getItem('backoffice_token');
-    try {
-        const res = await fetch(`/api/dashboard-status?token=${token}`);
+function hideQrPresentation() {
+    showQrIdle();
+}
+
+async function fetchStatus() {    try {
+        const res = await fetch(getConexionStatusUrl());
         if (res.status === 401) return logout();
         const data = await res.json();
         console.log('[fetchStatus] status data received:', data);
@@ -175,117 +369,57 @@ async function fetchStatus() {
         }
 
         const isMeta = data.adapter.type === 'meta';
-        const hasMetaConfig = data.metaOnboarding && data.metaOnboarding.status === 'active';
+        const hasMetaOnboarding = Boolean(data.metaOnboarding);
 
-        if (isMeta) {
-            statusEl.textContent = '✅ Principal: META';
+        if (isMeta || hasMetaOnboarding) {
+            const metaStatus = data.metaOnboarding?.onboarding_data?.status || data.metaOnboarding?.status || 'Registrada';
+            statusEl.textContent = isMeta ? 'Principal: META' : `META: ${metaStatus}`;
             statusEl.style.color = '#0668E1';
             sessionInfo.style.display = 'block';
-
-            let extraInfo = '';
-            if (data.metaOnboarding.onboarding_data) {
-                const obData = data.metaOnboarding.onboarding_data;
-
-                const phoneDisplay  = obData.display_phone_number || data.metaOnboarding.phone_number_id || 'No configurado';
-                const phoneId       = data.metaOnboarding.phone_number_id || data.metaOnboarding.whatsappNumberId || 'No configurado';
-                const wabaId        = data.metaOnboarding.waba_id || data.metaOnboarding.whatsappBusinessId || 'No configurado';
-                const verifiedName  = obData.verified_name || 'Sin Nombre de Marca';
-
-                const metaStatus = obData.status || 'Desconocido';
-                let metaStatusLabel = `<span class="meta-status-badge" style="background:#94a3b8;color:white;padding:2px 8px;border-radius:10px;font-size:.8rem;display:inline-block;">${metaStatus}</span>`;
-                if (metaStatus === 'CONNECTED' || metaStatus === 'APPROVED') {
-                    metaStatusLabel = `<span class="meta-status-badge" style="background:#10b981;color:white;padding:2px 8px;border-radius:10px;font-size:.8rem;display:inline-block;"><i class="fas fa-circle-check"></i> Conectado</span>`;
-                } else if (metaStatus === 'BANNED') {
-                    metaStatusLabel = `<span class="meta-status-badge" style="background:#ef4444;color:white;padding:2px 8px;border-radius:10px;font-size:.8rem;display:inline-block;"><i class="fas fa-ban"></i> Baneado / Bloqueado</span>`;
-                } else if (metaStatus === 'RESTRICTED' || metaStatus === 'FLAGGED') {
-                    metaStatusLabel = `<span class="meta-status-badge" style="background:#f59e0b;color:white;padding:2px 8px;border-radius:10px;font-size:.8rem;display:inline-block;"><i class="fas fa-triangle-exclamation"></i> ${metaStatus === 'RESTRICTED' ? 'Restringido' : 'Advertencia'}</span>`;
-                }
-
-                const quality = obData.quality_rating || 'UNKNOWN';
-                let qualityLabel = `<span style="font-weight:600;color:#94a3b8;">⚪ Desconocida</span>`;
-                if (quality === 'GREEN')  qualityLabel = `<span style="font-weight:600;color:#10b981;">🟢 Alta (Verde)</span>`;
-                else if (quality === 'YELLOW') qualityLabel = `<span style="font-weight:600;color:#f59e0b;">🟡 Media (Amarillo)</span>`;
-                else if (quality === 'RED')    qualityLabel = `<span style="font-weight:600;color:#ef4444;">🔴 Baja (Rojo)</span>`;
-
-                const isVerified = (obData.is_official_business_account === true) || 
-                                   (obData.code_verification_status === 'verified' || obData.code_verification_status === 'VERIFIED') ||
-                                   (obData.name_status === 'APPROVED' || obData.name_status === 'VERIFIED');
-                const vStatusLabel = isVerified
-                    ? '<span style="color:#10b981;font-weight:600;">✅ Verificado</span>'
-                    : '<span style="color:#ef4444;font-weight:600;">❌ No Verificado</span>';
-
-                const wabaReview = obData.account_review_status || 'UNKNOWN';
-                let wabaReviewLabel = `<span style="font-weight:600;color:#94a3b8;">⏳ Pendiente</span>`;
-                if (wabaReview === 'APPROVED') wabaReviewLabel = `<span style="color:#10b981;font-weight:600;">✅ Aprobada</span>`;
-                else if (wabaReview === 'REJECTED') wabaReviewLabel = `<span style="color:#ef4444;font-weight:600;">❌ Rechazada</span>`;
-                else if (wabaReview === 'NEEDS_COMPLIANCE_REVIEW') wabaReviewLabel = `<span style="color:#f59e0b;font-weight:600;">⚠️ Requiere Revisión</span>`;
-
-                const tier = obData.messaging_limit_tier || obData.messagingLimit || 'Desconocido';
-                const tierMap = { TIER_50:'50 conversaciones / 24h', TIER_250:'250 conversaciones / 24h', TIER_1K:'1,000 conversaciones / 24h', TIER_2K:'2,000 conversaciones / 24h', TIER_10K:'10,000 conversaciones / 24h', TIER_100K:'100,000 conversaciones / 24h', TIER_UNLIMITED:'Conversaciones Ilimitadas', UNTIERED:'Sin Límite Definido (Untiered)' };
-                const tierHuman = tierMap[tier] || tier;
-
-                extraInfo = `
-                    <div class="meta-stats" style="margin-top:15px;padding:15px;background:rgba(6,104,225,0.05);border-radius:12px;border:1px solid rgba(6,104,225,0.15);display:flex;flex-direction:column;gap:10px;text-align:left;font-size:.95rem;">
-                        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(6,104,225,0.1);padding-bottom:8px;"><strong>Marca / Nombre:</strong><span style="font-weight:600;">${verifiedName}</span></div>
-                        <div style="display:flex;justify-content:space-between;align-items:center;"><strong>Número de Teléfono:</strong><span style="font-weight:600;">${phoneDisplay}</span></div>
-                        <div style="display:flex;justify-content:space-between;align-items:center;"><strong>ID del Teléfono (Phone ID):</strong><span style="font-family:monospace;font-size:.85rem;color:#64748b;">${phoneId}</span></div>
-                        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(6,104,225,0.1);padding-bottom:8px;"><strong>ID de WABA:</strong><span style="font-family:monospace;font-size:.85rem;color:#64748b;">${wabaId}</span></div>
-                        <div style="display:flex;justify-content:space-between;align-items:center;"><strong>Estado del Canal:</strong>${metaStatusLabel}</div>
-                        <div style="display:flex;justify-content:space-between;align-items:center;"><strong>Calificación de Calidad:</strong>${qualityLabel}</div>
-                        <div style="display:flex;justify-content:space-between;align-items:center;"><strong>Verificación del Número:</strong>${vStatusLabel}</div>
-                        <div style="display:flex;justify-content:space-between;align-items:center;"><strong>Revisión de WABA:</strong>${wabaReviewLabel}</div>
-                        <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid rgba(6,104,225,0.1);padding-top:8px;"><strong>Límite de Mensajes (Tier):</strong><span class="meta-status-badge" style="background:#0668E1;color:white;padding:3px 10px;border-radius:12px;font-size:.85rem;font-weight:600;display:inline-block;">${tierHuman}</span></div>
-                    </div>
-                `;
-            }
-            sessionInfo.innerHTML = `<div><strong>Configuración:</strong> Meta Cloud API Activa</div>${extraInfo}`;
-        } else if (hasMetaConfig) {
-            statusEl.textContent = '⏳ Principal: META (En curso)';
-            statusEl.style.color = '#f59e0b';
-            const missing = !data.metaOnboarding.access_token ? 'Token' : (!data.metaOnboarding.phone_number_id || data.metaOnboarding.phone_number_id === 'PENDING' ? 'Phone ID' : 'Desconocido');
-            sessionInfo.style.display = 'block';
-            sessionInfo.innerHTML = `<div class="warning-box">Vinculación de Meta detectada pero incompleta (Falta: ${missing}). Usando Baileys como respaldo.</div>`;
-            renderProviderStatus(data.adapter, 'Baileys (Respaldo)', { preserveQr: Boolean(data.group && !data.group.active) });
+            sessionInfo.innerHTML = renderMetaConnectionInfo(data.metaOnboarding, isMeta);
         } else {
             renderProviderStatus(data.adapter, 'Principal', { preserveQr: Boolean(data.group && !data.group.active) });
         }
 
-        if (data.group) {
-            groupContainer.style.display = 'block';
-            if (data.group.active) {
-                groupStatusEl.textContent = '✅ Grupos: Baileys';
+        const groupStatus = getStableGroupStatus(data.group);
+        if (groupContainer) groupContainer.style.display = 'block';
+        if (startContainer) startContainer.style.display = 'block';
+
+        if (groupStatus && groupStatusEl) {
+            const btn = document.getElementById('generate-qr-btn');
+            if (btn) btn.innerHTML = `<i class="fas fa-qrcode"></i> Generar QR Grupos`;
+            setConnectionProviderTarget('groups');
+
+            if (groupStatus.active) {
+                groupStatusEl.textContent = 'Grupos: Baileys';
                 groupStatusEl.style.color = '#10b981';
-                if (startContainer) startContainer.style.display = 'none';
                 hideQrPresentation();
                 clearQrRequestPending();
                 setConnectionButtonsBusy(false);
-            } else if (data.group.qr) {
-                groupStatusEl.textContent = '⏳ Grupos: Esperando vinculación';
+            } else if (groupStatus.qr) {
+                groupStatusEl.textContent = 'Grupos: Esperando vinculacion';
                 groupStatusEl.style.color = '#f59e0b';
-                if (startContainer) startContainer.style.display = 'block';
-                renderQrImage(data.group.qrImage || '/bot.groups.qr.png', 'Escanea con WhatsApp para grupos');
+                renderQrImage(groupStatus.qrImage || '/bot.groups.qr.png', 'Escanea con WhatsApp para grupos');
                 setConnectionButtonsBusy(false);
             } else {
-                groupStatusEl.textContent = '⏳ Grupos: ' + (data.group.message || 'Cargando...');
+                const groupMessage = isQrRequestPending() ? (groupStatus.message || 'Iniciando motor...') : 'Desconectado';
+                groupStatusEl.textContent = 'Grupos: ' + groupMessage;
                 groupStatusEl.style.color = '#94a3b8';
-                if (startContainer && !data.group.active) {
-                    startContainer.style.display = 'block';
-                    const btn = document.getElementById('generate-qr-btn');
-                    if (btn) btn.innerHTML = `<i class="fas fa-qrcode"></i> Generar QR Grupos`;
-                    if (isQrRequestPending()) {
-                        showQrLoading('Generando QR de grupos');
-                        setConnectionButtonsBusy(true);
-                    } else {
-                        setConnectionButtonsBusy(false);
-                    }
+                if (isQrRequestPending()) {
+                    showQrLoading(groupMessage || 'Generando QR de grupos');
+                    setConnectionButtonsBusy(true);
+                } else {
+                    setConnectionProviderTarget('primary');
+                    hideQrPresentation();
+                    setConnectionButtonsBusy(false);
                 }
             }
-        } else if (groupContainer) {
-            groupContainer.style.display = 'block';
-            if (groupStatusEl) {
-                groupStatusEl.textContent = 'Grupos: No configurado';
-                groupStatusEl.style.color = '#94a3b8';
-            }
+        } else if (groupStatusEl) {
+            groupStatusEl.textContent = 'Grupos: No configurado';
+            groupStatusEl.style.color = '#94a3b8';
+            setConnectionProviderTarget('primary');
+            hideQrPresentation();
+            setConnectionButtonsBusy(false);
         }
     } catch (e) {
         console.error(e);
@@ -326,6 +460,7 @@ function renderProviderStatus(status, label, options = {}) {
         statusEl.style.color = '#f59e0b';
         if (startContainer) startContainer.style.display = 'block';
         renderQrImage(status.qrImage || '/qr.png', 'Escanea con WhatsApp');
+        setConnectionProviderTarget('primary');
         setConnectionButtonsBusy(false);
     } else {
         statusEl.textContent = label + ': ' + (status.message || 'Cargando...');
@@ -333,6 +468,7 @@ function renderProviderStatus(status, label, options = {}) {
             startContainer.style.display = 'block';
             const btn = document.getElementById('generate-qr-btn');
             if (btn) btn.innerHTML = '<i class="fas fa-qrcode"></i> Generar QR Baileys';
+            setConnectionProviderTarget('primary');
         }
         if (isQrRequestPending()) {
             if (startContainer) startContainer.style.display = 'block';
@@ -401,17 +537,14 @@ window.initConexionView = function () {
             reloadBtn.disabled = true;
             reloadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Reiniciando...';
             try {
-                const res = await fetch('/api/backoffice/system/restart', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ token: localStorage.getItem('backoffice_token') })
-                });
-                if (res.ok) {
-                    window.swalAlert("Reinicio solicitado", "La página se recargará en 10 segundos.", "success");
-                    setTimeout(() => window.location.reload(), 10000);
-                }
+                const token = localStorage.getItem('backoffice_token');
+                const res = await fetch(`/api/restart-bot?token=${encodeURIComponent(token || '')}`, { method: 'POST' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.success === false) throw new Error(data.error || 'Error al solicitar el reinicio');
+                window.swalAlert("Reinicio solicitado", "La pagina se recargara en 10 segundos.", "success");
+                setTimeout(() => window.location.reload(), 10000);
             } catch (e) {
-                window.swalAlert("Error", "Error al solicitar el reinicio", "error");
+                window.swalAlert("Error", e.message || "Error al solicitar el reinicio", "error");
                 reloadBtn.disabled = false;
                 reloadBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Reiniciar';
             }
@@ -488,8 +621,9 @@ window.initConexionView = function () {
                 const token = localStorage.getItem('backoffice_token');
                 const delRes = await fetch(`/api/delete-session?token=${token}`, { method: 'POST' });
                 if (!delRes.ok) throw new Error("Error al borrar la sesión en DB");
-                const restRes = await fetch(`/api/restart-bot?token=${token}`, { method: 'POST' });
-                if (!restRes.ok) throw new Error("Error al solicitar el reinicio del bot");
+                const restRes = await fetch(`/api/restart-bot?token=${encodeURIComponent(token || '')}`, { method: 'POST' });
+                const restData = await restRes.json().catch(() => ({}));
+                if (!restRes.ok || restData.success === false) throw new Error(restData.error || "Error al solicitar el reinicio del bot");
                 resetModal.innerHTML = `<div class="glass-strong p-8 text-center"><i class="fas fa-check-circle" style="font-size:3rem;color:#25d366;display:block;margin-bottom:20px;"></i><h3 class="text-xl font-heading font-bold mb-3">¡Listo!</h3><p class="text-secondary-content text-sm">El bot se está reiniciando. La página se recargará en 5 segundos.</p></div>`;
                 setTimeout(() => window.location.reload(), 5000);
             } catch (err) {
@@ -515,12 +649,16 @@ window.initConexionView = function () {
             confirmUnlinkSi.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Desvinculando...';
             try {
                 const token = localStorage.getItem('backoffice_token');
-                const res = await fetch(`/api/backoffice/whatsapp/unlink-meta?projectId=${currentProjectId}&token=${token}`, { method: 'POST' });
-                if (!res.ok) {
-                    const errData = await res.json().catch(() => ({}));
-                    throw new Error(errData.error || "Error al desvincular de Meta en el servidor");
+                const serviceParam = window.railwayServiceId ? `&serviceId=${encodeURIComponent(window.railwayServiceId)}` : '';
+                const res = await fetch(`/api/backoffice/whatsapp/unlink-meta?projectId=${currentProjectId}${serviceParam}&token=${encodeURIComponent(token || '')}`, { method: 'POST' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.success === false) {
+                    throw new Error(data.error || "Error al desvincular de Meta en el servidor");
                 }
-                unlinkModal.innerHTML = `<div class="glass-strong p-8 text-center" style="border-top:5px solid #25d366;"><i class="fas fa-check-circle" style="font-size:3rem;color:#25d366;display:block;margin-bottom:20px;"></i><h3 class="text-xl font-heading font-bold mb-3">¡Listo!</h3><p class="text-secondary-content text-sm">La desvinculación se completó. El bot se está reiniciando. La página se recargará en 5 segundos.</p></div>`;
+                const warningText = data.restartWarning
+                    ? ' La desvinculacion se completo, pero el reinicio automatico no pudo solicitarse.'
+                    : ' La pagina se recargara en 5 segundos.';
+                unlinkModal.innerHTML = `<div class="glass-strong p-8 text-center" style="border-top:5px solid #25d366;"><i class="fas fa-check-circle" style="font-size:3rem;color:#25d366;display:block;margin-bottom:20px;"></i><h3 class="text-xl font-heading font-bold mb-3">Listo</h3><p class="text-secondary-content text-sm">Meta fue desvinculado correctamente.${warningText}</p></div>`;
                 setTimeout(() => window.location.reload(), 5000);
             } catch (err) {
                 console.error(err);
@@ -535,19 +673,21 @@ window.initConexionView = function () {
     const generateQrBtn = document.getElementById('generate-qr-btn');
     if (generateQrBtn) {
         generateQrBtn.addEventListener('click', async () => {
-            const isGroup = document.getElementById('group-connection-container')?.style.display !== 'none' &&
-                            generateQrBtn.textContent.includes('Grupos');
+            const isGroup = isGroupConnectionTarget();
             setConnectionButtonsBusy(true);
             markQrRequestPending();
+            scheduleQrNoResultGuard();
             showQrLoading(isGroup ? 'Generando QR de grupos' : 'Generando QR Baileys');
-            const loading = document.getElementById('generate-qr-loading');
-            if (loading) loading.style.display = 'block';
             try {
                 const token = localStorage.getItem('backoffice_token');
                 const res = await fetch(`/api/backoffice/baileys/start?token=${token}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ isGroup })
+                    body: JSON.stringify({
+                        isGroup,
+                        projectId: currentProjectId,
+                        serviceId: getConexionServiceId()
+                    })
                 });
                 if (res.ok) {
                     setTimeout(fetchStatus, 1500);
@@ -557,7 +697,6 @@ window.initConexionView = function () {
                     clearQrRequestPending();
                     hideQrPresentation();
                     setConnectionButtonsBusy(false);
-                    if (loading) loading.style.display = 'none';
                 }
             } catch (e) {
                 console.error(e);
@@ -565,8 +704,6 @@ window.initConexionView = function () {
                 clearQrRequestPending();
                 hideQrPresentation();
                 setConnectionButtonsBusy(false);
-                const loading2 = document.getElementById('generate-qr-loading');
-                if (loading2) loading2.style.display = 'none';
             }
         });
     }
@@ -582,25 +719,25 @@ window.initConexionView = function () {
                 return;
             }
 
-            const isGroup = document.getElementById('group-connection-container')?.style.display !== 'none' &&
-                            generatePairingBtn.textContent.includes('Grupos');
+            const isGroup = isGroupConnectionTarget();
 
             setConnectionButtonsBusy(true);
             markQrRequestPending();
+            scheduleQrNoResultGuard('No se pudo generar el codigo');
             showQrLoading('Solicitando codigo de vinculacion');
-            const loading = document.getElementById('generate-qr-loading');
-            if (loading) {
-                loading.style.display = 'block';
-                const loadingText = loading.querySelector('p');
-                if (loadingText) loadingText.textContent = 'Solicitando codigo de vinculacion... esto tardara unos segundos.';
-            }
 
             try {
                 const token = localStorage.getItem('backoffice_token');
                 const res = await fetch(`/api/backoffice/baileys/start?token=${token}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ isGroup, usePairingCode: true, phoneNumber })
+                    body: JSON.stringify({
+                        isGroup,
+                        usePairingCode: true,
+                        phoneNumber,
+                        projectId: currentProjectId,
+                        serviceId: getConexionServiceId()
+                    })
                 });
                 if (res.ok) {
                     setTimeout(fetchStatus, 1500);
@@ -610,7 +747,6 @@ window.initConexionView = function () {
                     clearQrRequestPending();
                     hideQrPresentation();
                     setConnectionButtonsBusy(false);
-                    if (loading) loading.style.display = 'none';
                 }
             } catch (e) {
                 console.error(e);
@@ -618,7 +754,6 @@ window.initConexionView = function () {
                 clearQrRequestPending();
                 hideQrPresentation();
                 setConnectionButtonsBusy(false);
-                if (loading) loading.style.display = 'none';
             }
         });
     }
@@ -631,6 +766,8 @@ window.destroyConexionView = function () {
     _conexionIntervals = [];
     if (_qrSkeletonTimer) clearTimeout(_qrSkeletonTimer);
     _qrSkeletonTimer = null;
+    if (_qrNoResultTimer) clearTimeout(_qrNoResultTimer);
+    _qrNoResultTimer = null;
     _lastRenderedQrSource = null;
     clearQrRequestPending();
 };

@@ -235,13 +235,14 @@ export class AiManager {
             const isGlobalBotEnabledSetting = await HistoryHandler.getSetting('GLOBAL_BOT_ENABLED', dynamicProjectId, dynamicServiceId);
             const isGlobalBotEnabled = isGlobalBotEnabledSetting !== 'false';
             const isBotActiveForUser = await HistoryHandler.isBotEnabled(ctx.from, dynamicProjectId, dynamicServiceId);
+            const shouldApplyGlobalBotSwitch = ctx.type !== 'webchat';
 
-            if (!isGlobalBotEnabled || !isBotActiveForUser) {
-                if (!isGlobalBotEnabled) {
-                    console.log(`[AiManager] 🛑 Bot DESACTIVADO GLOBALMENTE para el proyecto ${dynamicProjectId}.`);
+            if ((shouldApplyGlobalBotSwitch && !isGlobalBotEnabled) || !isBotActiveForUser) {
+                if (shouldApplyGlobalBotSwitch && !isGlobalBotEnabled) {
+                    console.log(`[AiManager] Bot DESACTIVADO GLOBALMENTE para el proyecto ${dynamicProjectId}.`);
                 }
                 stop(ctx);
-                // No necesitamos sincronizar con Threads de OpenAI en Chat Completions
+                // El webchat ignora el apagado global porque se usa para testear el bot.
                 return state;
             }
 

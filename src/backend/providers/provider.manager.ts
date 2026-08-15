@@ -476,10 +476,24 @@ export const registerProviderEvents = (provider: any, isGroupProvider: boolean =
     });
 
     // --- SINCRONIZACIÓN DE CONTACTOS (META SMB) ---
-    provider.on('contacts_sync', async (contacts: any[]) => {
+    provider.on('contacts_sync', async (contacts: any[], context: any = {}) => {
         try {
             console.log(`${prefix} 👥 Recibida petición de sincronización para ${contacts.length} contactos...`);
             const { HistoryHandler } = await import('../db/historyHandler');
+            const botPhoneNumber = context.recipientPhoneId ||
+                                   provider?.config?.phone_number_id ||
+                                   provider?.globalVendorArgs?.phone_number_id ||
+                                   provider?.vendor?.authState?.creds?.me?.id?.split(':')[0]?.split('@')[0] ||
+                                   provider?.vendor?.user?.id?.split(':')[0]?.split('@')[0] ||
+                                   null;
+            let dynamicProjectId = HistoryHandler.PROJECT_IDENTIFIER;
+            let dynamicServiceId = HistoryHandler.SERVICE_IDENTIFIER;
+            if (botPhoneNumber) {
+                const resolvedProjectId = await HistoryHandler.getProjectIdByRecipient(botPhoneNumber);
+                const resolvedServiceId = await HistoryHandler.getServiceIdByRecipient(botPhoneNumber);
+                if (resolvedProjectId) dynamicProjectId = resolvedProjectId;
+                if (resolvedServiceId) dynamicServiceId = resolvedServiceId;
+            }
             
             const chatsToSync = contacts.map(c => ({
                 id: c.wa_id,
@@ -492,7 +506,7 @@ export const registerProviderEvents = (provider: any, isGroupProvider: boolean =
                 }
             }));
 
-            await HistoryHandler.syncChats(chatsToSync);
+            await HistoryHandler.syncChats(chatsToSync, dynamicProjectId, dynamicServiceId);
             console.log(`${prefix} ✅ Sincronización de contactos persistida en base de datos.`);
         } catch (err) {
             console.error(`❌ ${prefix} Error en sincronización de contactos:`, err);
@@ -535,8 +549,10 @@ export const registerProviderEvents = (provider: any, isGroupProvider: boolean =
 /**
  * Verifica si existe una sesión activa y devuelve el estado para el dashboard.
  */
-export const hasActiveSession = async (adapterProvider: any, groupProvider: any = null) => {
+export const hasActiveSession = async (adapterProvider: any, groupProvider: any = null, projectId: string | null = null, serviceId: string | null = null) => {
     try {
+        const targetProjectId = projectId || HistoryHandler.PROJECT_IDENTIFIER;
+        const targetServiceId = serviceId || HistoryHandler.SERVICE_IDENTIFIER;
         const getStatus = async (provider: any, isGroup: boolean) => {
             if (!provider) return null;
             
@@ -553,7 +569,7 @@ export const hasActiveSession = async (adapterProvider: any, groupProvider: any 
             );
             const connectionState = provider?.connectionState || null;
             const isReady = connectionState
-                ? (connectionState === 'open' && socketOpen && hasIdentity)
+                ? (connectionState === 'open' && hasIdentity)
                 : (socketOpen && hasIdentity);
 
             if (isMeta) return { active: true, type: 'meta', message: 'Conectado via API' };
@@ -592,8 +608,7 @@ export const hasActiveSession = async (adapterProvider: any, groupProvider: any 
         const groupStatus = await getStatus(groupProvider, true);
 
         // Fetch meta configuration for additional info if not active
-        const { HistoryHandler } = await import('../db/historyHandler');
-        const metaOnboarding = await HistoryHandler.getMetaOnboardingData();
+        const metaOnboarding = await HistoryHandler.getMetaOnboardingData(targetProjectId, false, targetServiceId);
 
         const now = Date.now();
         const hasData = metaOnboarding?.onboarding_data && 
@@ -669,7 +684,7 @@ export const hasActiveSession = async (adapterProvider: any, groupProvider: any 
             }
         }
 
-        let activeProjectId = HistoryHandler.PROJECT_IDENTIFIER;
+        let activeProjectId = targetProjectId;
         if (metaOnboarding?.project_id) {
             activeProjectId = metaOnboarding.project_id;
         } else {

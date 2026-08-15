@@ -532,6 +532,19 @@ window.supportWidget = (() => {
 
             .sw-btn-send { background: #0099FF; color: white; }
             .sw-btn-send:hover { transform: scale(0.97); }
+            @media (max-width: 640px) {
+                #sw-root {
+                    inset: 12px;
+                    bottom: 12px;
+                    right: 12px;
+                }
+                #sw-popover {
+                    width: 100%;
+                    height: 100%;
+                    max-width: none;
+                    max-height: none;
+                }
+            }
         </style>
 
         <div id="sw-root">
@@ -646,6 +659,9 @@ window.supportWidget = (() => {
         const popover = document.getElementById('sw-popover');
 
         if (_isOpen) {
+            if (window.notificationsWidget && typeof window.notificationsWidget.close === 'function') {
+                window.notificationsWidget.close();
+            }
             _setMinimized(false);
             popover.classList.add('sw-show');
             _fetchAll();
@@ -686,6 +702,7 @@ window.supportWidget = (() => {
         if (popover) popover.classList.toggle('sw-minimized', _isMinimized);
         if (icon) icon.className = _isMinimized ? 'fas fa-chevron-up' : 'fas fa-minus';
         if (btn) btn.title = _isMinimized ? 'Expandir' : 'Minimizar';
+        _updateBadge();
     }
 
     function switchTab(tabId) {
@@ -843,17 +860,49 @@ window.supportWidget = (() => {
 
     function _updateBadge() {
         const badge = document.getElementById('sw-badge');
-        const sidebarBadge = document.getElementById('dot-support-widget');
-        const hasUnread = _activeTicketsCache.some(t => {
+        const sidebarBadge = document.getElementById('desktop-dot-support-widget');
+
+        let unreadCount = 0;
+        _activeTicketsCache.forEach(t => {
             let chatsAdj = _parseJson(t.chats_adjuntos, []);
             if (chatsAdj.length > 0 && t.estado !== 'Cerrado') {
-                return chatsAdj[chatsAdj.length - 1].rol === 'admin';
+                const isFromAdmin = chatsAdj[chatsAdj.length - 1].rol === 'admin';
+
+                // Si el mensaje es de admin, verificamos si el usuario lo esta viendo activamente
+                const isCurrentlyViewing = _isOpen && !_isMinimized && _activeTab === 'messages' && _activeTicket && _activeTicket.id === t.id;
+
+                const lastMsg = chatsAdj[chatsAdj.length - 1];
+                if (isCurrentlyViewing && isFromAdmin) {
+                    const ts = lastMsg.timestamp || lastMsg.fecha || new Date().toISOString();
+                    localStorage.setItem('sw_read_' + t.id, new Date(ts).getTime().toString());
+                }
+
+                if (isFromAdmin && !isCurrentlyViewing) {
+                    const readTimeStr = localStorage.getItem('sw_read_' + t.id);
+                    const msgTimeStr = lastMsg.timestamp || lastMsg.fecha;
+                    const msgTime = msgTimeStr ? new Date(msgTimeStr).getTime() : 0;
+
+                    if (!readTimeStr || msgTime > parseInt(readTimeStr)) {
+                        unreadCount++;
+                    }
+                }
             }
-            return false;
         });
-        const display = (hasUnread && !_isOpen) ? 'inline-block' : 'none';
-        if (badge) badge.style.display = display === 'none' ? 'none' : 'block';
-        if (sidebarBadge) sidebarBadge.style.display = display;
+
+        const display = unreadCount > 0 ? 'inline-flex' : 'none';
+
+        if (badge) {
+            badge.style.display = unreadCount > 0 ? 'block' : 'none';
+            badge.innerText = unreadCount;
+        }
+        if (sidebarBadge) {
+            sidebarBadge.style.display = display;
+            sidebarBadge.innerText = unreadCount;
+        }
+        document.querySelectorAll('[data-support-badge]').forEach(item => {
+            item.style.display = display;
+            item.innerText = unreadCount;
+        });
     }
 
     function _syncSidebarTrigger() {
@@ -872,6 +921,7 @@ window.supportWidget = (() => {
         document.getElementById('sw-back-btn').style.display = 'block';
 
         _updateChatUI();
+        _updateBadge();
     }
 
     async function closeChat() {

@@ -3186,16 +3186,20 @@ export class HistoryHandler {
             if (wabaId && tokenToSave) {
                 try {
                     const axios = (await import('axios')).default;
-                    // Suscribir a messages + smb_message_echoes para capturar mensajes
-                    // enviados manualmente desde la app de WhatsApp (Atención Humana)
-                    await axios.post(`https://graph.facebook.com/v25.0/${wabaId}/subscribed_apps`,
+                    const subscribe = async (fields: string) => axios.post(`https://graph.facebook.com/v25.0/${wabaId}/subscribed_apps`,
                         {},
                         {
                             headers: { 'Authorization': `Bearer ${tokenToSave}` },
-                            params: { subscribed_fields: 'messages,smb_message_echoes' }
+                            params: { subscribed_fields: fields }
                         }
                     );
-                    console.log(`✅ [HistoryHandler] Suscripción de webhooks confirmada para WABA ${wabaId} (messages + smb_message_echoes)`);
+                    try {
+                        await subscribe('messages,smb_message_echoes,smb_app_state_sync,history');
+                        console.log(`[HistoryHandler] Suscripcion de webhooks confirmada para WABA ${wabaId} (messages + SMB sync)`);
+                    } catch (extendedErr: any) {
+                        await subscribe('messages,smb_message_echoes');
+                        console.warn('[HistoryHandler] Meta rechazo campos SMB extendidos; usando suscripcion basica:', extendedErr.response?.data || extendedErr.message);
+                    }
                 } catch (apiErr: any) {
                     console.warn(`⚠️ [HistoryHandler] No se pudo confirmar la suscripción de webhooks:`, apiErr.response?.data || apiErr.message);
                 }
