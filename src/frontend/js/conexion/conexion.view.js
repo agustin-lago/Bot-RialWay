@@ -1,4 +1,4 @@
-﻿/* global loadViewScript */
+/* global loadViewScript */
 window.conexionView = {
     title: 'Conexión & Chatbot - ' + (window.BOT_NAME || 'Backoffice'),
 
@@ -71,6 +71,7 @@ window.conexionView = {
                                                 <span class="skeleton-text"></span>
                                             </div>
                                             <img id="baileys-qr-img" src="/qr.png" class="qr" alt="Codigo QR" style="display:none;"
+                                                onload="this.style.display='block';document.getElementById('qr-empty-message').style.display='none'"
                                                 onerror="this.style.display='none';document.getElementById('qr-empty-message').style.display='block'">
                                             <p id="qr-empty-message" class="qr-error-msg" style="display:block;">Genera un QR o solicita un codigo para iniciar la vinculacion.</p>
                                         </div>

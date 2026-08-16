@@ -446,7 +446,8 @@ function renderQrImage(source, titleText) {
     if (_lastRenderedQrSource === qrSource) {
         if (_qrSkeletonTimer) return;
         if (skeleton) skeleton.style.display = 'none';
-        if (empty && empty.style.display !== 'block') img.style.display = 'block';
+        if (empty) empty.style.display = 'none';
+        img.style.display = 'block';
         return;
     }
 
