@@ -391,15 +391,16 @@ async function updateNotificationDots() {
         const showReportes = latestReporteTime > lastReportesVisit && currentPath !== '/reportes';
         setNotificationDot('dot-reportes', showReportes);
 
-        // --- CRM ---
+        // --- CRM / Tareas ---
         const lastCrmVisit = parseInt(localStorage.getItem('last_visited_crm') || '0');
         const latestLeadTime = data.latest_crm_lead_time ? new Date(data.latest_crm_lead_time).getTime() : 0;
-        const showCrm = latestLeadTime > lastCrmVisit && currentPath !== '/crm';
+        const lastTareasVisit = parseInt(localStorage.getItem('last_visited_tareas') || '0');
+        const latestTareaTime = data.latest_tarea_time ? new Date(data.latest_tarea_time).getTime() : 0;
+        const showCrm = (latestLeadTime > lastCrmVisit && currentPath !== '/crm') ||
+            (latestTareaTime > lastTareasVisit && currentPath !== '/crm-tareas');
         setNotificationDot('dot-crm', showCrm);
 
         // --- Tareas ---
-        const lastTareasVisit = parseInt(localStorage.getItem('last_visited_tareas') || '0');
-        const latestTareaTime = data.latest_tarea_time ? new Date(data.latest_tarea_time).getTime() : 0;
         const showTareas = latestTareaTime > lastTareasVisit && currentPath !== '/crm-tareas';
         setNotificationDot('dot-tareas', showTareas);
 

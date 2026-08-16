@@ -225,6 +225,168 @@ function setCommandButtonBusy(button, isBusy, busyText) {
     }
 }
 
+const commandChatSelectorState = {
+    chats: [],
+    selected: new Set(),
+    draftSelected: new Set(),
+    loaded: false
+};
+
+function escapeCommandHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function getCommandChatPhone(chatId) {
+    return String(chatId || '').split('@')[0] || String(chatId || '');
+}
+
+function getCommandChatLabel(chat) {
+    const name = chat?.contact_name || (chat?.name && chat.name !== '[-]' ? chat.name : '');
+    const phone = getCommandChatPhone(chat?.id);
+    return {
+        name: name || phone || 'Sin nombre',
+        phone
+    };
+}
+
+function getSelectedCommandChatIds() {
+    return Array.from(commandChatSelectorState.selected);
+}
+
+function updateCommandSelectionSummary() {
+    const label = document.getElementById('bot-command-selection-label');
+    const badge = document.getElementById('bot-command-selection-badge');
+    const selectedCount = commandChatSelectorState.selected.size;
+    const total = commandChatSelectorState.chats.length;
+
+    if (label) {
+        if (!selectedCount) label.textContent = 'Seleccionar chats';
+        else if (total && selectedCount === total) label.textContent = 'Todos los chats';
+        else label.textContent = `${selectedCount} chat${selectedCount === 1 ? '' : 's'} seleccionado${selectedCount === 1 ? '' : 's'}`;
+    }
+    if (badge) {
+        badge.textContent = String(selectedCount);
+        badge.style.display = selectedCount ? 'inline-flex' : 'none';
+    }
+}
+
+function updateCommandModalCount() {
+    const count = document.getElementById('bot-command-modal-count');
+    if (count) {
+        const selectedCount = commandChatSelectorState.draftSelected.size;
+        count.textContent = `${selectedCount} seleccionado${selectedCount === 1 ? '' : 's'}`;
+    }
+
+    const selectAllBtn = document.getElementById('bot-command-select-all');
+    if (selectAllBtn) {
+        const allSelected = commandChatSelectorState.chats.length > 0 && commandChatSelectorState.draftSelected.size === commandChatSelectorState.chats.length;
+        selectAllBtn.innerHTML = allSelected
+            ? '<i class="fas fa-xmark"></i> Limpiar seleccion'
+            : '<i class="fas fa-check-double"></i> Seleccionar todos';
+    }
+}
+
+function renderCommandChatList() {
+    const list = document.getElementById('bot-command-chat-list');
+    if (!list) return;
+
+    const query = (document.getElementById('bot-command-chat-search')?.value || '').trim().toLowerCase();
+    const chats = commandChatSelectorState.chats.filter((chat) => {
+        const label = getCommandChatLabel(chat);
+        return !query || label.name.toLowerCase().includes(query) || label.phone.toLowerCase().includes(query);
+    });
+
+    if (!chats.length) {
+        list.innerHTML = '<div class="conexion-command-empty">No se encontraron chats.</div>';
+        updateCommandModalCount();
+        return;
+    }
+
+    list.innerHTML = chats.map((chat) => {
+        const chatId = String(chat.id || '');
+        const label = getCommandChatLabel(chat);
+        const checked = commandChatSelectorState.draftSelected.has(chatId) ? 'checked' : '';
+        return `
+            <label class="conexion-command-chat-option">
+                <input type="checkbox" value="${escapeCommandHtml(chatId)}" ${checked}>
+                <span>
+                    <strong>${escapeCommandHtml(label.name)}</strong>
+                    <small>${escapeCommandHtml(label.phone)}</small>
+                </span>
+            </label>`;
+    }).join('');
+
+    list.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+        input.addEventListener('change', () => {
+            if (input.checked) commandChatSelectorState.draftSelected.add(input.value);
+            else commandChatSelectorState.draftSelected.delete(input.value);
+            updateCommandModalCount();
+        });
+    });
+    updateCommandModalCount();
+}
+
+async function loadCommandChats() {
+    const list = document.getElementById('bot-command-chat-list');
+    if (commandChatSelectorState.loaded) {
+        renderCommandChatList();
+        return;
+    }
+    if (list) list.innerHTML = '<div class="conexion-command-empty"><i class="fas fa-circle-notch fa-spin"></i> Cargando chats...</div>';
+    const token = localStorage.getItem('backoffice_token') || '';
+    const params = new URLSearchParams({ token, limit: '10000', offset: '0' });
+    if (currentProjectId && currentProjectId !== 'default') params.set('projectId', currentProjectId);
+    const serviceId = getConexionServiceId();
+    if (serviceId) params.set('serviceId', serviceId);
+
+    const res = await fetch(`/api/backoffice/chats?${params.toString()}`);
+    if (res.status === 401) return logout();
+    const data = await res.json();
+    if (!res.ok || !Array.isArray(data)) throw new Error(data.error || 'No se pudieron cargar los chats');
+    commandChatSelectorState.chats = data.filter((chat) => chat && chat.id);
+    commandChatSelectorState.loaded = true;
+    renderCommandChatList();
+    updateCommandSelectionSummary();
+}
+
+function openCommandChatModal() {
+    const modal = document.getElementById('bot-command-chat-modal');
+    const search = document.getElementById('bot-command-chat-search');
+    if (!modal) return;
+    commandChatSelectorState.draftSelected = new Set(commandChatSelectorState.selected);
+    modal.classList.add('active');
+    if (search) search.value = '';
+    loadCommandChats().catch((err) => {
+        const list = document.getElementById('bot-command-chat-list');
+        if (list) list.innerHTML = `<div class="conexion-command-empty error">${escapeCommandHtml(err.message)}</div>`;
+    });
+}
+
+function closeCommandChatModal(commit = false) {
+    const modal = document.getElementById('bot-command-chat-modal');
+    if (commit) {
+        commandChatSelectorState.selected = new Set(commandChatSelectorState.draftSelected);
+        updateCommandSelectionSummary();
+    }
+    if (modal) modal.classList.remove('active');
+}
+
+async function runBotCommandForSelectedChats(command) {
+    const chatIds = getSelectedCommandChatIds();
+    if (!chatIds.length) throw new Error('Selecciona al menos un chat.');
+
+    const results = [];
+    for (const chatId of chatIds) {
+        results.push(await runBotCommand(command, chatId));
+    }
+    return results;
+}
+
 
 function getQrElements() {
     return {
@@ -566,19 +728,43 @@ window.initConexionView = function () {
         });
     }
 
-    const commandChatInput = document.getElementById('bot-command-chat-id');
+    const commandChatSelector = document.getElementById('bot-command-chat-selector');
+    const commandChatModalClose = document.getElementById('bot-command-chat-modal-close');
+    const commandChatCancel = document.getElementById('bot-command-chat-cancel');
+    const commandChatAccept = document.getElementById('bot-command-chat-accept');
+    const commandChatSearch = document.getElementById('bot-command-chat-search');
+    const commandSelectAll = document.getElementById('bot-command-select-all');
     const resetCommandBtn = document.getElementById('bot-command-reset');
     const newThreadCommandBtn = document.getElementById('bot-command-new-thread');
-    const getCommandChatId = () => (commandChatInput?.value || '').trim();
+    commandChatSelectorState.loaded = false;
+    commandChatSelectorState.chats = [];
+    commandChatSelectorState.selected = new Set();
+    commandChatSelectorState.draftSelected = new Set();
+    updateCommandSelectionSummary();
+
+    if (commandChatSelector) commandChatSelector.addEventListener('click', openCommandChatModal);
+    if (commandChatModalClose) commandChatModalClose.addEventListener('click', () => closeCommandChatModal(false));
+    if (commandChatCancel) commandChatCancel.addEventListener('click', () => closeCommandChatModal(false));
+    if (commandChatAccept) commandChatAccept.addEventListener('click', () => closeCommandChatModal(true));
+    if (commandChatSearch) commandChatSearch.addEventListener('input', renderCommandChatList);
+    if (commandSelectAll) {
+        commandSelectAll.addEventListener('click', () => {
+            const allSelected = commandChatSelectorState.chats.length > 0 && commandChatSelectorState.draftSelected.size === commandChatSelectorState.chats.length;
+            commandChatSelectorState.draftSelected = allSelected
+                ? new Set()
+                : new Set(commandChatSelectorState.chats.map((chat) => String(chat.id || '')).filter(Boolean));
+            renderCommandChatList();
+        });
+    }
 
     if (resetCommandBtn) {
         resetCommandBtn.addEventListener('click', async () => {
-            const chatId = getCommandChatId();
-            if (!chatId) return window.swalAlert('Falta el contacto', 'Ingresa el telefono o chat ID antes de ejecutar #RESET#.', 'warning');
+            const selectedCount = getSelectedCommandChatIds().length;
+            if (!selectedCount) return window.swalAlert('Falta el contacto', 'Selecciona al menos un chat antes de ejecutar Reset.', 'warning');
             setCommandButtonBusy(resetCommandBtn, true, 'Reiniciando...');
             try {
-                await runBotCommand('#RESET#', chatId);
-                window.swalAlert('Asistente reiniciado', 'El chat volvio a asistente1.', 'success');
+                await runBotCommandForSelectedChats('#RESET#');
+                window.swalAlert('Asistente reiniciado', `${selectedCount} chat${selectedCount === 1 ? '' : 's'} vuelto${selectedCount === 1 ? '' : 's'} a asistente1.`, 'success');
             } catch (err) {
                 window.swalAlert('Error', err.message || 'No se pudo ejecutar #RESET#', 'error');
             } finally {
@@ -589,14 +775,14 @@ window.initConexionView = function () {
 
     if (newThreadCommandBtn) {
         newThreadCommandBtn.addEventListener('click', async () => {
-            const chatId = getCommandChatId();
-            if (!chatId) return window.swalAlert('Falta el contacto', 'Ingresa el telefono o chat ID antes de ejecutar #HILO_NUEVO#.', 'warning');
-            const confirmed = await window.swalConfirm('Borrar historial?', 'Se eliminara todo el historial de mensajes para ese contacto y se iniciara un hilo limpio.');
+            const selectedCount = getSelectedCommandChatIds().length;
+            if (!selectedCount) return window.swalAlert('Falta el contacto', 'Selecciona al menos un chat antes de ejecutar Hilo nuevo.', 'warning');
+            const confirmed = await window.swalConfirm('Borrar historial?', `Se eliminara el historial de ${selectedCount} chat${selectedCount === 1 ? '' : 's'} y se iniciara un hilo limpio.`);
             if (!confirmed) return;
             setCommandButtonBusy(newThreadCommandBtn, true, 'Borrando...');
             try {
-                await runBotCommand('#HILO_NUEVO#', chatId);
-                window.swalAlert('Hilo nuevo iniciado', 'El historial fue eliminado y el chat volvio a asistente1.', 'success');
+                await runBotCommandForSelectedChats('#HILO_NUEVO#');
+                window.swalAlert('Hilo nuevo iniciado', `Historial eliminado en ${selectedCount} chat${selectedCount === 1 ? '' : 's'}.`, 'success');
             } catch (err) {
                 window.swalAlert('Error', err.message || 'No se pudo ejecutar #HILO_NUEVO#', 'error');
             } finally {

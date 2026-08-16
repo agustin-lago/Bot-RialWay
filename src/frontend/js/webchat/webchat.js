@@ -53,6 +53,11 @@ window.initWebchatView = function () {
 
     function _chat() { return document.getElementById('chat'); }
 
+    function _clearChat() {
+        const c = _chat();
+        if (c) c.innerHTML = '';
+    }
+
     function _addMsg(text, type) {
         const c = _chat();
         if (!c) return;
@@ -76,6 +81,38 @@ window.initWebchatView = function () {
     }
 
     const token = localStorage.getItem('backoffice_token');
+
+    async function _runWebchatCommand(command) {
+        const res = await fetch(`/webchat-api/command?token=${encodeURIComponent(token || '')}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                command,
+                projectId: window.railwayProjectId || '',
+                serviceId: window.railwayServiceId || ''
+            })
+        });
+        if (res.status === 401) {
+            logout();
+            return null;
+        }
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) throw new Error(data.error || 'No se pudo ejecutar el comando.');
+        return data;
+    }
+
+    function _setCommandBusy(button, isBusy, label) {
+        if (!button) return;
+        if (isBusy) {
+            button.dataset.originalHtml = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${label || 'Ejecutando...'}`;
+        } else {
+            button.disabled = false;
+            if (button.dataset.originalHtml) button.innerHTML = button.dataset.originalHtml;
+            delete button.dataset.originalHtml;
+        }
+    }
 
     function _doSend() {
         const msg = _input.value.trim();
@@ -151,7 +188,7 @@ window.initWebchatView = function () {
             if (window.innerWidth <= 1024) {
                 return;
             } else {
-                if (!e.shiftKey) {
+                if (!e.shiftKey && !e.ctrlKey) {
                     e.preventDefault();
                     _doSend();
                 }
@@ -163,6 +200,50 @@ window.initWebchatView = function () {
         _attach.onclick = (e) => { e.preventDefault(); _fileInput.click(); };
         _fileInput.onchange = function () { _handleFile(this.files[0]); };
     }
+    const actionsModal = document.getElementById('webchat-actions-modal');
+    const actionsOpenBtn = document.getElementById('webchat-actions-open');
+    const actionsCloseBtn = document.getElementById('webchat-actions-close');
+
+    function _openActionsModal() {
+        if (actionsModal) actionsModal.classList.add('active');
+    }
+
+    function _closeActionsModal() {
+        if (actionsModal) actionsModal.classList.remove('active');
+    }
+
+    actionsOpenBtn?.addEventListener('click', _openActionsModal);
+    actionsCloseBtn?.addEventListener('click', _closeActionsModal);
+    actionsModal?.addEventListener('click', (e) => {
+        if (e.target === actionsModal) _closeActionsModal();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && actionsModal?.classList.contains('active')) _closeActionsModal();
+    });
+
+    document.querySelectorAll('[data-webchat-command]').forEach((button) => {
+        button.addEventListener('click', async () => {
+            const command = button.dataset.webchatCommand;
+            if (!command) return;
+            if (command === 'HILO_NUEVO') {
+                const confirmed = await window.swalConfirm('Iniciar hilo nuevo?', 'Se limpiara solo la sesion actual del webchat.');
+                if (!confirmed) return;
+            }
+            _setCommandBusy(button, true, command === 'RESET' ? 'Reiniciando...' : 'Limpiando...');
+            try {
+                const data = await _runWebchatCommand(command);
+                if (data?.clearChat) _clearChat();
+                if (data?.message) _addMsg(data.message, 'assistant');
+                _closeActionsModal();
+            } catch (err) {
+                const fallback = command === 'RESET' ? 'No se pudo ejecutar Reset.' : 'No se pudo iniciar un hilo nuevo.';
+                const message = err instanceof Error ? err.message : fallback;
+                window.swalAlert('Error', message, 'error');
+            } finally {
+                _setCommandBusy(button, false);
+            }
+        });
+    });
 
     // Recalcular alturas en resize
     window.addEventListener('resize', () => {

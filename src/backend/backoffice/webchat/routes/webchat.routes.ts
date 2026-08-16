@@ -10,7 +10,53 @@ import { withRetry } from "../../../utils/retryHelper";
 
 const webChatManager = new WebChatManager();
 
+function getWebchatClientKey(req: any): string {
+    let ip = '';
+    const xff = req.headers['x-forwarded-for'];
+    if (typeof xff === 'string') {
+        ip = xff.split(',')[0].trim();
+    } else if (Array.isArray(xff) && xff.length > 0) {
+        ip = xff[0].trim();
+    } else {
+        ip = (req as any).ip || req.socket?.remoteAddress || (req as any).connection?.remoteAddress || '127.0.0.1';
+    }
+    ip = ip.replace(/^::ffff:/, '');
+    return ip || '127.0.0.1';
+}
+
 export const registerWebchatRoutes = (app: any) => {
+
+    app.post('/webchat-api/command', backofficeAuth, async (req: any, res: any) => {
+        const command = String(req.body?.command || '').trim().toUpperCase();
+        const ip = getWebchatClientKey(req);
+
+        try {
+            const { HistoryHandler } = await import("../../../db/historyHandler");
+            const projectId = String(req.body?.projectId || req.query?.projectId || process.env.RAILWAY_PROJECT_ID || HistoryHandler.PROJECT_IDENTIFIER || '').trim();
+            const serviceId = String(req.body?.serviceId || req.query?.serviceId || process.env.RAILWAY_SERVICE_ID || HistoryHandler.SERVICE_IDENTIFIER || '').trim();
+            const session = webChatManager.getSession(ip);
+
+            if (command === 'RESET' || command === '#RESET#') {
+                session.thread_id = null;
+                await HistoryHandler.setAssignedAgent(ip, 'asistente1', projectId, serviceId || undefined);
+                await HistoryHandler.saveThreadId(ip, '', projectId);
+                return res.json({ success: true, command: 'RESET', message: 'Reset aplicado solo al webchat.' });
+            }
+
+            if (command === 'HILO_NUEVO' || command === '#HILO_NUEVO#') {
+                session.clear();
+                await HistoryHandler.clearChatHistory(ip, projectId, serviceId || undefined);
+                await HistoryHandler.setAssignedAgent(ip, 'asistente1', projectId, serviceId || undefined);
+                await HistoryHandler.saveThreadId(ip, '', projectId);
+                return res.json({ success: true, command: 'HILO_NUEVO', clearChat: true, message: 'Hilo nuevo iniciado solo para el webchat.' });
+            }
+
+            return res.status(400).json({ success: false, error: 'Comando no soportado para webchat.' });
+        } catch (err: any) {
+            console.error('[Webchat Command] Error:', err.message);
+            return res.status(500).json({ success: false, error: err.message || 'No se pudo ejecutar el comando.' });
+        }
+    });
 
     app.post('/webchat-api', async (req: any, res: any) => {
         if (!req.body || (!req.body.message && !req.body.file)) {
@@ -18,18 +64,7 @@ export const registerWebchatRoutes = (app: any) => {
         }
         try {
             let message = req.body.message || "";
-            let ip = '';
-            const xff = req.headers['x-forwarded-for'];
-            if (typeof xff === 'string') {
-                ip = xff.split(',')[0].trim();
-            } else if (Array.isArray(xff) && xff.length > 0) {
-                ip = xff[0].trim();
-            } else {
-                ip = (req as any).ip || req.socket?.remoteAddress || (req as any).connection?.remoteAddress || '127.0.0.1';
-            }
-            // Normalizar IPv4-mapped IPv6 (::ffff:127.0.0.1 → 127.0.0.1)
-            ip = ip.replace(/^::ffff:/, '');
-            if (!ip) ip = '127.0.0.1';
+            const ip = getWebchatClientKey(req);
 
             if (req.body.file) {
                 const file = req.body.file;
@@ -51,7 +86,7 @@ export const registerWebchatRoutes = (app: any) => {
                             console.warn("⚠️ IA Vision Desactivada: Saltando análisis de imagen en webchat.");
                             message = `[Imagen recibida (Sin procesar)]: \n${message}`;
                         } else {
-                            const { HistoryHandler } = await import("../../db/historyHandler");
+                            const { HistoryHandler } = await import("../../../db/historyHandler");
                             let visionModel = await HistoryHandler.getConfig('OPENAI_MODEL') || "gpt-4o-mini";
                             if (visionModel.startsWith('o1') || visionModel.startsWith('o3')) {
                                 visionModel = "gpt-4o-mini";
@@ -94,7 +129,7 @@ export const registerWebchatRoutes = (app: any) => {
                 }
             }
 
-            const { HistoryHandler } = await import("../../db/historyHandler");
+            const { HistoryHandler } = await import("../../../db/historyHandler");
             const session = webChatManager.getSession(ip);
             let replyText = '';
 

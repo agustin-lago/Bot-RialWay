@@ -93,7 +93,7 @@ window.conexionView = {
                             <div class="conexion-panel-head">
                                 <div>
                                     <h2><i class="fas fa-sliders-h text-accent-bright"></i> Chatbot</h2>
-                                    <p>Control global de respuesta automatica y reinicio operativo.</p>
+                                    <p>Control global, reinicio operativo y comandos del bot.</p>
                                 </div>
                             </div>
                             <div class="conexion-actions-list">
@@ -119,24 +119,18 @@ window.conexionView = {
                                         <i class="fas fa-sync-alt"></i> Reiniciar
                                     </button>
                                 </div>
-                            </div>
-                        </section>
-
-                        <section class="conexion-panel">
-                            <div class="conexion-panel-head">
-                                <div>
-                                    <h2><i class="fas fa-terminal text-accent-bright"></i> Comandos del bot</h2>
-                                    <p>Ejecuta acciones operativas sin enviar comandos desde WhatsApp.</p>
+                                <div class="conexion-actions-divider"></div>
+                                <div class="conexion-actions-subhead">
+                                    <h3><i class="fas fa-terminal text-accent-bright"></i> Comandos del bot</h3>
+                                    <p>Comandos para ejecuta acciones operativas.</p>
                                 </div>
-                            </div>
-                            <div class="conexion-actions-list">
                                 <div class="conexion-action-row conexion-command-row">
                                     <div>
                                         <div class="conexion-action-title">Sincronizacion</div>
                                         <div class="conexion-action-desc">Actualiza Sheets, RAG y tools de OpenAI en tiempo real.</div>
                                     </div>
                                     <button id="bot-command-sync" class="btn-primary flex-shrink-0 self-end sm:self-center">
-                                        <i class="fas fa-arrows-rotate"></i> #ACTUALIZAR#
+                                        <i class="fas fa-arrows-rotate"></i> Actualizar
                                     </button>
                                 </div>
                                 <div class="conexion-action-row conexion-command-row conexion-command-history">
@@ -145,13 +139,17 @@ window.conexionView = {
                                         <div class="conexion-action-desc">Indica el telefono o chat ID del contacto antes de ejecutar la accion.</div>
                                     </div>
                                     <div class="conexion-command-controls">
-                                        <input type="text" id="bot-command-chat-id" class="input conexion-command-input" placeholder="Ej: 5491122334455">
+                                        <button type="button" id="bot-command-chat-selector" class="input conexion-command-selector">
+                                            <span id="bot-command-selection-label">Seleccionar chats</span>
+                                            <span id="bot-command-selection-badge" class="conexion-command-selection-badge">0</span>
+                                            <i class="fas fa-chevron-down"></i>
+                                        </button>
                                         <div class="conexion-command-buttons">
                                             <button id="bot-command-reset" class="btn">
-                                                <i class="fas fa-rotate-left"></i> #RESET#
+                                                <i class="fas fa-rotate-left"></i> Reset
                                             </button>
-                                            <button id="bot-command-new-thread" class="btn-danger">
-                                                <i class="fas fa-broom"></i> #HILO_NUEVO#
+                                            <button id="bot-command-new-thread" class="btn">
+                                                <i class="fas fa-broom"></i> Hilo nuevo
                                             </button>
                                         </div>
                                     </div>
@@ -179,6 +177,34 @@ window.conexionView = {
                 </div>
             </div>
         </main>
+
+        <div id="bot-command-chat-modal" class="modal-overlay">
+            <div class="modal-content modal-content-md animate-pop-in">
+                <div class="modal-header">
+                    <h3><i class="fas fa-comments modal-h3-icon"></i> Seleccionar chats</h3>
+                    <button class="modal-close" id="bot-command-chat-modal-close"><i class="fas fa-times"></i></button>
+                </div>
+                <div class="modal-body">
+                    <div class="modal-section">
+                        <label for="bot-command-chat-search"><i class="fas fa-search"></i> Buscar conversacion</label>
+                        <input type="text" id="bot-command-chat-search" placeholder="Nombre o numero">
+                    </div>
+                    <div class="conexion-command-selectbar">
+                        <button type="button" id="bot-command-select-all" class="btn-secondary btn-sm">
+                            <i class="fas fa-check-double"></i> Seleccionar todos
+                        </button>
+                        <span id="bot-command-modal-count">0 seleccionados</span>
+                    </div>
+                    <div id="bot-command-chat-list" class="conexion-command-chat-list">
+                        <div class="conexion-command-empty"><i class="fas fa-circle-notch fa-spin"></i> Cargando chats...</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" id="bot-command-chat-cancel" class="btn-secondary">Cancelar</button>
+                    <button type="button" id="bot-command-chat-accept" class="btn-primary">Aceptar</button>
+                </div>
+            </div>
+        </div>
 
         <div id="resetModal" class="hidden fixed inset-0 z-50 flex items-center justify-center"
             style="background:rgba(5,10,20,0.8); backdrop-filter:blur(8px);">

@@ -64,9 +64,7 @@ window.dashboardView = {
 
                 <!-- Charts main area -->
                 <div class="dashboard-main animate-reveal-up">
-
-                    <!-- Left: 2x2 chart grid -->
-                    <div class="dashboard-charts-left">
+                    <div class="dashboard-charts-grid">
                         <div class="chart-card">
                             <div class="chart-header">
                                 <i class="fas fa-filter"></i>
@@ -107,10 +105,6 @@ window.dashboardView = {
                             </div>
                             <div class="chart-canvas-wrapper" style="height:320px;"><canvas id="chart-sources"></canvas></div>
                         </div>
-                    </div>
-
-                    <!-- Right: OpenAI chart -->
-                    <div class="dashboard-charts-right">
                         <div class="chart-card">
                             <div class="chart-header">
                                 <i class="fas fa-brain"></i>
@@ -119,7 +113,7 @@ window.dashboardView = {
                                     <span class="tooltiptext">Inversion mensual en API de OpenAI. Incluye los ultimos 3 meses y el mes actual.</span>
                                 </i>
                             </div>
-                            <div class="chart-canvas-wrapper-lg"><canvas id="chart-openai"></canvas></div>
+                            <div class="chart-canvas-wrapper"><canvas id="chart-openai"></canvas></div>
                         </div>
                     </div>
                 </div>
@@ -130,7 +124,7 @@ window.dashboardView = {
 
     async init() {
         if (typeof Chart === 'undefined') {
-            await loadViewScript('https://cdn.jsdelivr.net/npm/chart.js');
+            await loadViewScript('/style/vendor/chartjs/chart.umd.js');
         }
         await loadViewScript('/js/dashboard/dashboard.js');
         if (typeof window.initDashboardView === 'function') window.initDashboardView();
