@@ -18,6 +18,9 @@ let botTags = [];
 let isSyncingCRM = false;
 let queuedSyncCRM = false;
 let socketSyncTimer = null;
+let hasLoadedCRMData = false;
+let crmViewRunId = 0;
+let selectedBulkDeleteIds = new Set();
 
 let kanbanBoard = null;
 let columns = [
@@ -30,8 +33,16 @@ let columns = [
 
 // crmConfig y applyCRMConfig ahora se cargan desde crm-common.js
 
+function isCurrentCRMView() {
+    return window.location.pathname === '/crm' && Boolean(document.querySelector('[data-crm-view="crm"] #kanban-board-inner'));
+}
+
+function isCurrentCRMRun(runId) {
+    return runId === crmViewRunId && isCurrentCRMView();
+}
 // --- Inicialización ---
 async function _initCRMPage() {
+    const runId = ++crmViewRunId;
     console.log('🚀 Iniciando CRM como:', userName, `(${userRole})`);
     
     // Mostrar botones de admin si corresponde
@@ -44,9 +55,11 @@ async function _initCRMPage() {
     
     // Cargar equipo para los selects (para todos los usuarios)
     await loadTeam();
+    if (!isCurrentCRMRun(runId)) return;
 
     // Cargar etiquetas (para todos)
     await fetchTags();
+    if (!isCurrentCRMRun(runId)) return;
     updateFilterTagOptions();
 
     // Cargamos primero el estado (columnas) y la configuración de campos
@@ -54,8 +67,10 @@ async function _initCRMPage() {
         loadCRMState(),
         window.fetchCRMConfig()
     ]);
+    if (!isCurrentCRMRun(runId)) return;
     // Luego sincronizamos los datos (tickets, leads y metadatos de posicionamiento)
     await syncCRM();
+    if (!isCurrentCRMRun(runId)) return;
 
     // Verificamos si hay un ticket pendiente de abrir (viniendo del Backoffice)
     const pendingId = localStorage.getItem('pendingTicket');
@@ -84,7 +99,18 @@ async function _initCRMPage() {
     window.saveColumnName = saveColumnName;
     window.applyCRMFilters = applyCRMFilters;
     window.clearCRMFilters = clearCRMFilters;
-    window.confirmBulkDeleteLeads = confirmBulkDeleteLeads;
+    window.toggleCRMFiltersDropdown = toggleCRMFiltersDropdown;
+    window.closeCRMFiltersDropdown = closeCRMFiltersDropdown;
+    window.openCRMFiltersModal = toggleCRMFiltersDropdown;
+    window.closeCRMFiltersModal = closeCRMFiltersDropdown;
+    window.confirmBulkDeleteLeads = openBulkDeleteLeadsModal;
+    window.openBulkDeleteLeadsModal = openBulkDeleteLeadsModal;
+    window.closeBulkDeleteLeadsModal = closeBulkDeleteLeadsModal;
+    window.toggleBulkDeleteLead = toggleBulkDeleteLead;
+    window.toggleBulkDeleteSelectAll = toggleBulkDeleteSelectAll;
+    window.applyBulkDeleteFilters = applyBulkDeleteFilters;
+    window.clearBulkDeleteFilters = clearBulkDeleteFilters;
+    window.confirmBulkDeleteSelectedLeads = confirmBulkDeleteSelectedLeads;
 
     // Inicializar o re-inicializar sockets
     if (typeof io !== 'undefined') {
@@ -118,7 +144,18 @@ window.deleteCurrentColumn = deleteCurrentColumn;
 window.saveColumnName = saveColumnName;
 window.applyCRMFilters = applyCRMFilters;
 window.clearCRMFilters = clearCRMFilters;
-window.confirmBulkDeleteLeads = confirmBulkDeleteLeads;
+window.toggleCRMFiltersDropdown = toggleCRMFiltersDropdown;
+window.closeCRMFiltersDropdown = closeCRMFiltersDropdown;
+window.openCRMFiltersModal = toggleCRMFiltersDropdown;
+window.closeCRMFiltersModal = closeCRMFiltersDropdown;
+window.confirmBulkDeleteLeads = openBulkDeleteLeadsModal;
+window.openBulkDeleteLeadsModal = openBulkDeleteLeadsModal;
+window.closeBulkDeleteLeadsModal = closeBulkDeleteLeadsModal;
+window.toggleBulkDeleteLead = toggleBulkDeleteLead;
+window.toggleBulkDeleteSelectAll = toggleBulkDeleteSelectAll;
+window.applyBulkDeleteFilters = applyBulkDeleteFilters;
+window.clearBulkDeleteFilters = clearBulkDeleteFilters;
+window.confirmBulkDeleteSelectedLeads = confirmBulkDeleteSelectedLeads;
 
 async function loadCRMState() {
     // Intentar cargar el orden de las columnas desde el servidor
@@ -173,6 +210,7 @@ async function syncCRM(options = {}) {
         allLeads = Array.isArray(leadsData) ? leadsData : [];
         
         const ticketsRaw = await resTickets.json();
+        if (!isCurrentCRMView()) return;
         const ticketsData = Array.isArray(ticketsRaw) ? ticketsRaw : [];
         
         // El CRM solo muestra los tickets que son Nuevo Lead y que NO esten cerrados
@@ -181,32 +219,47 @@ async function syncCRM(options = {}) {
 
         const resSettings = await fetch(`/api/backoffice/get-setting?key=CRM_METADATA&token=${activeToken}`);
         const setJson = await resSettings.json();
+        if (!isCurrentCRMView()) return;
         if (setJson && setJson.success && setJson.value) {
             crmData = JSON.parse(setJson.value);
         } else {
             crmData = {};
         }
 
+        hasLoadedCRMData = true;
         renderBoard();
+        if (!isCurrentCRMView()) return;
         await loadTasksDashboard();
     } catch (e) {
         console.error(e);
+        hasLoadedCRMData = true;
+        renderBoard();
+        if (!isCurrentCRMView()) return;
         if (!silent) showToast('Error al sincronizar datos', 'error');
     } finally {
         isSyncingCRM = false;
-        if (queuedSyncCRM) {
+        if (isCurrentCRMView() && queuedSyncCRM) {
             queuedSyncCRM = false;
             syncCRM({ silent: true });
+        } else {
+            queuedSyncCRM = false;
         }
     }
 }
 window.syncCRM = syncCRM; // Exportar globalmente
 
 function renderBoard() {
+    if (!isCurrentCRMView()) return;
     const board = document.getElementById('kanban-board-inner');
     if (!board) return;
 
-    if (board.children.length === columns.length) {
+    if (!hasLoadedCRMData) {
+        renderCRMSkeletonBoard(board, columns);
+        return;
+    }
+
+    const hasSkeletonBoard = !!board.querySelector('.crm-skeleton-column');
+    if (!hasSkeletonBoard && board.children.length === columns.length) {
         columns.forEach(col => {
             const titleEl = board.querySelector(`.kanban-column[data-id="${col.id}"] .column-title`);
             if (titleEl && titleEl.innerText !== col.title) {
@@ -254,10 +307,48 @@ function renderBoard() {
     _initKanbanScrollBehavior();
 }
 
-function getFilteredTickets() {
-    const activeTag = document.getElementById('crm-filter-tag')?.value || '';
-    const dateFromVal = document.getElementById('crm-filter-date-from')?.value || '';
-    const dateToVal = document.getElementById('crm-filter-date-to')?.value || '';
+function renderCRMSkeletonBoard(board, skeletonColumns) {
+    const sourceColumns = Array.isArray(skeletonColumns) && skeletonColumns.length
+        ? skeletonColumns
+        : columns;
+    board.innerHTML = sourceColumns.map((col) => {
+        const savedWidth = localStorage.getItem('col_width_' + col.id);
+        const widthStyle = savedWidth ? ` style="width:${savedWidth};"` : '';
+        return `
+        <div class="kanban-column-wrapper crm-skeleton-column-wrapper" data-id="${col.id}"${widthStyle}>
+            <div class="kanban-column crm-skeleton-column" data-id="${col.id}">
+                <div class="column-header">
+                    <div class="column-title-group">
+                        ${col.fixed ? '<i class="fas fa-star" style="color:#f59e0b; flex-shrink:0;"></i>' : ''}
+                        <span class="column-title">${col.title}</span>
+                    </div>
+                    <span class="column-badge skeleton-badge"></span>
+                </div>
+                <div class="kanban-cards crm-skeleton-cards">
+                    ${Array.from({ length: 2 }).map(() => `
+                        <div class="kanban-card crm-skeleton-card">
+                            <div class="crm-skeleton-line crm-skeleton-ref"></div>
+                            <div class="crm-skeleton-pill"></div>
+                            <div class="crm-skeleton-line crm-skeleton-title"></div>
+                            <div class="crm-skeleton-line crm-skeleton-phone"></div>
+                            <div class="crm-skeleton-footer">
+                                <div class="crm-skeleton-button"></div>
+                                <div class="crm-skeleton-icon"></div>
+                                <div class="crm-skeleton-icon"></div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+    }).join('');
+}
+
+function getTicketsByFilterControls(tagId, dateFromId, dateToId) {
+    const activeTag = document.getElementById(tagId)?.value || '';
+    const dateFromVal = document.getElementById(dateFromId)?.value || '';
+    const dateToVal = document.getElementById(dateToId)?.value || '';
 
     const dateFrom = dateFromVal ? new Date(dateFromVal + 'T00:00:00') : null;
     const dateTo = dateToVal ? new Date(dateToVal + 'T23:59:59') : null;
@@ -282,6 +373,14 @@ function getFilteredTickets() {
 
         return true;
     });
+}
+
+function getFilteredTickets() {
+    return getTicketsByFilterControls('crm-filter-tag', 'crm-filter-date-from', 'crm-filter-date-to');
+}
+
+function getBulkDeleteFilteredTickets() {
+    return getTicketsByFilterControls('crm-bulk-filter-tag', 'crm-bulk-filter-date-from', 'crm-bulk-filter-date-to');
 }
 
 function updateFilteredBadge(filteredCount, totalCount) {
@@ -549,16 +648,24 @@ async function fetchTags() {
 }
 
 function updateFilterTagOptions() {
-    const select = document.getElementById('crm-filter-tag');
+    syncTagOptions('crm-filter-tag');
+    syncTagOptions('crm-bulk-filter-tag');
+}
+
+function syncTagOptions(selectId) {
+    const select = document.getElementById(selectId);
     if (!select) return;
     const currentVal = select.value;
-    select.innerHTML = '<option value="">Todas las etiquetas</option>' + 
+    select.innerHTML = '<option value="">Todas las etiquetas</option>' +
         (botTags || []).map(t => `<option value="${t.id}">${t.name}</option>`).join('');
-    select.value = currentVal;
+    select.value = Array.from(select.options).some(opt => opt.value === currentVal) ? currentVal : '';
 }
 
 function applyCRMFilters() {
     distributeCards();
+    if (document.getElementById('crm-bulk-delete-modal')?.classList.contains('active')) {
+        applyBulkDeleteFilters();
+    }
 }
 
 function clearCRMFilters() {
@@ -573,69 +680,201 @@ function clearCRMFilters() {
     distributeCards();
 }
 
-async function confirmBulkDeleteLeads() {
-    const filteredTickets = getFilteredTickets();
+function toggleCRMFiltersDropdown() {
+    const dropdown = document.getElementById('crm-filters-dropdown');
+    const button = document.querySelector('.crm-toolbar-filter-btn');
+    if (!dropdown) return;
+
+    const isOpen = dropdown.classList.toggle('active');
+    if (button) button.setAttribute('aria-expanded', String(isOpen));
+
+    if (isOpen) {
+        setTimeout(() => document.addEventListener('click', handleCRMFiltersOutsideClick));
+    } else {
+        document.removeEventListener('click', handleCRMFiltersOutsideClick);
+    }
+}
+
+function closeCRMFiltersDropdown() {
+    const dropdown = document.getElementById('crm-filters-dropdown');
+    const button = document.querySelector('.crm-toolbar-filter-btn');
+    if (dropdown) dropdown.classList.remove('active');
+    if (button) button.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('click', handleCRMFiltersOutsideClick);
+}
+
+function handleCRMFiltersOutsideClick(event) {
+    if (event.target.closest('.crm-toolbar-filter-wrap')) return;
+    closeCRMFiltersDropdown();
+}
+
+function closeBulkDeleteLeadsModal() {
+    const modal = document.getElementById('crm-bulk-delete-modal');
+    if (modal) modal.classList.remove('active');
+}
+
+function escapeCRMText(value = '') {
+    return String(value).replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    }[char]));
+}
+
+function getBulkDeleteTicketView(ticket) {
+    const lead = allLeads.find(l => l.id === ticket.chat_id);
+    const metadata = crmData[ticket.id] || {};
+    const phone = ticket.chat_id ? ticket.chat_id.split('@')[0] : 'Sin telefono';
+    const columnId = lead?.crm_status || metadata.columnId || 'UNASSIGNED';
+    const columnTitle = columns.find(c => c.id === columnId)?.title || columnId || 'Sin estado';
+    return {
+        name: lead?.name || ticket.titulo || phone || 'Lead sin nombre',
+        phone,
+        columnTitle
+    };
+}
+
+function syncBulkDeleteFiltersFromCRM() {
+    syncTagOptions('crm-bulk-filter-tag');
+    const bulkTag = document.getElementById('crm-bulk-filter-tag');
+    const bulkFrom = document.getElementById('crm-bulk-filter-date-from');
+    const bulkTo = document.getElementById('crm-bulk-filter-date-to');
+    if (bulkTag) bulkTag.value = document.getElementById('crm-filter-tag')?.value || '';
+    if (bulkFrom) bulkFrom.value = document.getElementById('crm-filter-date-from')?.value || '';
+    if (bulkTo) bulkTo.value = document.getElementById('crm-filter-date-to')?.value || '';
+}
+
+function applyBulkDeleteFilters() {
+    selectedBulkDeleteIds = new Set();
+    renderBulkDeleteList(getBulkDeleteFilteredTickets());
+}
+
+function clearBulkDeleteFilters() {
+    const tagSel = document.getElementById('crm-bulk-filter-tag');
+    const dateFromInp = document.getElementById('crm-bulk-filter-date-from');
+    const dateToInp = document.getElementById('crm-bulk-filter-date-to');
+
+    if (tagSel) tagSel.value = '';
+    if (dateFromInp) dateFromInp.value = '';
+    if (dateToInp) dateToInp.value = '';
+
+    applyBulkDeleteFilters();
+}
+
+function renderBulkDeleteList(tickets = getBulkDeleteFilteredTickets()) {
+    const list = document.getElementById('crm-bulk-delete-list');
+    if (!list) return;
+
+    if (tickets.length === 0) {
+        list.innerHTML = `
+            <div class="crm-bulk-delete-empty">
+                <i class="fas fa-filter"></i>
+                <span>No hay leads para los filtros seleccionados.</span>
+            </div>
+        `;
+        updateBulkDeleteSelectionState();
+        return;
+    }
+
+    list.innerHTML = tickets.map(ticket => {
+        const item = getBulkDeleteTicketView(ticket);
+        const safeId = escapeCRMText(ticket.id);
+        return `
+            <label class="crm-bulk-delete-item">
+                <input class="crm-bulk-delete-checkbox" type="checkbox" value="${safeId}" onchange="window.toggleBulkDeleteLead('${safeId}', this.checked)">
+                <span class="crm-bulk-delete-main">
+                    <strong>${escapeCRMText(item.name)}</strong>
+                    <small>${escapeCRMText(item.phone)} - ${escapeCRMText(item.columnTitle)}</small>
+                </span>
+                <span class="crm-bulk-delete-ref">REF: ${escapeCRMText(ticket.id.slice(-8).toUpperCase())}</span>
+            </label>
+        `;
+    }).join('');
+
+    updateBulkDeleteSelectionState();
+}
+
+function updateBulkDeleteSelectionState() {
+    const count = document.getElementById('crm-bulk-delete-count');
+    if (count) count.textContent = `${selectedBulkDeleteIds.size} seleccionados`;
+
+    const selectAll = document.getElementById('crm-bulk-delete-select-all');
+    const checkboxes = Array.from(document.querySelectorAll('.crm-bulk-delete-checkbox'));
+    if (!selectAll) return;
+
+    const checkedCount = checkboxes.filter(cb => cb.checked).length;
+    selectAll.checked = checkboxes.length > 0 && checkedCount === checkboxes.length;
+    selectAll.indeterminate = checkedCount > 0 && checkedCount < checkboxes.length;
+}
+
+function toggleBulkDeleteLead(ticketId, checked) {
+    if (checked) selectedBulkDeleteIds.add(ticketId);
+    else selectedBulkDeleteIds.delete(ticketId);
+    updateBulkDeleteSelectionState();
+}
+
+function toggleBulkDeleteSelectAll(checked) {
+    const checkboxes = Array.from(document.querySelectorAll('.crm-bulk-delete-checkbox'));
+    checkboxes.forEach(cb => {
+        cb.checked = checked;
+        if (checked) selectedBulkDeleteIds.add(cb.value);
+        else selectedBulkDeleteIds.delete(cb.value);
+    });
+    updateBulkDeleteSelectionState();
+}
+
+function openBulkDeleteLeadsModal() {
+    syncBulkDeleteFiltersFromCRM();
+    const filteredTickets = getBulkDeleteFilteredTickets();
 
     if (filteredTickets.length === 0) {
         if (typeof window.swalAlert === 'function') {
-            window.swalAlert('Atención', 'No hay ningún lead que coincida con los filtros seleccionados para eliminar.', 'warning');
+            window.swalAlert('Atencion', 'No hay leads que coincidan con los filtros seleccionados.', 'warning');
         } else {
-            alert('No hay ningún lead que coincida con los filtros seleccionados.');
+            alert('No hay leads que coincidan con los filtros seleccionados.');
         }
         return;
     }
 
-    const activeTagId = document.getElementById('crm-filter-tag')?.value;
-    const dateFrom = document.getElementById('crm-filter-date-from')?.value;
-    const dateTo = document.getElementById('crm-filter-date-to')?.value;
+    selectedBulkDeleteIds = new Set();
+    renderBulkDeleteList(filteredTickets);
+    const modal = document.getElementById('crm-bulk-delete-modal');
+    if (modal) modal.classList.add('active');
+}
 
-    const tagObj = (botTags || []).find(t => t.id === activeTagId);
-    const tagName = tagObj ? tagObj.name : (activeTagId ? activeTagId : 'Todas');
-
-    const filterSummary = [];
-    if (activeTagId) filterSummary.push(`<strong>Etiqueta:</strong> ${tagName}`);
-    if (dateFrom) filterSummary.push(`<strong>Desde:</strong> ${dateFrom}`);
-    if (dateTo) filterSummary.push(`<strong>Hasta:</strong> ${dateTo}`);
-
-    const filterText = filterSummary.length > 0
-        ? filterSummary.join('<br>')
-        : '<em>Ningún filtro aplicado (Se seleccionaron TODOS los leads)</em>';
+async function confirmBulkDeleteSelectedLeads() {
+    const ticketIds = Array.from(selectedBulkDeleteIds);
+    if (ticketIds.length === 0) {
+        if (typeof window.swalAlert === 'function') {
+            window.swalAlert('Atencion', 'Selecciona al menos un lead para eliminar.', 'warning');
+        } else {
+            alert('Selecciona al menos un lead para eliminar.');
+        }
+        return;
+    }
 
     if (typeof Swal !== 'undefined') {
         const res = await Swal.fire({
-            title: '⚠️ ¿Eliminación Masiva de Leads?',
-            html: `
-                <div style="text-align:left; font-size:0.9rem; line-height:1.5;">
-                    <p style="margin-bottom:12px; color:#ef4444; font-weight:700; font-size:1rem;">
-                        Estás a punto de eliminar permanentemente ${filteredTickets.length} lead(s) del CRM.
-                    </p>
-                    <div style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); padding:12px; border-radius:8px; margin-bottom:15px;">
-                        <span style="font-weight:600; text-transform:uppercase; font-size:0.75rem; color:#94a3b8; display:block; margin-bottom:6px;">Filtros aplicados:</span>
-                        ${filterText}
-                    </div>
-                    <p style="font-size:0.82rem; color:#cbd5e1;">
-                        Esta acción desmarcará estos contactos como leads y eliminará sus tarjetas del CRM. <strong>Esta acción no se puede deshacer.</strong>
-                    </p>
-                </div>
-            `,
+            title: 'Eliminar leads',
+            text: `Se eliminaran ${ticketIds.length} lead(s) seleccionados. Esta accion no se puede deshacer.`,
             icon: 'warning',
             showCancelButton: true,
             confirmButtonColor: '#ef4444',
             cancelButtonColor: '#64748b',
-            confirmButtonText: `<i class="fas fa-trash-alt"></i> Sí, eliminar ${filteredTickets.length} leads`,
+            confirmButtonText: 'Eliminar',
             cancelButtonText: 'Cancelar'
         });
 
         if (!res.isConfirmed) return;
     } else {
-        if (!confirm(`¿Eliminar masivamente ${filteredTickets.length} leads? Esta acción no se puede deshacer.`)) return;
+        if (!confirm(`Eliminar ${ticketIds.length} lead(s)? Esta accion no se puede deshacer.`)) return;
     }
 
-    showToast(`Eliminando ${filteredTickets.length} leads...`, 'info');
+    showToast(`Eliminando ${ticketIds.length} leads...`, 'info');
 
     try {
-        const ticketIds = filteredTickets.map(t => t.id);
-
         const response = await fetch(`/api/backoffice/crm/bulk-delete-leads?token=${activeToken}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -644,7 +883,8 @@ async function confirmBulkDeleteLeads() {
 
         const data = await response.json();
         if (data.success) {
-            showToast(`Se eliminaron ${data.deletedCount || filteredTickets.length} leads correctamente`, 'success');
+            closeBulkDeleteLeadsModal();
+            showToast(`Se eliminaron ${data.deletedCount || ticketIds.length} leads correctamente`, 'success');
             await syncCRM();
         } else {
             throw new Error(data.error || 'Error al eliminar');
@@ -654,7 +894,6 @@ async function confirmBulkDeleteLeads() {
         showToast('Error al eliminar leads: ' + e.message, 'error');
     }
 }
-
 function renderLeadTags() {
     const ticket = allTickets.find(t => t.id === currentEditId);
     if (!ticket) return;
@@ -1215,6 +1454,9 @@ function onNewMessage(payload) {
 }
 
 window.destroyCRM = function() {
+    isSyncingCRM = false;
+    queuedSyncCRM = false;
+    crmViewRunId++;
     console.log('🧹 [CRM] Limpiando recursos y socket listeners');
     if (window.crmSocket) {
         window.crmSocket.off('contact_updated', onContactUpdated);

@@ -36,8 +36,7 @@
             { label: 'Webchat', icon: 'fas fa-headset', route: '/webchat', requires: 'backoffice' },
         ],
         integrations: [
-            { label: 'CRM', icon: 'fas fa-id-card-clip', route: '/crm', dotId: 'dot-crm', requires: 'crm' },
-            { label: 'Tareas', icon: 'fas fa-calendar-check', route: '/crm-tareas', dotId: 'dot-tareas', requires: 'crm' },
+            { label: 'CRM & Tareas', icon: 'fas fa-id-card-clip', route: '/crm', matchRoutes: ['/crm-tareas'], dotId: 'dot-crm', requires: 'crm' },
             { label: 'Meta', icon: 'fab fa-meta', route: '/meta', requires: 'backoffice' },
             { label: 'Base de Datos', icon: 'fas fa-database', route: '/database' },
             {
@@ -274,7 +273,12 @@
         const sidemenu = getSideMenuElement();
         const button = document.getElementById('mobile-sidemenu-toggle');
         document.body.classList.remove('mobile-sidemenu-open');
-        if (button) button.setAttribute('aria-expanded', 'false');
+        if (button) {
+            button.setAttribute('aria-expanded', 'false');
+            button.setAttribute('aria-label', 'Abrir menu');
+            const icon = button.querySelector('i');
+            if (icon) icon.className = 'fas fa-bars';
+        }
         if (sidemenu && isMobileSideMenuViewport()) {
             sidemenu.classList.remove('is-expanded');
         }
@@ -293,8 +297,21 @@
         const sidemenu = getSideMenuElement();
         const button = document.getElementById('mobile-sidemenu-toggle');
         document.body.classList.add('mobile-sidemenu-open');
-        if (button) button.setAttribute('aria-expanded', 'true');
+        if (button) {
+            button.setAttribute('aria-expanded', 'true');
+            button.setAttribute('aria-label', 'Cerrar menu');
+            const icon = button.querySelector('i');
+            if (icon) icon.className = 'fas fa-times';
+        }
         if (sidemenu) sidemenu.classList.add('is-expanded');
+    }
+
+    function toggleMobileSideMenu(e) {
+        if (document.body.classList.contains('mobile-sidemenu-open')) {
+            closeMobileSideMenu(e);
+            return;
+        }
+        openMobileSideMenu(e);
     }
 
     function navigateFromSideMenu(route) {
@@ -462,6 +479,7 @@
     window.refreshDesktopLineSelector = refreshDesktopLineSelector;
     window.openMobileSideMenu = openMobileSideMenu;
     window.closeMobileSideMenu = closeMobileSideMenu;
+    window.toggleMobileSideMenu = toggleMobileSideMenu;
     window.navigateFromSideMenu = navigateFromSideMenu;
     window.logout = logout;
 

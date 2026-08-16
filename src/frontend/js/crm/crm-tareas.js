@@ -18,6 +18,8 @@ let botTags = [];
 let isSyncingCRM = false;
 let queuedSyncCRM = false;
 let socketSyncTimer = null;
+let hasLoadedCRMData = false;
+let crmTareasViewRunId = 0;
 let standardColumns = [
     { id: 'UNASSIGNED', title: 'Leads Nuevos', fixed: true },
     { id: 'contactado', title: 'Contactado' },
@@ -26,6 +28,13 @@ let standardColumns = [
     { id: 'cierre', title: 'Cierre' }
 ];
 
+function isCurrentCRMTareasView() {
+    return window.location.pathname === '/crm-tareas' && Boolean(document.querySelector('[data-crm-view="tareas"] #kanban-board-inner'));
+}
+
+function isCurrentCRMTareasRun(runId) {
+    return runId === crmTareasViewRunId && isCurrentCRMTareasView();
+}
 // --- Helper Date Formatting ---
 function getLocalDateString(date) {
     const yyyy = date.getFullYear();
@@ -36,6 +45,7 @@ function getLocalDateString(date) {
 
 // --- Inicialización ---
 async function _initCRMTareasPage() {
+    const runId = ++crmTareasViewRunId;
     console.log('🚀 Iniciando CRM Tareas como:', userName, `(${userRole})`);
     
     // Mostrar botones de admin si corresponde
@@ -45,21 +55,26 @@ async function _initCRMTareasPage() {
     }
     const assigneeSection = document.getElementById('assignee-section');
     if (assigneeSection) assigneeSection.style.display = 'block';
+    renderBoard();
     
     // Cargar equipo para los selects (para todos los usuarios)
     await loadTeam();
+    if (!isCurrentCRMTareasRun(runId)) return;
 
     // Cargar etiquetas
     await fetchTags();
+    if (!isCurrentCRMTareasRun(runId)) return;
 
     // Cargar columnas y campos dinámicos
     await Promise.all([
         loadCRMState(),
         window.fetchCRMConfig()
     ]);
+    if (!isCurrentCRMTareasRun(runId)) return;
     
     // Sincronizar datos y renderizar columnas
     await syncCRM();
+    if (!isCurrentCRMTareasRun(runId)) return;
 
     // Verificamos si hay un ticket pendiente de abrir (viniendo del Backoffice)
     const pendingId = localStorage.getItem('pendingTicket');
@@ -144,6 +159,7 @@ async function syncCRM(options = {}) {
         allLeads = Array.isArray(leadsData) ? leadsData : [];
         
         const ticketsRaw = await resTickets.json();
+        if (!isCurrentCRMTareasView()) return;
         const ticketsData = Array.isArray(ticketsRaw) ? ticketsRaw : [];
         
         allTickets = ticketsData.filter(t => t.tipo === 'Nuevo Lead' && t.estado !== 'Cerrado');
@@ -151,28 +167,41 @@ async function syncCRM(options = {}) {
 
         const resSettings = await fetch(`/api/backoffice/get-setting?key=CRM_METADATA&token=${activeToken}`);
         const setJson = await resSettings.json();
+        if (!isCurrentCRMTareasView()) return;
         if (setJson && setJson.success && setJson.value) {
             crmData = JSON.parse(setJson.value);
         } else {
             crmData = {};
         }
 
+        hasLoadedCRMData = true;
         renderBoard();
+        if (!isCurrentCRMTareasView()) return;
     } catch (e) {
         console.error(e);
+        hasLoadedCRMData = true;
+        renderBoard();
+        if (!isCurrentCRMTareasView()) return;
         if (!silent) showToast('Error al sincronizar datos', 'error');
     } finally {
         isSyncingCRM = false;
-        if (queuedSyncCRM) {
+        if (isCurrentCRMTareasView() && queuedSyncCRM) {
             queuedSyncCRM = false;
             syncCRM({ silent: true });
+        } else {
+            queuedSyncCRM = false;
         }
     }
 }
 
 function renderBoard() {
+    if (!isCurrentCRMTareasView()) return;
     const board = document.getElementById('kanban-board-inner');
     if (!board) return;
+    if (!hasLoadedCRMData) {
+        renderCRMTareasSkeletonBoard(board);
+        return;
+    }
     board.innerHTML = '';
     const cols = [
         { id: 'overdue',  icon: 'fa-calendar-times',  color: '#ef4444', title: 'Vencidas' },
@@ -211,6 +240,49 @@ function renderBoard() {
     });
     distributeCards();
     _initKanbanScrollBehaviorTareas();
+}
+
+function renderCRMTareasSkeletonBoard(board) {
+    const cols = [
+        { id: 'overdue', icon: 'fa-calendar-times', color: '#ef4444', title: 'Vencidas' },
+        { id: 'today', icon: 'fa-calendar-day', color: '#f59e0b', title: 'Hoy' },
+        { id: 'tomorrow', icon: 'fa-calendar-minus', color: '#3b82f6', title: 'Manana' },
+        { id: 'week', icon: 'fa-calendar-week', color: '#10b981', title: 'Esta Semana' },
+        { id: 'later', icon: 'fa-calendar-plus', color: '#8b5cf6', title: 'Mas Adelante' },
+        { id: 'nodate', icon: 'fa-calendar-xmark', color: '#6b7280', title: 'Sin Fecha' },
+    ];
+    board.innerHTML = cols.map((col) => {
+        const savedWidth = localStorage.getItem('col_width_' + col.id);
+        const widthStyle = savedWidth ? ` style="width:${savedWidth};"` : '';
+        return `
+        <div class="kanban-column-wrapper crm-skeleton-column-wrapper" data-id="${col.id}"${widthStyle}>
+            <div class="kanban-column crm-skeleton-column" data-id="${col.id}">
+                <div class="column-header">
+                    <div class="column-title-group">
+                        <i class="fas ${col.icon}" style="color:${col.color}; flex-shrink:0;"></i>
+                        <span class="column-title">${col.title}</span>
+                    </div>
+                    <span class="column-badge skeleton-badge"></span>
+                </div>
+                <div class="kanban-cards crm-skeleton-cards">
+                    ${Array.from({ length: 2 }).map(() => `
+                        <div class="kanban-card crm-skeleton-card">
+                            <div class="crm-skeleton-line crm-skeleton-ref"></div>
+                            <div class="crm-skeleton-pill"></div>
+                            <div class="crm-skeleton-line crm-skeleton-title"></div>
+                            <div class="crm-skeleton-line crm-skeleton-phone"></div>
+                            <div class="crm-skeleton-footer">
+                                <div class="crm-skeleton-button"></div>
+                                <div class="crm-skeleton-icon"></div>
+                                <div class="crm-skeleton-icon"></div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+    }).join('');
 }
 
 function distributeCards() {
@@ -848,6 +920,9 @@ function onTareasTicketUpdated(payload) {
 }
 
 window.destroyCRMTareas = function() {
+    isSyncingCRM = false;
+    queuedSyncCRM = false;
+    crmTareasViewRunId++;
     console.log('🧹 [CRM Tareas] Limpiando recursos y socket listeners');
     if (window.crmTareasSocket) {
         window.crmTareasSocket.off('contact_updated', onTareasContactUpdated);

@@ -1125,3 +1125,45 @@ Una plantilla podia salir desde otra linea, guardarse en un servicio distinto o 
 - Problema: despues del redisenio visual de Conexion & Chatbot, el boton de generar QR podia inferir mal si debia iniciar Baileys principal o Baileys de grupos usando el texto visible del boton. En proyectos con Meta como proveedor principal, eso podia intentar iniciar el proveedor equivocado y no generar QR real.
 - Arreglo: el frontend ahora guarda explicitamente el target de vinculacion (primary/groups), envia projectId y serviceId al endpoint de inicio, y consulta el estado con esos mismos parametros.
 - Impacto: Meta sigue leyendo su configuracion por proyecto/servicio, y Baileys inicia el proveedor correcto para QR o codigo sin depender del texto/render visual.
+
+## 29. CRM/Tareas: navegacion rapida sin render cruzado
+
+Problema:
+Al alternar rapido entre CRM y Ver tareas, una inicializacion asincronica de la vista anterior podia terminar tarde y renderizar su tablero dentro de la vista nueva.
+
+Causa:
+CRM y Tareas comparten contenedores como `#kanban-board-inner`; sin una marca de vista activa ni invalidacion de ejecuciones pendientes, los `syncCRM()` tardios podian escribir despues de navegar.
+
+Arreglo:
+Cada vista ahora marca su contenedor con `data-crm-view`, usa un identificador de ejecucion activo y valida la ruta/contenedor antes de seguir cargando, sincronizar o renderizar. Al destruir una vista se invalidan ejecuciones y sincronizaciones pendientes.
+
+Que ocasionaba sin el arreglo:
+Se podia ver por un instante el tablero de Tareas en CRM, o el de CRM en Tareas, especialmente al cambiar rapido antes de que terminaran los fetchs.
+
+## 30. CRM: cabecera compacta con filtros y eliminacion selectiva
+
+Problema:
+La mini cabecera del CRM mezclaba filtros, contador y eliminacion masiva en una sola fila larga, ocupando demasiado espacio y dejando la accion de borrar demasiado directa.
+
+Causa:
+Los filtros estaban siempre visibles y el boton de eliminacion borraba todos los leads filtrados despues de una sola confirmacion general.
+
+Arreglo:
+Se movieron los filtros a un modal estandarizado, se compacto la cabecera a `Filtros | Eliminar - Mostrando leads` y la eliminacion ahora abre un modal donde se seleccionan uno, varios o todos los leads visibles antes de confirmar.
+
+Que ocasionaba sin el arreglo:
+La cabecera se volvia dificil de escanear y era mas riesgoso eliminar leads por accidente al trabajar con filtros activos.
+
+## 31. CRM: filtros desplegables y eliminacion filtrable
+
+Problema:
+El filtro principal abria un modal demasiado pesado para una accion frecuente y la eliminacion selectiva solo tomaba los filtros actuales sin permitir ajustar el rango dentro del flujo de borrado.
+
+Causa:
+Los controles de etiqueta/fecha estaban encapsulados en un modal independiente y el modal de eliminacion no tenia filtros propios antes de seleccionar leads.
+
+Arreglo:
+Se cambio Filtros a un desplegable compacto en la cabecera y se agregaron filtros por etiqueta, fecha desde y fecha hasta dentro de Eliminar leads. El listado de eliminacion ahora se recalcula sin cerrar el modal y conserva seleccion solo para los resultados visibles.
+
+Que ocasionaba sin el arreglo:
+El usuario tenia que navegar mas de lo necesario para filtrar y podia necesitar cerrar/reabrir la eliminacion para ajustar que leads borrar.

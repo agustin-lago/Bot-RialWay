@@ -5,15 +5,19 @@ window.crmView = {
     getHTML() {
         const crmModals = _getCRMModals();
         return `
-        <div class="crm-main-container kanban-wrapper relative" style="z-index:10;">
+        <div class="crm-main-container kanban-wrapper relative" data-crm-view="crm" style="z-index:10;">
             ${window.renderSectionTabs ? window.renderSectionTabs('integrations') : ''}
 
             <div class="kanban-header animate-fade">
                 <div class="header-info">
-                    <h1><i class="fas fa-layer-group kanban-header-icon"></i> CRM ${window.BOT_NAME || ''}</h1>
-                    <p>Gestion visual de oportunidades y seguimiento de clientes.</p>
+                    <h1><i class="fas fa-layer-group kanban-header-icon"></i> CRM</h1>
+                    <p>Gestiona oportunidades, clientes y seguimiento.</p>
                 </div>
                 <div class="header-actions">
+                    <div class="crm-subview-switch" role="tablist" aria-label="Vistas CRM">
+                        <button type="button" class="crm-subview-btn active" onclick="window.navigate('/crm')" role="tab" aria-selected="true">CRM</button>
+                        <button type="button" class="crm-subview-btn" onclick="window.navigate('/crm-tareas')" role="tab" aria-selected="false">Ver tareas</button>
+                    </div>
                     <button class="btn btn-primary" onclick="window.openNewLeadModal()">
                         <i class="fas fa-plus"></i> Crear Lead
                     </button>
@@ -36,39 +40,48 @@ window.crmView = {
                 </div>
             </div>
 
-            <!-- Toolbar de Filtros CRM y Eliminación Masiva -->
-            <div class="crm-filter-bar animate-fade">
-                <div class="crm-filter-group-wrap">
-                    <div class="crm-filter-group">
-                        <span class="crm-filter-label"><i class="fas fa-tag crm-filter-icon"></i> Etiqueta:</span>
-                        <select id="crm-filter-tag" class="crm-filter-input" onchange="window.applyCRMFilters()">
-                            <option value="">Todas las etiquetas</option>
-                        </select>
+            <!-- Toolbar compacta CRM -->
+            <div class="crm-filter-bar crm-filter-bar-compact animate-fade">
+                <div class="crm-toolbar-filter-wrap">
+                    <button class="btn-secondary btn-sm crm-toolbar-filter-btn" onclick="window.toggleCRMFiltersDropdown()" title="Abrir filtros" aria-expanded="false" aria-controls="crm-filters-dropdown">
+                        <i class="fas fa-filter"></i> Filtros
+                    </button>
+                    <div id="crm-filters-dropdown" class="crm-filters-dropdown">
+                        <div class="crm-filter-dropdown-grid">
+                            <div class="modal-section">
+                                <label><i class="fas fa-tag"></i> Etiqueta</label>
+                                <select id="crm-filter-tag" class="crm-input" onchange="window.applyCRMFilters()">
+                                    <option value="">Todas las etiquetas</option>
+                                </select>
+                            </div>
+                            <div class="modal-section">
+                                <label><i class="fas fa-calendar-alt"></i> Desde</label>
+                                <input type="date" id="crm-filter-date-from" class="crm-input" onchange="window.applyCRMFilters()">
+                            </div>
+                            <div class="modal-section">
+                                <label><i class="fas fa-calendar-alt"></i> Hasta</label>
+                                <input type="date" id="crm-filter-date-to" class="crm-input" onchange="window.applyCRMFilters()">
+                            </div>
+                        </div>
+                        <div class="crm-filter-dropdown-actions">
+                            <button type="button" class="btn-secondary btn-sm" onclick="window.clearCRMFilters()"><i class="fas fa-undo"></i> Limpiar</button>
+                            <button type="button" class="btn btn-primary btn-sm" onclick="window.closeCRMFiltersDropdown()"><i class="fas fa-check"></i> Aplicar</button>
+                        </div>
                     </div>
-                    <div class="crm-filter-group">
-                        <span class="crm-filter-label"><i class="fas fa-calendar-alt crm-filter-icon"></i> Desde:</span>
-                        <input type="date" id="crm-filter-date-from" class="crm-filter-input" onchange="window.applyCRMFilters()">
-                    </div>
-                    <div class="crm-filter-group">
-                        <span class="crm-filter-label"><i class="fas fa-calendar-alt crm-filter-icon"></i> Hasta:</span>
-                        <input type="date" id="crm-filter-date-to" class="crm-filter-input" onchange="window.applyCRMFilters()">
-                    </div>
-                    <button class="btn-secondary btn-sm" onclick="window.clearCRMFilters()" title="Limpiar filtros">
-                        <i class="fas fa-undo"></i> Limpiar
+                </div>
+                <div class="crm-filter-actions crm-filter-actions-compact">
+                    <button class="btn-danger btn-sm crm-filter-danger" onclick="window.openBulkDeleteLeadsModal()">
+                        <i class="fas fa-trash-alt"></i> Eliminar
                     </button>
                     <span id="crm-filtered-count-badge" class="crm-filtered-badge">
                         Mostrando todos los leads
                     </span>
                 </div>
-                <div class="crm-filter-actions">
-                    <button class="btn-danger btn-sm crm-filter-danger" onclick="window.confirmBulkDeleteLeads()">
-                        <i class="fas fa-trash-alt"></i> Eliminación Masiva
-                    </button>
-                </div>
             </div>
-
             <div id="kanban-board" class="kanban-scroll-area">
-                <div class="kanban-board-inner" id="kanban-board-inner"></div>
+                <div class="kanban-board-inner" id="kanban-board-inner">
+                    ${window.renderCRMSkeletonHTML ? window.renderCRMSkeletonHTML('crm') : ''}
+                </div>
             </div>
         </div>
         ${crmModals}`;
@@ -102,9 +115,108 @@ window._closeCRMMenu = function() {
     if (d) d.classList.remove('open');
 };
 
+window.renderCRMSkeletonHTML = window.renderCRMSkeletonHTML || function(type = 'crm') {
+    const cols = type === 'tareas'
+        ? [
+            { id: 'overdue', icon: 'fa-calendar-times', color: '#ef4444', title: 'Vencidas' },
+            { id: 'today', icon: 'fa-calendar-day', color: '#f59e0b', title: 'Hoy' },
+            { id: 'tomorrow', icon: 'fa-calendar-minus', color: '#3b82f6', title: 'Manana' },
+            { id: 'week', icon: 'fa-calendar-week', color: '#10b981', title: 'Esta Semana' },
+            { id: 'later', icon: 'fa-calendar-plus', color: '#8b5cf6', title: 'Mas Adelante' },
+            { id: 'nodate', icon: 'fa-calendar-xmark', color: '#6b7280', title: 'Sin Fecha' },
+        ]
+        : [
+            { id: 'UNASSIGNED', icon: 'fa-star', color: '#f59e0b', title: 'Leads Nuevos' },
+            { id: 'contactado', title: 'Contactado' },
+            { id: 'negociacion', title: 'En Negociacion' },
+            { id: 'propuesta', title: 'Propuesta Enviada' },
+            { id: 'cierre', title: 'Cierre' },
+        ];
+    return cols.map((col) => {
+        const savedWidth = col.id ? localStorage.getItem('col_width_' + col.id) : '';
+        const widthStyle = savedWidth ? ` style="width:${savedWidth};"` : '';
+        const titleContent = type === 'crm'
+            ? '<span class="crm-skeleton-line crm-skeleton-column-title"></span>'
+            : `<span class="column-title">${col.title}</span>`;
+        return `
+        <div class="kanban-column-wrapper crm-skeleton-column-wrapper" data-id="${col.id || ''}"${widthStyle}>
+            <div class="kanban-column crm-skeleton-column" data-id="${col.id || ''}">
+                <div class="column-header">
+                    <div class="column-title-group">
+                        ${col.icon ? `<i class="fas ${col.icon}" style="color:${col.color}; flex-shrink:0;"></i>` : ''}
+                        ${titleContent}
+                    </div>
+                    <span class="column-badge skeleton-badge"></span>
+                </div>
+                <div class="kanban-cards crm-skeleton-cards">
+                    ${Array.from({ length: 2 }).map(() => `
+                        <div class="kanban-card crm-skeleton-card">
+                            <div class="crm-skeleton-line crm-skeleton-ref"></div>
+                            <div class="crm-skeleton-pill"></div>
+                            <div class="crm-skeleton-line crm-skeleton-title"></div>
+                            <div class="crm-skeleton-line crm-skeleton-phone"></div>
+                            <div class="crm-skeleton-footer">
+                                <div class="crm-skeleton-button"></div>
+                                <div class="crm-skeleton-icon"></div>
+                                <div class="crm-skeleton-icon"></div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+    }).join('');
+};
+
 // Modales compartidos entre crm.view.js y crm-tareas.view.js
 function _getCRMModals() {
     return `
+    <!-- Modal Eliminacion Selectiva CRM -->
+    <div id="crm-bulk-delete-modal" class="modal-overlay">
+        <div class="modal-content modal-content-md animate-pop-in">
+            <div class="modal-header-top">
+                <div>
+                    <h3><i class="fas fa-trash-alt modal-h3-icon danger"></i> Eliminar leads</h3>
+                    <p>Selecciona los leads visibles que queres eliminar.</p>
+                </div>
+                <button class="btn-close-modal" onclick="window.closeBulkDeleteLeadsModal()"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="crm-bulk-filter-panel">
+                    <div class="crm-bulk-filter-grid">
+                        <div class="modal-section">
+                            <label><i class="fas fa-tag"></i> Etiqueta</label>
+                            <select id="crm-bulk-filter-tag" class="crm-input" onchange="window.applyBulkDeleteFilters()">
+                                <option value="">Todas las etiquetas</option>
+                            </select>
+                        </div>
+                        <div class="modal-section">
+                            <label><i class="fas fa-calendar-alt"></i> Desde</label>
+                            <input type="date" id="crm-bulk-filter-date-from" class="crm-input" onchange="window.applyBulkDeleteFilters()">
+                        </div>
+                        <div class="modal-section">
+                            <label><i class="fas fa-calendar-alt"></i> Hasta</label>
+                            <input type="date" id="crm-bulk-filter-date-to" class="crm-input" onchange="window.applyBulkDeleteFilters()">
+                        </div>
+                    </div>
+                    <button type="button" class="btn-secondary btn-sm" onclick="window.clearBulkDeleteFilters()"><i class="fas fa-undo"></i> Limpiar filtros</button>
+                </div>
+                <div class="crm-bulk-delete-toolbar">
+                    <label class="crm-bulk-select-all">
+                        <input type="checkbox" id="crm-bulk-delete-select-all" onchange="window.toggleBulkDeleteSelectAll(this.checked)">
+                        <span>Seleccionar todos</span>
+                    </label>
+                    <span id="crm-bulk-delete-count" class="crm-bulk-delete-count">0 seleccionados</span>
+                </div>
+                <div id="crm-bulk-delete-list" class="crm-bulk-delete-list"></div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn-secondary" onclick="window.closeBulkDeleteLeadsModal()">Cancelar</button>
+                <button type="button" class="btn-danger" onclick="window.confirmBulkDeleteSelectedLeads()"><i class="fas fa-trash-alt"></i> Eliminar seleccionados</button>
+            </div>
+        </div>
+    </div>
     <!-- Modal Editar Lead -->
     <div id="card-modal" class="modal-overlay">
         <div class="modal-content modal-content-md animate-pop-in">

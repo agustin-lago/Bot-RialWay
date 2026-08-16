@@ -20,15 +20,19 @@ window.crmTareasView = {
             .kanban-column[data-id="nodate"]   .column-badge { background: rgba(107,114,128,0.2); color: #9ca3af; }
         </style>
 
-        <div class="crm-main-container kanban-wrapper relative" style="z-index:10;">
+        <div class="crm-main-container kanban-wrapper relative" data-crm-view="tareas" style="z-index:10;">
             ${window.renderSectionTabs ? window.renderSectionTabs('integrations') : ''}
 
             <div class="kanban-header animate-fade">
                 <div class="header-info">
-                    <h1><i class="fas fa-calendar-check kanban-header-icon"></i> Tareas y Vencimientos</h1>
-                    <p>${window.BOT_NAME || ''} - Agenda de contactos por fecha de seguimiento</p>
+                    <h1><i class="fas fa-calendar-check kanban-header-icon"></i> Tareas y vencimientos</h1>
+                    <p>Seguimiento de tareas y fechas pendientes.</p>
                 </div>
                 <div class="header-actions">
+                    <div class="crm-subview-switch" role="tablist" aria-label="Vistas CRM">
+                        <button type="button" class="crm-subview-btn" onclick="window.navigate('/crm')" role="tab" aria-selected="false">CRM</button>
+                        <button type="button" class="crm-subview-btn active" onclick="window.navigate('/crm-tareas')" role="tab" aria-selected="true">Ver tareas</button>
+                    </div>
                     <button class="btn btn-primary" onclick="window.openNewLeadModal()">
                         <i class="fas fa-plus"></i> Crear Lead
                     </button>
@@ -49,7 +53,9 @@ window.crmTareasView = {
             </div>
 
             <div id="kanban-board" class="kanban-scroll-area">
-                <div class="kanban-board-inner" id="kanban-board-inner"></div>
+                <div class="kanban-board-inner" id="kanban-board-inner">
+                    ${window.renderCRMSkeletonHTML ? window.renderCRMSkeletonHTML('tareas') : ''}
+                </div>
             </div>
         </div>
         ${modals}`;
