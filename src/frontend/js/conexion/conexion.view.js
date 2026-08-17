@@ -74,8 +74,8 @@ window.conexionView = {
                                                 onload="this.style.display='block';document.getElementById('qr-empty-message').style.display='none'"
                                                 onerror="this.style.display='none';document.getElementById('qr-empty-message').style.display='block'">
                                             <p id="qr-empty-message" class="qr-error-msg" style="display:block;">Genera un QR o solicita un codigo para iniciar la vinculacion.</p>
+                                            <div id="pairing-code-container" class="conexion-pairing-code" style="display:none;"></div>
                                         </div>
-                                        <div id="pairing-code-container" class="conexion-pairing-code" style="display:none;"></div>
                                     </div>
                                     <p class="info-text mt-4 text-xs">La pagina se actualizara automaticamente cuando estes vinculado.</p>
                                 </div>
