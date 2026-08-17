@@ -490,7 +490,7 @@ export const processBulkTemplate = async (req: any, res: any) => {
         const paramKeys = allKeys.filter(k => k.toLowerCase() !== 'phone');
 
         // Determinar proveedor y obtener detalles de la plantilla
-        const provider = (adapterProvider.constructor.name === 'MetaCloudProvider') ? adapterProvider : groupProvider;
+        const provider = (adapterProvider && typeof adapterProvider.sendTemplate === 'function') ? adapterProvider : groupProvider;
         const templates = await provider.getTemplates();
         const template = templates.find((t: any) => t.name === templateName);
         if (!template) throw new Error("Plantilla no encontrada al procesar envÃ­o masivo.");
@@ -2892,7 +2892,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const { templateName } = req.params;
             const activeAdapter = getAdapterProvider();
             const activeGroup = getGroupProvider();
-            const provider = (activeAdapter && activeAdapter.constructor.name === 'MetaCloudProvider') ? activeAdapter : activeGroup;
+            const provider = (activeAdapter && typeof activeAdapter.getTemplates === 'function') ? activeAdapter : activeGroup;
             if (!provider || typeof provider.getTemplates !== 'function') {
                 return res.status(400).json({ success: false, error: 'Proveedor Meta no disponible' });
             }
@@ -3094,7 +3094,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
             const activeAdapter = getAdapterProvider();
             const activeGroup = getGroupProvider();
-            const provider = (activeAdapter && activeAdapter.constructor.name === 'MetaCloudProvider') ? activeAdapter : activeGroup;
+            const provider = (activeAdapter && typeof activeAdapter.sendTemplate === 'function') ? activeAdapter : activeGroup;
             if (!provider || typeof provider.sendTemplate !== 'function') {
                 return res.status(400).json({ success: false, error: 'El proveedor WhatsApp configurado no soporta plantillas de Meta.' });
             }
