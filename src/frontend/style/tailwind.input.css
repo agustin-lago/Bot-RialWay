@@ -25,6 +25,8 @@
 @import './modules/views/webchat.css';
 @import './modules/views/meta.css';
 @import './modules/views/import-tools.css';
+@import './modules/views/login.css';
+@import './modules/shared/notifications.css';
 @import './modules/shared/tags.css';
 @import './modules/shared/toast.css';
 @import './modules/shared/animations.css';

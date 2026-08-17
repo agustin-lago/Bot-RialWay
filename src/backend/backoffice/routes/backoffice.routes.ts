@@ -2666,7 +2666,9 @@ export const registerBackofficeRoutes = (app: any) => {
             let wabaId = null;
             let token = null;
 
-            const provider = (adapterProvider && adapterProvider.constructor.name === 'MetaCloudProvider') ? adapterProvider : groupProvider;
+            const activeAdapter = getAdapterProvider();
+            const activeGroup = getGroupProvider();
+            const provider = (activeAdapter && activeAdapter.constructor.name === 'MetaCloudProvider') ? activeAdapter : activeGroup;
             if (provider && provider.constructor.name === 'MetaCloudProvider') {
                 wabaId = provider.config.waba_id;
                 token = provider.config.access_token;
@@ -2702,7 +2704,9 @@ export const registerBackofficeRoutes = (app: any) => {
             
             let token = null;
 
-            const provider = (adapterProvider && adapterProvider.constructor.name === 'MetaCloudProvider') ? adapterProvider : groupProvider;
+            const activeAdapter = getAdapterProvider();
+            const activeGroup = getGroupProvider();
+            const provider = (activeAdapter && activeAdapter.constructor.name === 'MetaCloudProvider') ? activeAdapter : activeGroup;
             if (provider && provider.constructor.name === 'MetaCloudProvider') {
                 token = provider.config.access_token;
             } else {
@@ -2763,7 +2767,9 @@ export const registerBackofficeRoutes = (app: any) => {
                 return res.status(400).json({ success: false, error: 'Faltan campos obligatorios para crear la plantilla.' });
             }
 
-            const provider = (adapterProvider.constructor.name === 'MetaCloudProvider') ? adapterProvider : groupProvider;
+            const activeAdapter = getAdapterProvider();
+            const activeGroup = getGroupProvider();
+            const provider = (activeAdapter && activeAdapter.constructor.name === 'MetaCloudProvider') ? activeAdapter : activeGroup;
             if (!provider || typeof provider.createTemplate !== 'function') {
                 return res.status(400).json({ success: false, error: 'Proveedor Meta no configurado o no soporta creación.' });
             }
@@ -2884,7 +2890,9 @@ export const registerBackofficeRoutes = (app: any) => {
             const serviceId = resolveServiceId(req);
             await syncMetaProvider(projectId, serviceId);
             const { templateName } = req.params;
-            const provider = (adapterProvider.constructor.name === 'MetaCloudProvider') ? adapterProvider : groupProvider;
+            const activeAdapter = getAdapterProvider();
+            const activeGroup = getGroupProvider();
+            const provider = (activeAdapter && activeAdapter.constructor.name === 'MetaCloudProvider') ? activeAdapter : activeGroup;
             if (!provider || typeof provider.getTemplates !== 'function') {
                 return res.status(400).json({ success: false, error: 'Proveedor Meta no disponible' });
             }
@@ -3084,7 +3092,9 @@ export const registerBackofficeRoutes = (app: any) => {
             }
             const targetJid = String(rawTarget).includes('@') ? rawTarget : `${targetPhone}@s.whatsapp.net`;
 
-            const provider = (adapterProvider.constructor.name === 'MetaCloudProvider') ? adapterProvider : groupProvider;
+            const activeAdapter = getAdapterProvider();
+            const activeGroup = getGroupProvider();
+            const provider = (activeAdapter && activeAdapter.constructor.name === 'MetaCloudProvider') ? activeAdapter : activeGroup;
             if (!provider || typeof provider.sendTemplate !== 'function') {
                 return res.status(400).json({ success: false, error: 'El proveedor WhatsApp configurado no soporta plantillas de Meta.' });
             }
@@ -3321,7 +3331,9 @@ export const registerBackofficeRoutes = (app: any) => {
 
             // 3. Procesar envíos en segundo plano
             (async () => {
-                const provider = (adapterProvider.constructor.name === 'MetaCloudProvider') ? adapterProvider : groupProvider;
+                const activeAdapter = getAdapterProvider();
+            const activeGroup = getGroupProvider();
+            const provider = (activeAdapter && activeAdapter.constructor.name === 'MetaCloudProvider') ? activeAdapter : activeGroup;
                 const templates = await provider.getTemplates();
                 const template = templates.find((t: any) => t.name === templateName);
                 if (!template) {
@@ -5569,7 +5581,11 @@ Hemos recibido tu pago con Ã©xito.
             }
 
             const ok = await depsHistoryHandler.markNotificationsAsRead(projectId, serviceId, ids);
-            res.json({ success: ok });
+            let unread_notifications_count = 0;
+            if (ok) {
+                unread_notifications_count = await depsHistoryHandler.getUnreadNotificationsCount(projectId, serviceId);
+            }
+            res.json({ success: ok, unread_notifications_count });
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });
         }

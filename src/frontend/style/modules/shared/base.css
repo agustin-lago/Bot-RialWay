@@ -75,9 +75,24 @@
     background: rgba(0, 153, 255, 0.38);
   }
 
-  /* Password reveal eye icon â€” dark mode */
+  /* Password reveal eye icon — dark mode */
   [data-theme="dark"] input[type="password"]::-ms-reveal,
   [data-theme="dark"] input[type="password"]::-webkit-credentials-auto-fill-button {
     filter: invert(1);
+  }
+
+  /* Previene auto-zoom en iOS en todos los inputs de la app */
+  @media (max-width: 1024px) {
+    input[type="text"],
+    input[type="email"],
+    input[type="number"],
+    input[type="password"],
+    input[type="search"],
+    input[type="tel"],
+    input[type="url"],
+    textarea,
+    select {
+      font-size: 16px !important;
+    }
   }
 }
