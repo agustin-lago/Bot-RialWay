@@ -556,7 +556,9 @@ async function fetchStatus() {    try {
             if (groupStatus.active) {
                 groupStatusEl.textContent = 'Grupos: Baileys';
                 groupStatusEl.style.color = '#10b981';
-                hideQrPresentation();
+                if (!data.adapter?.qr && !data.adapter?.pairingCode) {
+                    hideQrPresentation();
+                }
                 clearQrRequestPending();
                 setConnectionButtonsBusy(false);
             } else if (groupStatus.qr) {
@@ -573,7 +575,9 @@ async function fetchStatus() {    try {
                     setConnectionButtonsBusy(true);
                 } else {
                     setConnectionProviderTarget('primary');
-                    hideQrPresentation();
+                    if (!data.adapter?.qr && !data.adapter?.pairingCode) {
+                        hideQrPresentation();
+                    }
                     setConnectionButtonsBusy(false);
                 }
             }
@@ -581,7 +585,9 @@ async function fetchStatus() {    try {
             groupStatusEl.textContent = 'Grupos: No configurado';
             groupStatusEl.style.color = '#94a3b8';
             setConnectionProviderTarget('primary');
-            hideQrPresentation();
+            if (!data.adapter?.qr && !data.adapter?.pairingCode) {
+                hideQrPresentation();
+            }
             setConnectionButtonsBusy(false);
         }
     } catch (e) {
