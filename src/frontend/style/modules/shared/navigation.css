@@ -889,10 +889,21 @@
   }
 
   .desktop-line-selector-label {
+    display: block;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    line-height: 1;
+  }
+
+  #desktop-line-selector-label {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1;
   }
 
   .desktop-line-selector-btn.is-loading .desktop-line-selector-label {
@@ -1214,6 +1225,69 @@
     font-weight: 800;
   }
 
+  .desktop-account-identifiers {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 0 10px 8px;
+    font-family: 'Poppins', sans-serif;
+  }
+
+  .desktop-account-identifiers[hidden] {
+    display: none;
+  }
+
+  .desktop-account-id-copy {
+    width: 100%;
+    min-height: 30px;
+    display: grid;
+    grid-template-columns: 70px minmax(0, 1fr) 16px;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px solid rgba(0, 153, 255, 0.18);
+    border-radius: 8px;
+    background: rgba(0, 153, 255, 0.08);
+    color: rgba(255, 255, 255, 0.72);
+    cursor: pointer;
+    transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+  }
+
+  .desktop-account-id-copy:hover {
+    background: rgba(0, 153, 255, 0.14);
+    border-color: rgba(0, 153, 255, 0.32);
+    color: #ffffff;
+  }
+
+  .desktop-account-id-copy:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+
+  .desktop-account-id-label {
+    color: #38bdf8;
+    font-size: 0.58rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .desktop-account-id-value {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0;
+  }
+
+  .desktop-account-id-copy i {
+    color: #0099FF;
+    font-size: 0.68rem;
+    text-align: center;
+  }
+
   [data-theme="light"] .desktop-account-menu-detail strong {
     color: #0f172a;
   }
@@ -1230,6 +1304,22 @@
     background: rgba(0, 153, 255, 0.12);
     color: #0099FF;
     border-color: rgba(0, 153, 255, 0.22);
+  }
+
+  [data-theme="light"] .desktop-account-id-copy {
+    background: rgba(0, 153, 255, 0.07);
+    border-color: rgba(0, 153, 255, 0.18);
+    color: #475569;
+  }
+
+  [data-theme="light"] .desktop-account-id-copy:hover {
+    background: rgba(0, 153, 255, 0.12);
+    border-color: rgba(0, 153, 255, 0.3);
+    color: #0f172a;
+  }
+
+  [data-theme="light"] .desktop-account-id-label {
+    color: #0099FF;
   }
 
   .desktop-account-menu-item {

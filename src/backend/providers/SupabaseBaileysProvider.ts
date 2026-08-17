@@ -6,6 +6,7 @@ import {
     DisconnectReason, 
     makeCacheableSignalKeyStore,
     Browsers,
+    fetchLatestBaileysVersion,
 } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import path from 'path';
@@ -226,10 +227,8 @@ export class SupabaseBaileysProvider extends BaileysProvider {
         this.connectionState = 'connecting';
         this.emit('status_change', { active: false, connection: 'connecting' });
         if (this.isConnecting) {
-            this.connectionState = 'idle';
-            this.emit('status_change', { active: false, connection: 'idle' });
-            console.log(`[SupabaseBaileysProvider] ℹ️ Ya hay un intento de conexión en curso para ${this.globalVendorArgs.name || 'default'}. Saltando.`);
-            return null;
+            console.log(`[SupabaseBaileysProvider] Ya hay un intento de conexion en curso para ${this.globalVendorArgs.name || 'default'}. Saltando.`);
+            return this.vendor || null;
         }
 
         // Evitar múltiples inicializaciones simultáneas
@@ -297,9 +296,16 @@ export class SupabaseBaileysProvider extends BaileysProvider {
             // --- STORE INICIALIZACIÓN (DESACTIVADO POR RENDIMIENTO) ---
             (this as any).store = null;
 
-            // Usar versión fija conocida de WhatsApp Web para mantener activa la sesión tras reinicios o redeploys
-            const version: any = [2, 3000, 1043857760];
-            console.log(`[SupabaseBaileysProvider] 📡 Usando versión fija de WhatsApp Web: v${version.join('.')}`);
+            let version: any = Array.isArray(this.globalVendorArgs.version)
+                ? this.globalVendorArgs.version
+                : [2, 3000, 1043857760];
+            try {
+                const latest = await fetchLatestBaileysVersion();
+                if (latest?.version) version = latest.version;
+            } catch (versionErr: any) {
+                console.warn(`[SupabaseBaileysProvider] No se pudo obtener la version latest de Baileys. Usando fallback: ${versionErr?.message || versionErr}`);
+            }
+            console.log(`[SupabaseBaileysProvider] Usando version de WhatsApp Web: v${version.join('.')}`);
 
             console.log(`[SupabaseBaileysProvider] 📡 Iniciando socket con globalVendorArgs:`, JSON.stringify(this.globalVendorArgs));
 
@@ -654,6 +660,9 @@ export class SupabaseBaileysProvider extends BaileysProvider {
         } catch (err: any) {
             console.error(`[SupabaseBaileysProvider] ❌ Error durante la inicialización del proveedor:`, err);
             this.isConnecting = false;
+            this.initialized = false;
+            this.connectionState = 'close';
+            this.emit('status_change', { active: false, connection: 'close', reason: err?.message });
             throw err;
         }
     }

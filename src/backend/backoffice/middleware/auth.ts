@@ -132,7 +132,8 @@ export const backofficeAuth = async (req: any, res: any, next: () => void) => {
         console.error(`PROJECT_ID: ${projectId}`);
     }
 
-    let isValid = (isSuperAdminToken(token) || (adminPass && token === adminPass));
+    const isSuperAdmin = isSuperAdminToken(token);
+    let isValid = (isSuperAdmin || (adminPass && token === adminPass));
     let isSubUser = false;
     let userId = null;
     let userRole = 'subuser';
@@ -152,6 +153,7 @@ export const backofficeAuth = async (req: any, res: any, next: () => void) => {
     if (token && isValid) {
         req.auth = {
             isAdmin: !isSubUser || userRole === 'admin',
+            isSuperAdmin,
             isSubUser,
             userId,
             projectId: userProjectId,

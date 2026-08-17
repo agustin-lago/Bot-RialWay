@@ -59,7 +59,7 @@
     function sectionTabVisible(tab) {
         if (tab.requires === 'backoffice') return window.__BACKOFFICE_VISIBLE !== false;
         if (tab.requires === 'crm') return window.__CRM_VISIBLE !== false;
-        if (tab.requires === 'system_config') return window.__SYSTEM_CONFIG_VISIBLE !== false;
+        if (tab.requires === 'system_config') return localStorage.getItem('is_superadmin') === 'true';
         if (tab.requires === 'epc') return window.__EPC_VISIBLE === true;
         return true;
     }
@@ -117,6 +117,73 @@
         if (mobileAvatar) mobileAvatar.textContent = initials;
     }
 
+    function setAccountIdentifiers(visible, projectId = '', serviceId = '') {
+        ['desktop', 'mobile'].forEach((scope) => {
+            const wrapper = document.getElementById(`${scope}-account-identifiers`);
+            const projectValue = document.getElementById(`${scope}-account-project-id`);
+            const serviceValue = document.getElementById(`${scope}-account-service-id`);
+            const projectButton = document.getElementById(`${scope}-account-project-id-copy`);
+            const serviceButton = document.getElementById(`${scope}-account-service-id-copy`);
+            const shouldShow = visible && (projectId || serviceId);
+
+            if (wrapper) wrapper.hidden = !shouldShow;
+            if (projectValue) projectValue.textContent = projectId || '-';
+            if (serviceValue) serviceValue.textContent = serviceId || '-';
+            if (projectButton) {
+                projectButton.dataset.copyValue = projectId || '';
+                projectButton.disabled = !projectId;
+            }
+            if (serviceButton) {
+                serviceButton.dataset.copyValue = serviceId || '';
+                serviceButton.disabled = !serviceId;
+            }
+        });
+    }
+
+    async function copyTextToClipboard(value) {
+        if (!value) return false;
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(value);
+            return true;
+        }
+
+        const textarea = document.createElement('textarea');
+        textarea.value = value;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const copied = document.execCommand('copy');
+        textarea.remove();
+        return copied;
+    }
+
+    window.copyAccountIdentifier = async function (event) {
+        event?.preventDefault?.();
+        event?.stopPropagation?.();
+
+        const button = event?.currentTarget;
+        const value = button?.dataset?.copyValue || '';
+        const label = button?.dataset?.copyLabel || 'ID';
+        const copied = await copyTextToClipboard(value);
+
+        if (copied) {
+            if (typeof window.showToast === 'function') {
+                window.showToast(`${label} copiado`, 'success');
+            } else if (window.Swal) {
+                window.Swal.fire({
+                    toast: true,
+                    position: 'top-end',
+                    icon: 'success',
+                    title: `${label} copiado`,
+                    showConfirmButton: false,
+                    timer: 1400
+                });
+            }
+        }
+    };
+
     async function initSideMenuUserEmail() {
         const label = document.getElementById('sidemenu-user-email');
         const detailProject = document.getElementById('desktop-account-detail-project');
@@ -155,6 +222,7 @@
         if (mobileDetailName) mobileDetailName.textContent = storedUser || 'Usuario';
         if (mobileDetailEmail) mobileDetailEmail.textContent = initialEmail;
         if (mobileDetailPlan) mobileDetailPlan.textContent = storedPlan || 'Sin plan';
+        setAccountIdentifiers(false);
 
         const token = localStorage.getItem('backoffice_token') || localStorage.getItem('system_config_token');
         if (!token) return;
@@ -174,9 +242,19 @@
             if (mobileDetailName) mobileDetailName.textContent = name;
             if (mobileDetailEmail) mobileDetailEmail.textContent = email;
             if (mobileDetailPlan) mobileDetailPlan.textContent = plan;
+            setAccountIdentifiers(
+                data?.isSuperAdmin === true,
+                data?.project_id || data?.projectId || '',
+                data?.service_id || data?.serviceId || ''
+            );
             if (data?.email) localStorage.setItem('user_email', data.email);
             if (data?.nombre) localStorage.setItem('user_name', data.nombre);
             if (data?.plan_tipo) localStorage.setItem('user_plan_tipo', data.plan_tipo);
+            if (data?.isSuperAdmin === true) {
+                localStorage.setItem('is_superadmin', 'true');
+                localStorage.setItem('system_config_token', token);
+                updateSystemConfigNavVisibility();
+            }
         } catch (err) {
             if (label) label.textContent = initialEmail;
             if (detailAvatar) detailAvatar.textContent = projectAvatarInitials;
@@ -187,6 +265,7 @@
             if (mobileDetailName) mobileDetailName.textContent = storedUser || 'Usuario';
             if (mobileDetailEmail) mobileDetailEmail.textContent = initialEmail;
             if (mobileDetailPlan) mobileDetailPlan.textContent = storedPlan || 'Sin plan';
+            setAccountIdentifiers(false);
         }
     }
 
@@ -438,9 +517,8 @@
 
     function updateSystemConfigNavVisibility() {
         const navItem = document.querySelector('[data-route="/system-config"]')?.closest('li');
-        const enabled = window.__SYSTEM_CONFIG_VISIBLE !== false;
         const isSuperAdmin = localStorage.getItem('is_superadmin') === 'true';
-        const canShow = enabled && isSuperAdmin;
+        const canShow = isSuperAdmin;
         if (navItem) {
             navItem.classList.toggle('hidden-item', !canShow);
             navItem.style.display = canShow ? '' : 'none';

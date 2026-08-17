@@ -54,7 +54,6 @@
     <script src="/js/utils/skeleton.js"></script>
     <script>
         window.BOT_NAME = '{{BOT_NAME}}';
-        window.__SYSTEM_CONFIG_VISIBLE = '{{SYSTEM_CONFIG_VISIBLE_JS}}' !== 'false';
         window.__IS_SUPERADMIN_SESSION = localStorage.getItem('is_superadmin') === 'true';
         window.__BACKOFFICE_VISIBLE = '{{SHOW_BACKOFFICE_STYLE}}' !== 'hidden-item';
         window.__CRM_VISIBLE = '{{SHOW_CRM_STYLE}}' !== 'hidden-item';
@@ -207,6 +206,18 @@
                     </div>
                 </div>
             </div>
+            <div class="desktop-account-identifiers" id="mobile-account-identifiers" hidden>
+                <button type="button" class="desktop-account-id-copy" id="mobile-account-project-id-copy" data-copy-label="Project ID" onclick="copyAccountIdentifier(event)">
+                    <span class="desktop-account-id-label">Project ID</span>
+                    <span class="desktop-account-id-value" id="mobile-account-project-id">-</span>
+                    <i class="fas fa-copy"></i>
+                </button>
+                <button type="button" class="desktop-account-id-copy" id="mobile-account-service-id-copy" data-copy-label="Service ID" onclick="copyAccountIdentifier(event)">
+                    <span class="desktop-account-id-label">Service ID</span>
+                    <span class="desktop-account-id-value" id="mobile-account-service-id">-</span>
+                    <i class="fas fa-copy"></i>
+                </button>
+            </div>
             <div class="desktop-account-menu-divider" role="separator"></div>
             <button type="button" class="desktop-account-menu-item" role="menuitem" onclick="toggleTheme()">
                 <i id="mobile-theme-icon" class="fas fa-sun"></i>
@@ -245,7 +256,7 @@
                 <div class="desktop-line-selector" id="desktop-line-selector">
                     <button type="button" class="desktop-line-selector-btn is-loading" id="desktop-line-selector-btn" onclick="toggleDesktopLineMenu(event)" aria-label="Linea vinculada" aria-expanded="false">
                         <i class="fab fa-whatsapp"></i>
-                        <span id="desktop-line-selector-label">Cargando linea</span>
+                        <span id="desktop-line-selector-label" class="desktop-line-selector-label">Cargando linea</span>
                         <i class="fas fa-chevron-down desktop-line-selector-chevron"></i>
                     </button>
                     <div class="desktop-line-menu" id="desktop-line-menu" role="menu" aria-label="Lineas vinculadas">
@@ -293,6 +304,18 @@
                             <span class="desktop-account-plan-badge" id="desktop-account-detail-plan">Sin plan</span>
                         </div>
                     </div>
+                </div>
+                <div class="desktop-account-identifiers" id="desktop-account-identifiers" hidden>
+                    <button type="button" class="desktop-account-id-copy" id="desktop-account-project-id-copy" data-copy-label="Project ID" onclick="copyAccountIdentifier(event)">
+                        <span class="desktop-account-id-label">Project ID</span>
+                        <span class="desktop-account-id-value" id="desktop-account-project-id">-</span>
+                        <i class="fas fa-copy"></i>
+                    </button>
+                    <button type="button" class="desktop-account-id-copy" id="desktop-account-service-id-copy" data-copy-label="Service ID" onclick="copyAccountIdentifier(event)">
+                        <span class="desktop-account-id-label">Service ID</span>
+                        <span class="desktop-account-id-value" id="desktop-account-service-id">-</span>
+                        <i class="fas fa-copy"></i>
+                    </button>
                 </div>
                 <div class="desktop-account-menu-divider" role="separator"></div>
                 <button type="button" class="desktop-account-menu-item" id="desktop-notifications-btn" role="menuitem" onclick="closeDesktopAccountMenu(); openNotificationsModal(event)">

@@ -6,6 +6,7 @@ window.metaView = (() => {
     let _currentTemplate = null;
     let _selectedTagIds = new Set();
     let _popupCheckInterval = null;
+    let _previewFitFrame = null;
 
     // ── HTML ──────────────────────────────────────────────────────────────
     function getHTML() {
@@ -68,13 +69,16 @@ window.metaView = (() => {
                     <!-- Panel de plantillas (contenedor visual + scroll) -->
                     <div class="meta-view-panel animate-fade">
 
-                        <!-- Tabs bar -->
-                        <div class="meta-tabs meta-tabs-bar">
-                            <div id="tab-my-templates" class="meta-tab active" onclick="switchMetaTab('my')">
-                                <i class="fas fa-list"></i> Mis Plantillas
+                        <div class="meta-templates-header">
+                            <div id="tab-my-templates" class="meta-templates-title active">
+                                <span class="meta-templates-icon"><i class="fas fa-list"></i></span>
+                                <div class="meta-templates-copy">
+                                    <h2>Mis Plantillas</h2>
+                                    <p id="meta-templates-subtitle">Selecciona una plantilla para preparar el reenvio.</p>
+                                </div>
                             </div>
-                            <button class="meta-panel-toggle" onclick="toggleMetaAccordion()" title="Colapsar/Expandir">
-                                <i class="fas fa-chevron-up meta-panel-chevron"></i>
+                            <button id="tpl-detail-back-header" class="tpl-detail-back-btn" style="display:none;" onclick="switchMetaTab('my')">
+                                <i class="fas fa-arrow-left"></i> Volver a plantillas
                             </button>
                         </div>
 
@@ -94,9 +98,19 @@ window.metaView = (() => {
                             <div class="tpl-detail-grid">
                                 <!-- Preview WhatsApp -->
                                 <div class="meta-preview-overlay tpl-preview-col rounded-2xl overflow-hidden">
-                                    <div class="wa-preview-bubble">
-                                        <div id="wa-preview-text-final" class="wa-preview-text">...</div>
-                                        <div class="wa-preview-time">12:00 <i class="fas fa-check-double wa-check-icon"></i></div>
+                                    <div class="tpl-preview-stage">
+                                        <div class="tpl-preview-phone">
+                                            <div class="tpl-preview-phone-head">
+                                                <span>Vista previa</span>
+                                                <i class="fab fa-whatsapp"></i>
+                                            </div>
+                                            <div class="tpl-preview-screen">
+                                                <div class="wa-preview-bubble">
+                                                    <div id="wa-preview-text-final" class="wa-preview-text">...</div>
+                                                    <div class="wa-preview-time">12:00 <i class="fas fa-check-double wa-check-icon"></i></div>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                                 <!-- Acciones compactas -->
@@ -133,8 +147,15 @@ window.metaView = (() => {
                                             </div>
                                         </div>
                                         <!-- Tags chips -->
-                                        <div>
-                                            <label class="bulk-filter-sublabel" style="margin-bottom:6px; display:block;">Etiquetas</label>
+                                        <div class="bulk-tags-panel">
+                                            <div class="bulk-tags-head">
+                                                <label class="bulk-filter-sublabel">Etiquetas</label>
+                                                <span id="bulk-tags-count" class="bulk-tags-count">0 seleccionadas</span>
+                                            </div>
+                                            <label class="bulk-tags-search">
+                                                <i class="fas fa-search"></i>
+                                                <input id="bulk-tags-search" type="search" placeholder="Buscar etiqueta..." oninput="filterBulkTags(this.value)">
+                                            </label>
                                             <div class="bulk-tags-box">
                                                 <div id="bulk-filter-tags" class="bulk-tags-chips"></div>
                                             </div>
@@ -204,16 +225,20 @@ window.metaView = (() => {
         window.launchMetaOnboardingView = launchMetaOnboardingView;
         window.syncAndSaveConnection    = syncAndSaveConnection;
         window.startQuickBulkSend       = startQuickBulkSend;
+        window.filterBulkTags           = filterBulkTags;
+        window.addEventListener('resize', scheduleTemplatePreviewFit);
 
         await checkMetaConnection();
     }
 
     function destroy() {
         if (_popupCheckInterval) { clearInterval(_popupCheckInterval); _popupCheckInterval = null; }
+        if (_previewFitFrame) { cancelAnimationFrame(_previewFitFrame); _previewFitFrame = null; }
+        window.removeEventListener('resize', scheduleTemplatePreviewFit);
         document.getElementById('tpl-preview-modal')?.remove();
         ['switchMetaTab', 'showTemplateDetail', 'startBulkSend', 'downloadBulkExcel',
          'toggleTagChip', 'toggleMetaAccordion', 'showTplPreviewModal', 'launchMetaOnboardingView',
-         'syncAndSaveConnection', 'startQuickBulkSend'
+         'syncAndSaveConnection', 'startQuickBulkSend', 'filterBulkTags'
         ].forEach(fn => { delete window[fn]; });
     }
 
@@ -264,11 +289,13 @@ window.metaView = (() => {
                 if (!container) return;
                 if (data.length === 0) {
                     container.innerHTML = '<span class="bulk-filter-sublabel" style="opacity:0.5;">Sin etiquetas disponibles</span>';
+                    updateBulkTagsCount();
                     return;
                 }
                 container.innerHTML = data.map(t =>
-                    `<span class="bulk-tag-chip" data-id="${t.id}" onclick="toggleTagChip(this)">${t.name}</span>`
+                    `<span class="bulk-tag-chip" data-id="${escapeTemplateText(t.id)}" data-name="${escapeTemplateText(t.name)}" onclick="toggleTagChip(this)">${escapeTemplateText(t.name)}</span>`
                 ).join('');
+                updateBulkTagsCount();
             }
         } catch (e) { /* silencioso */ }
     }
@@ -282,6 +309,41 @@ window.metaView = (() => {
             _selectedTagIds.add(id);
             el.classList.add('selected');
         }
+        updateBulkTagsCount();
+    }
+
+    function updateBulkTagsCount() {
+        const countEl = document.getElementById('bulk-tags-count');
+        if (!countEl) return;
+        const count = _selectedTagIds.size;
+        countEl.innerText = count === 1 ? '1 seleccionada' : `${count} seleccionadas`;
+    }
+
+    function filterBulkTags(value = '') {
+        const query = String(value).trim().toLowerCase();
+        document.querySelectorAll('#bulk-filter-tags .bulk-tag-chip').forEach(chip => {
+            const name = (chip.dataset.name || chip.textContent || '').toLowerCase();
+            chip.style.display = !query || name.includes(query) ? 'inline-flex' : 'none';
+        });
+    }
+
+    function scheduleTemplatePreviewFit() {
+        if (_previewFitFrame) cancelAnimationFrame(_previewFitFrame);
+        _previewFitFrame = requestAnimationFrame(fitTemplatePreview);
+    }
+
+    function fitTemplatePreview() {
+        _previewFitFrame = null;
+        const shell = document.querySelector('#view-template-detail .tpl-preview-screen');
+        const bubble = document.querySelector('#view-template-detail .wa-preview-bubble');
+        if (!shell || !bubble) return;
+        bubble.style.setProperty('--tpl-preview-scale', '1');
+        const availableW = Math.max(shell.clientWidth - 28, 1);
+        const availableH = Math.max(shell.clientHeight - 28, 1);
+        const contentW = Math.max(bubble.scrollWidth, bubble.offsetWidth, 1);
+        const contentH = Math.max(bubble.scrollHeight, bubble.offsetHeight, 1);
+        const scale = Math.min(1, availableW / contentW, availableH / contentH);
+        bubble.style.setProperty('--tpl-preview-scale', String(Math.max(0.48, scale)));
     }
 
     // ── Carga y render de plantillas ──────────────────────────────────────
@@ -310,37 +372,85 @@ window.metaView = (() => {
         }
     }
 
+    function escapeTemplateText(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function escapeTemplateArg(value) {
+        return String(value ?? '')
+            .replace(/\\/g, '\\\\')
+            .replace(/'/g, "\\'")
+            .replace(/\r?\n/g, ' ');
+    }
+
+    function getTemplatePreviewText(template) {
+        let text = 'Sin contenido de previsualizacion';
+        if (template.components && Array.isArray(template.components)) {
+            const body = template.components.find(c => c.type === 'BODY' || c.type?.toUpperCase() === 'BODY');
+            if (body) text = body.text || body.content || body.example?.body_text?.[0]?.[0] || text;
+            if (text === 'Sin contenido de previsualizacion') {
+                for (const comp of template.components) {
+                    if (comp.text || comp.content) { text = comp.text || comp.content; break; }
+                }
+            }
+        } else if (template.body) {
+            text = template.body;
+        }
+        return String(text || 'Sin contenido de previsualizacion');
+    }
+
+    function formatTemplateDate(template) {
+        const value = template.last_updated_time || template.updated_at || template.modified_at || template.created_at;
+        if (!value) return '--';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return '--';
+        return date.toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric' });
+    }
+
     function renderCards(container, templates) {
         if (!templates || templates.length === 0) {
             container.innerHTML = '<p style="grid-column:1/-1; text-align:center; padding:20px; color:var(--text-muted);">No se encontraron plantillas.</p>';
             return;
         }
-        container.innerHTML = templates.map(t => {
-            let text = 'Sin contenido de previsualización';
-            if (t.components && Array.isArray(t.components)) {
-                const body = t.components.find(c => c.type === 'BODY' || c.type?.toUpperCase() === 'BODY');
-                if (body) text = body.text || body.content || body.example?.body_text?.[0]?.[0] || text;
-                if (text === 'Sin contenido de previsualización') {
-                    for (const comp of t.components) {
-                        if (comp.text || comp.content) { text = comp.text || comp.content; break; }
-                    }
-                }
-            } else if (t.body) {
-                text = t.body;
-            }
-            const cleanText   = text.length > 150 ? text.substring(0, 147) + '...' : text;
+        const rows = templates.map(t => {
+            const text = getTemplatePreviewText(t);
+            const cleanText = text.length > 150 ? text.substring(0, 147) + '...' : text;
             const cardClass = t.status === 'APPROVED' ? 'meta-card-approved' : (t.status === 'REJECTED' ? 'meta-card-rejected' : 'meta-card-pending');
+            const statusClass = t.status === 'APPROVED' ? 'meta-status-approved' : (t.status === 'REJECTED' ? 'meta-status-rejected' : 'meta-status-pending');
             return `
-                <div class="meta-card ${cardClass}" onclick="showTemplateDetail('${t.id || t.name}','${t.language}')">
-                    <div class="meta-card-name">${t.name}</div>
-                    <div class="meta-card-desc">${cleanText}</div>
-                    <div style="font-size:0.7rem; color:var(--text-muted); display:flex; flex-wrap:wrap; gap:8px; margin-top:auto; padding-top:10px; border-top:1px solid rgba(0,0,0,0.05);">
-                        <span style="background:rgba(6,104,225,0.05); padding:2px 6px; border-radius:4px; font-weight:600;"><i class="fas fa-fingerprint"></i> ID: ${t.id || 'N/A'}</span>
-                        <span style="background:rgba(0,0,0,0.05); padding:2px 6px; border-radius:4px;"><i class="fas fa-globe"></i> ${(t.language || '').toUpperCase()}</span>
-                        <span style="background:rgba(0,0,0,0.05); padding:2px 6px; border-radius:4px;"><i class="fas fa-tag"></i> ${t.category}</span>
-                    </div>
-                </div>`;
+                <button type="button" class="meta-template-row meta-card ${cardClass}" onclick="showTemplateDetail('${escapeTemplateArg(t.id || t.name)}','${escapeTemplateArg(t.language)}')">
+                    <span class="meta-row-name">${escapeTemplateText(t.name)}</span>
+                    <span class="meta-row-category">${escapeTemplateText(t.category || '--')}</span>
+                    <span class="meta-row-language">
+                        <strong>${escapeTemplateText((t.language || '').toUpperCase() || '--')}</strong>
+                        <small>${escapeTemplateText(cleanText)}</small>
+                    </span>
+                    <span class="meta-row-status"><span class="meta-card-tag ${statusClass}">${escapeTemplateText(t.status || 'PENDING')}</span></span>
+                    <span class="meta-row-updated">${escapeTemplateText(formatTemplateDate(t))}</span>
+                    <span class="meta-card-mobile-desc">${escapeTemplateText(cleanText)}</span>
+                    <span class="meta-card-mobile-meta">
+                        <span><i class="fas fa-fingerprint"></i> ID: ${escapeTemplateText(t.id || 'N/A')}</span>
+                        <span><i class="fas fa-globe"></i> ${escapeTemplateText((t.language || '').toUpperCase() || '--')}</span>
+                        <span><i class="fas fa-tag"></i> ${escapeTemplateText(t.category || '--')}</span>
+                    </span>
+                </button>`;
         }).join('');
+        container.innerHTML = `
+            <div class="meta-template-table">
+                <div class="meta-template-row meta-template-head" aria-hidden="true">
+                    <span>Nombre de la plantilla</span>
+                    <span>Categoria</span>
+                    <span>Idioma</span>
+                    <span>Estado</span>
+                    <span>Ultima modificacion</span>
+                </div>
+                ${rows}
+            </div>`;
     }
 
     // ── Tabs ──────────────────────────────────────────────────────────────
@@ -348,16 +458,22 @@ window.metaView = (() => {
         const myView     = document.getElementById('view-my-templates');
         const detailView = document.getElementById('view-template-detail');
         const tabBtn     = document.getElementById('tab-my-templates');
+        const backBtn    = document.getElementById('tpl-detail-back-header');
+        const subtitle   = document.getElementById('meta-templates-subtitle');
 
         if (tab === 'my') {
             if (myView)     { myView.style.display = 'grid'; }
             if (detailView) { detailView.style.display = 'none'; }
             if (tabBtn)     { tabBtn.classList.add('active'); }
+            if (backBtn)    { backBtn.style.display = 'none'; }
+            if (subtitle)   { subtitle.innerText = 'Selecciona una plantilla para preparar el reenvio.'; }
             loadTemplates();
         } else if (tab === 'detail') {
             if (myView)     { myView.style.display = 'none'; }
             if (detailView) { detailView.style.display = 'flex'; }
             if (tabBtn)     { tabBtn.classList.remove('active'); }
+            if (backBtn)    { backBtn.style.display = 'inline-flex'; }
+            if (subtitle)   { subtitle.innerText = 'Configura filtros y prepara el envio.'; }
         }
     }
 
@@ -412,17 +528,18 @@ window.metaView = (() => {
                 const fmt = headerComp.format.toLowerCase();
                 if (fmt === 'image') {
                     const imgUrl = headerComp.example?.header_handle?.[0] || '';
-                    if (imgUrl) html += `<img src="${imgUrl}" style="width:calc(100% + 30px); margin:-12px -15px 12px -15px; display:block;">`;
+                    if (imgUrl) html += `<img src="${escapeTemplateText(imgUrl)}" class="wa-preview-media wa-preview-media-image" alt="Vista previa de plantilla">`;
                 } else if (fmt === 'video') {
-                    html += `<div style="width:calc(100% + 30px); margin:-12px -15px 12px -15px; aspect-ratio:16/9; background:#000; display:flex; align-items:center; justify-content:center; color:white;"><i class="fas fa-play-circle fa-3x"></i></div>`;
+                    html += `<div class="wa-preview-media wa-preview-media-video"><i class="fas fa-play-circle fa-3x"></i></div>`;
                 } else if (fmt === 'document') {
-                    html += `<div style="width:calc(100% + 30px); margin:-12px -15px 12px -15px; padding:12px; background:rgba(0,0,0,0.05); display:flex; align-items:center; gap:8px;"><i class="fas fa-file-pdf fa-2x" style="color:#ef4444;"></i> <span style="font-size:0.85rem; font-weight:600;">Documento</span></div>`;
+                    html += `<div class="wa-preview-media wa-preview-media-document"><i class="fas fa-file-pdf"></i> <span>Documento</span></div>`;
                 }
             }
-            if (headerText) html += `<div style="font-weight:700; margin-bottom:8px;">${headerText}</div>`;
-            html += `<div style="white-space:pre-wrap;">${bodyText}</div>`;
-            if (footerText) html += `<div style="color:var(--text-muted); font-size:0.8rem; margin-top:8px;">${footerText}</div>`;
+            if (headerText) html += `<div class="wa-preview-header-text">${escapeTemplateText(headerText)}</div>`;
+            html += `<div class="wa-preview-body-text">${escapeTemplateText(bodyText)}</div>`;
+            if (footerText) html += `<div class="wa-preview-footer-text">${escapeTemplateText(footerText)}</div>`;
             previewEl.innerHTML = html;
+            previewEl.querySelectorAll('img').forEach(img => img.addEventListener('load', scheduleTemplatePreviewFit));
 
             const buttonsComp = template.components?.find(c => c.type === 'BUTTONS');
             if (buttonsComp?.buttons && bubble) {
@@ -434,11 +551,12 @@ window.metaView = (() => {
                     let icon = '<i class="fas fa-reply"></i>';
                     if (b.type === 'URL')          icon = '<i class="fas fa-external-link-alt"></i>';
                     if (b.type === 'PHONE_NUMBER') icon = '<i class="fas fa-phone"></i>';
-                    btn.innerHTML = `${icon} ${b.text}`;
+                    btn.innerHTML = `${icon} ${escapeTemplateText(b.text)}`;
                     btnsContainer.appendChild(btn);
                 });
                 bubble.appendChild(btnsContainer);
             }
+            scheduleTemplatePreviewFit();
         }
 
         const bulkSection = document.getElementById('bulk-actions-section');
@@ -479,6 +597,7 @@ window.metaView = (() => {
         const fileInput   = document.getElementById('bulk-file-input');
         if (progressEl) progressEl.style.display = 'none';
         if (fileInput)  fileInput.value = '';
+        scheduleTemplatePreviewFit();
     }
 
     // ── Descarga Excel ────────────────────────────────────────────────────

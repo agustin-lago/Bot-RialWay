@@ -195,6 +195,12 @@ export const registerProviderEvents = (provider: any, isGroupProvider: boolean =
                     margin: 2
                 });
                 console.log(`${prefix} ✅ QR guardado en ${qrPath}`);
+                try {
+                    const terminalQr = await (QRCode as any).toString(qrString, { type: 'terminal', small: true });
+                    console.log(`${prefix} QR para debug en terminal:\n${terminalQr}`);
+                } catch (terminalErr: any) {
+                    console.warn(`${prefix} No se pudo renderizar el QR en terminal:`, terminalErr?.message || terminalErr);
+                }
             }
         } catch (err) {
             console.error(`❌ ${prefix} Error generating QR image:`, err);
@@ -574,11 +580,6 @@ export const hasActiveSession = async (adapterProvider: any, groupProvider: any 
 
             if (isMeta) return { active: true, type: 'meta', message: 'Conectado via API' };
 
-            // Si el motor fue apagado intencionalmente o no está inicializado, reportar Desconectado inmediatamente
-            if (provider.preventAutoStart || !provider.initialized || connectionState === 'close' || connectionState === 'idle') {
-                return { active: false, type: 'baileys', message: 'Desconectado' };
-            }
-
             const qrFilename = isGroup ? 'bot.groups.qr.png' : 'bot.qr.png';
             const hasQr = fs.existsSync(path.join(process.cwd(), qrFilename));
             const qrString = provider.qrCodeString || null;
@@ -587,7 +588,7 @@ export const hasActiveSession = async (adapterProvider: any, groupProvider: any 
             if (isReady) return { active: true, type: 'baileys', message: 'Conectado' };
 
             if (pairingCode) {
-                return { active: false, qr: false, pairingCode, type: 'baileys', message: 'Esperando vinculación por código' };
+                return { active: false, qr: false, pairingCode, type: 'baileys', message: 'Esperando vinculacion por codigo' };
             }
 
             if (hasQr || qrString) {
@@ -597,9 +598,13 @@ export const hasActiveSession = async (adapterProvider: any, groupProvider: any 
                     // Ignore QR generation errors
                 }
                 }
-                return { active: false, qr: true, qrData: qrString, qrImage, type: 'baileys', message: 'Esperando vinculación' };
+                return { active: false, qr: true, qrData: qrString, qrImage, type: 'baileys', message: 'Esperando vinculacion' };
             }
 
+            // Si el motor fue apagado intencionalmente o no esta inicializado, reportar Desconectado inmediatamente
+            if (provider.preventAutoStart || !provider.initialized || connectionState === 'close' || connectionState === 'idle') {
+                return { active: false, type: 'baileys', message: 'Desconectado' };
+            }
             const isStarting = !!(provider?.vendor);
             return { active: false, type: 'baileys', message: isStarting ? 'Iniciando motor...' : 'Desconectado' };
         };

@@ -6,7 +6,7 @@ import { HistoryHandler } from '../db/historyHandler';
 import { getAdapterProvider, getGroupProvider } from '../../providers/instances';
 import { getIdsByHost } from '../utils/routingResolver';
 
-let _visibilityCache: { wa: string; ig: string; ms: string; crm: string; sysConfig: string } | null = null;
+let _visibilityCache: { wa: string; ig: string; ms: string; crm: string } | null = null;
 let _visibilityCacheAt = 0;
 const VISIBILITY_TTL = 10 * 1000;
 const getAppVersion = () => {
@@ -130,16 +130,15 @@ export const registerStaticRoutes = (app: any, { __dirname }: { __dirname: strin
                     // Obtener configuración de visibilidad (cacheada para evitar queries en cada navegación)
                     const now = Date.now();
                     if (!_visibilityCache || (now - _visibilityCacheAt) > VISIBILITY_TTL) {
-                        ['WHATSAPP_VISIBLE', 'INSTAGRAM_VISIBLE', 'MESSENGER_VISIBLE', 'CRM_VISIBLE', 'SYSTEM_CONFIG_VISIBLE']
+                        ['WHATSAPP_VISIBLE', 'INSTAGRAM_VISIBLE', 'MESSENGER_VISIBLE', 'CRM_VISIBLE']
                             .forEach(k => HistoryHandler.invalidateSettingCache(k));
-                        const [dbWa, dbIg, dbMs, dbCRM, dbSysCfg] = await Promise.all([
+                        const [dbWa, dbIg, dbMs, dbCRM] = await Promise.all([
                             getSettingSafe('WHATSAPP_VISIBLE'),
                             getSettingSafe('INSTAGRAM_VISIBLE', 'false'),
                             getSettingSafe('MESSENGER_VISIBLE', 'false'),
-                            getSettingSafe('CRM_VISIBLE', 'true'),
-                            getSettingSafe('SYSTEM_CONFIG_VISIBLE', process.env.SYSTEM_CONFIG_VISIBLE ?? 'false')
+                            getSettingSafe('CRM_VISIBLE', 'true')
                         ]);
-                        _visibilityCache = { wa: dbWa, ig: dbIg, ms: dbMs, crm: dbCRM, sysConfig: dbSysCfg };
+                        _visibilityCache = { wa: dbWa, ig: dbIg, ms: dbMs, crm: dbCRM };
                         _visibilityCacheAt = now;
                     }
                     const cache = _visibilityCache!;
@@ -149,10 +148,6 @@ export const registerStaticRoutes = (app: any, { __dirname }: { __dirname: strin
                     const isAnyPlatformActive = (dbWa !== 'false') || (dbIg === 'true') || (dbMs === 'true');
                     const showBackoffice = isAnyPlatformActive ? '' : 'hidden-item';
                     const showCRM = (dbCRM === 'false' || (!dbCRM && process.env.CRM_VISIBLE === 'false')) ? 'hidden-item' : '';
-                    const systemConfigVisible = cache.sysConfig !== 'false';
-                    console.log('[Static] SYSTEM_CONFIG_VISIBLE desde Supabase:', JSON.stringify(cache.sysConfig), '→ hidden:', !systemConfigVisible);
-                    const showSystemConfig = systemConfigVisible ? '' : 'hidden-item';
-                    const systemConfigVisibleJs = systemConfigVisible ? 'true' : 'false';
 
                     // Reemplazo universal de placeholders
                     const projectName = botName;
@@ -165,8 +160,6 @@ export const registerStaticRoutes = (app: any, { __dirname }: { __dirname: strin
                     htmlContent = htmlContent.replace(/{{ASSET_VERSION}}/g, getAssetVersion());
                     htmlContent = htmlContent.replace(/{{SHOW_BACKOFFICE_STYLE}}/g, showBackoffice);
                     htmlContent = htmlContent.replace(/{{SHOW_CRM_STYLE}}/g, showCRM);
-                    htmlContent = htmlContent.replace(/{{SHOW_SYSTEM_CONFIG_STYLE}}/g, showSystemConfig);
-                    htmlContent = htmlContent.replace(/{{SYSTEM_CONFIG_VISIBLE_JS}}/g, systemConfigVisibleJs);
 
                     res.setHeader('Content-Type', 'text/html');
                     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -286,13 +279,21 @@ export const registerStaticRoutes = (app: any, { __dirname }: { __dirname: strin
     // QR específico para grupos / motor secundario
     app.get("/bot.groups.qr.png", async (req: any, res: any) => {
         const qrPath = path.join(process.cwd(), 'bot.groups.qr.png');
-        if (fs.existsSync(qrPath)) {
+        const groupProvider = getGroupProvider();
+        const fileExists = fs.existsSync(qrPath);
+        console.log('[Static] Group QR requested', {
+            fileExists,
+            hasMemoryQr: Boolean((groupProvider as any)?.qrCodeString),
+            providerReady: Boolean((groupProvider as any)?.isReady),
+            connectionState: (groupProvider as any)?.connectionState || null
+        });
+
+        if (fileExists) {
             res.setHeader('Content-Type', 'image/png');
             return fs.createReadStream(qrPath).pipe(res);
         }
 
         // Fallback para grupos usando la instancia global
-        const groupProvider = getGroupProvider();
         if (groupProvider && groupProvider.qrCodeString) {
             console.log("[Static] Group QR physical file missing, generating from memory...");
             const QRCode = await import('qrcode');

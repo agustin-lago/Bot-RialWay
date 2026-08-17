@@ -209,10 +209,6 @@ async function mountView(path) {
         return;
     }
 
-    if (cleanPath === '/system-config' && window.__SYSTEM_CONFIG_VISIBLE === false) {
-        navigate('/dashboard');
-        return;
-    }
 
     rememberSectionRoute(cleanPath);
 
@@ -396,12 +392,17 @@ async function updateNotificationDots() {
         const latestLeadTime = data.latest_crm_lead_time ? new Date(data.latest_crm_lead_time).getTime() : 0;
         const lastTareasVisit = parseInt(localStorage.getItem('last_visited_tareas') || '0');
         const latestTareaTime = data.latest_tarea_time ? new Date(data.latest_tarea_time).getTime() : 0;
-        const showCrm = (latestLeadTime > lastCrmVisit && currentPath !== '/crm') ||
-            (latestTareaTime > lastTareasVisit && currentPath !== '/crm-tareas');
+        const crmLeadsCount = Number(data.crm_leads_count || 0);
+        const crmTasksCount = Number(data.crm_tasks_count || 0);
+        const showCrmLeads = crmLeadsCount > 0 || latestLeadTime > lastCrmVisit;
+        setNotificationDot('dot-crm-leads', showCrmLeads);
+
+        const showCrm = showCrmLeads ||
+            (crmTasksCount > 0 || latestTareaTime > lastTareasVisit);
         setNotificationDot('dot-crm', showCrm);
 
         // --- Tareas ---
-        const showTareas = latestTareaTime > lastTareasVisit && currentPath !== '/crm-tareas';
+        const showTareas = crmTasksCount > 0 || latestTareaTime > lastTareasVisit;
         setNotificationDot('dot-tareas', showTareas);
 
         // --- Gestion (Padre) ---
@@ -448,30 +449,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Escuchar cambios de settings en tiempo real
     const _appSocket = io();
-    _appSocket.on('setting_changed', ({ key, value }) => {
-        if (key === 'SYSTEM_CONFIG_VISIBLE') {
-            const enabled = value !== 'false';
-            window.__SYSTEM_CONFIG_VISIBLE = enabled;
-            const navItem = document.querySelector('[data-route="/system-config"]')?.closest('li');
-            if (navItem) {
-                const canShowSystemConfig = enabled && localStorage.getItem('is_superadmin') === 'true';
-                navItem.classList.toggle('hidden-item', !canShowSystemConfig);
-                navItem.style.display = canShowSystemConfig ? '' : 'none';
-            }
-            if (typeof window.updateSystemConfigNavVisibility === 'function') {
-                window.updateSystemConfigNavVisibility();
-            }
-            if (typeof window.renderSideMenu === 'function') {
-                window.renderSideMenu();
-            }
-            const label = enabled ? 'Activado: Developer Settings' : 'Desactivado: Developer Settings';
-            showToast(label, enabled ? 'success' : 'info');
-            if (typeof window.updateSectionHeader === 'function') {
-                window.updateSectionHeader(window.location.pathname, { force: true });
-            }
-            if (!enabled && window.location.pathname === '/system-config') {
-                navigate('/dashboard');
-            }
+    _appSocket.on('setting_changed', ({ key }) => {
+        if (key === 'GLOBAL_BOT_ENABLED' && typeof window.updateSectionHeader === 'function') {
+            window.updateSectionHeader(window.location.pathname, { force: true });
         }
     });
 
