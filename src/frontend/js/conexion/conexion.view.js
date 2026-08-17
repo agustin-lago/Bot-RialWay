@@ -33,14 +33,18 @@ window.conexionView = {
                                         <span class="skeleton-text"></span>
                                     </div>
                                 </div>
-                                <div id="group-connection-container" class="conexion-kpi" style="display:none;">
+                                <div id="group-connection-container" class="conexion-kpi" style="display:block;">
                                     <span class="conexion-kpi-label">Estado de grupos</span>
-                                    <span id="group-session-status" class="status">No configurado</span>
+                                    <span id="group-session-status" class="status" style="display:none;">No configurado</span>
+                                    <div class="conexion-skeleton" id="group-session-status-skeleton">
+                                        <span class="skeleton-title"></span>
+                                        <span class="skeleton-text"></span>
+                                    </div>
                                 </div>
                             </div>
                             <div id="session-error" class="mb-3"></div>
                             <div class="conexion-link-grid">
-                                <div id="baileys-start-container" style="display:none;" class="conexion-start-panel">
+                                <div id="baileys-start-container" style="display:block;" class="conexion-start-panel">
                                     <p class="info-text mb-4">Vinculacion auxiliar de Baileys por QR o codigo para grupos.</p>
                                     <div class="conexion-start-options">
                                         <div>

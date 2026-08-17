@@ -738,44 +738,8 @@ export class HistoryHandler {
             console.error('❌ Error fatal creando índices:', err);
         }
 
-        // 5. Sincronizar SYSTEM_CONFIG_VISIBLE persistente desde DB/env sin modificarlo.
-        await this.checkSystemConfigVisibleOnStartup();
-
         console.log('✅ [HistoryHandler] Inicialización completa.');
         this.initialized = true;
-    }
-
-    static async activateSystemConfigManually() {
-        console.log(`[HistoryHandler] Activando SYSTEM_CONFIG_VISIBLE manualmente.`);
-        await this.saveSetting('SYSTEM_CONFIG_VISIBLE', 'true');
-    }
-
-    static async deactivateSystemConfig() {
-        await this.saveSetting('SYSTEM_CONFIG_VISIBLE', 'false');
-    }
-
-    static async checkSystemConfigVisibleOnStartup() {
-        try {
-            if (!supabase) return;
-            const { data, error } = await supabase
-                .from('settings')
-                .select('value')
-                .eq('project_id', this.PROJECT_IDENTIFIER)
-                .eq('key', 'SYSTEM_CONFIG_VISIBLE')
-                .maybeSingle();
-
-            if (error) {
-                console.error('[HistoryHandler] Error verificando SYSTEM_CONFIG_VISIBLE al inicio:', error);
-                return;
-            }
-
-            process.env.SYSTEM_CONFIG_VISIBLE = data?.value === 'true' ? 'true' : 'false';
-            if (data?.value === 'true') {
-                console.log(`[HistoryHandler] SYSTEM_CONFIG_VISIBLE activo de forma persistente.`);
-            }
-        } catch (err) {
-            console.error('[HistoryHandler] Error en checkSystemConfigVisibleOnStartup:', err);
-        }
     }
 
     /**
@@ -3862,8 +3826,7 @@ export class HistoryHandler {
                 { key: 'GOOGLE_PRIVATE_KEY', defaultValue: 'PENDING' },
                 { key: 'GOOGLE_CLIENT_EMAIL', defaultValue: 'PENDING' },
                 { key: 'SHEET_ID_RESUMEN', defaultValue: 'PENDING' },
-                { key: 'SHEET_RESUMEN_RANGE', defaultValue: 'Hoja1!A1' },
-                { key: 'SYSTEM_CONFIG_VISIBLE', defaultValue: 'false' }
+                { key: 'SHEET_RESUMEN_RANGE', defaultValue: 'Hoja1!A1' }
             ];
 
 

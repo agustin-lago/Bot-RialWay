@@ -752,6 +752,12 @@
     padding: 8px 12px;
     margin-bottom: 2px;
     box-shadow: 0 1px 0.5px rgba(0, 0, 0, 0.13);
+    cursor: context-menu;
+    user-select: text;
+  }
+
+  .msg * {
+    user-select: text;
   }
 
   .msg.user {
@@ -2266,6 +2272,12 @@
     flex-direction: column;
     min-width: 140px;
     padding: 8px 0;
+    cursor: default;
+    user-select: none;
+}
+
+.msg-dropdown-menu * {
+    user-select: none;
 }
 .msg-dropdown-menu.menu-up {
     top: auto;

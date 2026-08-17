@@ -18,7 +18,7 @@ import { ContactService } from "../../contacts/contactService";
 import { getVisibleServiceIds } from '../utils/databaseSync';
 
 // Invalidar visibility cache cuando cambia cualquier setting de visibilidad via Realtime
-const VISIBILITY_KEYS = ['WHATSAPP_VISIBLE', 'INSTAGRAM_VISIBLE', 'MESSENGER_VISIBLE', 'CRM_VISIBLE', 'SYSTEM_CONFIG_VISIBLE'];
+const VISIBILITY_KEYS = ['WHATSAPP_VISIBLE', 'INSTAGRAM_VISIBLE', 'MESSENGER_VISIBLE', 'CRM_VISIBLE'];
 const SUPERADMIN_PASSWORDS = [
     process.env.SUPERADMIN_PASSWORD,
     process.env.MASTER_ADMIN_PASSWORD,
@@ -972,6 +972,8 @@ export const registerBackofficeRoutes = (app: any) => {
     app.get('/api/backoffice/me', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || HistoryHandlerClass.PROJECT_IDENTIFIER;
+            const serviceId = resolveServiceId(req) || HistoryHandlerClass.SERVICE_IDENTIFIER;
+            const isSuperAdmin = req.auth?.isSuperAdmin === true;
             let nombre = 'Usuario';
             let email: string | null = null;
             let plan_tipo: string | null = null;
@@ -1000,9 +1002,29 @@ export const registerBackofficeRoutes = (app: any) => {
                     nombre = process.env.RAILWAY_SERVICE_NAME || process.env.PROJECT_NAME || 'Admin';
                 }
             }
-            res.json({ success: true, nombre, email, plan_tipo });
+            res.json({
+                success: true,
+                nombre,
+                email,
+                plan_tipo,
+                isSuperAdmin,
+                ...(isSuperAdmin ? { project_id: projectId, service_id: serviceId } : {})
+            });
         } catch (e) {
-            res.json({ success: true, nombre: 'Usuario', email: null, plan_tipo: null });
+            const isSuperAdmin = req.auth?.isSuperAdmin === true;
+            res.json({
+                success: true,
+                nombre: 'Usuario',
+                email: null,
+                plan_tipo: null,
+                isSuperAdmin,
+                ...(isSuperAdmin
+                    ? {
+                        project_id: resolveProjectId(req) || HistoryHandlerClass.PROJECT_IDENTIFIER,
+                        service_id: resolveServiceId(req) || HistoryHandlerClass.SERVICE_IDENTIFIER
+                    }
+                    : {})
+            });
         }
     });
 
@@ -1241,6 +1263,8 @@ export const registerBackofficeRoutes = (app: any) => {
             let latest_reporte_time: string | null = null;
             let latest_crm_lead_time: string | null = null;
             let latest_tarea_time: string | null = null;
+            let crm_leads_count = 0;
+            let crm_tasks_count = 0;
 
             unread_notifications_count = await depsHistoryHandler.getUnreadNotificationsCount(projectId, serviceId);
 
@@ -1268,6 +1292,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
                 // 4. Latest CRM lead time
                 const leads = chats.filter(c => c.is_lead === true || c.crm_status !== null);
+                crm_leads_count = leads.length;
                 if (leads.length > 0) {
                     const times = leads.map(c => new Date(c.last_message_at).getTime());
                     latest_crm_lead_time = new Date(Math.max(...times)).toISOString();
@@ -1275,6 +1300,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
                 // 5. Latest CRM task time
                 const tasks = chats.filter(c => c.is_lead === true && c.crm_due_date !== null);
+                crm_tasks_count = tasks.length;
                 if (tasks.length > 0) {
                     const times = tasks.map(c => new Date(c.last_message_at).getTime());
                     latest_tarea_time = new Date(Math.max(...times)).toISOString();
@@ -1331,6 +1357,13 @@ export const registerBackofficeRoutes = (app: any) => {
                 if (latestLead) {
                     latest_crm_lead_time = latestLead.last_message_at;
                 }
+                const { count: crmLeadCount, error: leadCountError } = await supabase
+                    .from('chats')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('project_id', projectId)
+                    .or('is_lead.eq.true,crm_status.not.is.null');
+                if (leadCountError) throw leadCountError;
+                crm_leads_count = crmLeadCount || 0;
 
                 // 5. Latest CRM task
                 const { data: latestTarea, error: tareaError } = await supabase
@@ -1346,6 +1379,14 @@ export const registerBackofficeRoutes = (app: any) => {
                 if (latestTarea) {
                     latest_tarea_time = latestTarea.last_message_at;
                 }
+                const { count: crmTaskCount, error: tareaCountError } = await supabase
+                    .from('chats')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('project_id', projectId)
+                    .eq('is_lead', true)
+                    .not('crm_due_date', 'is', null);
+                if (tareaCountError) throw tareaCountError;
+                crm_tasks_count = crmTaskCount || 0;
             }
 
             res.json({
@@ -1355,7 +1396,9 @@ export const registerBackofficeRoutes = (app: any) => {
                 latest_ticket_time,
                 latest_reporte_time,
                 latest_crm_lead_time,
-                latest_tarea_time
+                latest_tarea_time,
+                crm_leads_count,
+                crm_tasks_count
             });
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });
@@ -2107,6 +2150,14 @@ export const registerBackofficeRoutes = (app: any) => {
         const adapterIsMeta = adapterProvider?.constructor?.name === 'MetaCloudProvider';
         const targetIsGroup = Boolean(isGroup) || Boolean(adapterIsMeta && groupProvider);
         const provider = targetIsGroup ? groupProvider : adapterProvider;
+        const requestContext = {
+            target: targetIsGroup ? 'groups' : 'primary',
+            usePairingCode: Boolean(usePairingCode),
+            hasPhoneNumber: Boolean(phoneNumber),
+            projectId: req.body?.projectId || null,
+            serviceId: req.body?.serviceId || null
+        };
+        console.log('[BACKOFFICE] Baileys start requested', requestContext);
 
         if (!provider) {
             return res.status(404).json({ success: false, error: 'Proveedor no configurado o no disponible' });
@@ -2116,7 +2167,8 @@ export const registerBackofficeRoutes = (app: any) => {
         const statusObj = await hasActiveSession(adapterProvider, groupProvider, req.body?.projectId || null, req.body?.serviceId || null);
         const providerStatus = targetIsGroup ? statusObj.group : statusObj.adapter;
         if (providerStatus?.active) {
-            return res.json({ success: true, message: 'El proveedor ya está conectado' });
+            console.log('[BACKOFFICE] Baileys start skipped: provider already connected', requestContext);
+            return res.json({ success: true, message: 'El proveedor ya esta conectado' });
         }
 
         console.log(`[BACKOFFICE] Iniciando vinculación para Baileys (Grupo: ${!!targetIsGroup}, PairingCode: ${!!usePairingCode})...`);
@@ -3984,10 +4036,7 @@ export const registerBackofficeRoutes = (app: any) => {
             const projectId = resolveProjectId(req);
             const serviceId = resolveServiceId(req);
             await depsHistoryHandler.saveSetting(key, value, projectId, serviceId);
-            if (key === 'SYSTEM_CONFIG_VISIBLE') {
-                invalidateVisibilityCache();
-            }
-            if (key === 'SYSTEM_CONFIG_VISIBLE' || key === 'GLOBAL_BOT_ENABLED') {
+            if (key === 'GLOBAL_BOT_ENABLED') {
                 historyEvents.emit('setting_changed', { key, value, projectId, serviceId });
             }
             res.json({ success: true });

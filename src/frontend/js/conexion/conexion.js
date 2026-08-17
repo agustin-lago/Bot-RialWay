@@ -34,6 +34,12 @@ function scheduleQrNoResultGuard(message = 'No se pudo generar el QR') {
         setConnectionButtonsBusy(false);
     }, 30000);
 }
+function scheduleConnectionStatusRefreshes() {
+    [1000, 2500, 5000, 9000, 15000, 23000].forEach((delay) => {
+        setTimeout(fetchStatus, delay);
+    });
+}
+
 function getGroupStatusKey(status) {
     if (!status) return 'none';
     if (status.qr) return 'qr';
@@ -434,6 +440,30 @@ function showQrError(message = 'No se pudo generar el QR') {
     }
 }
 
+function getQrDisplaySource(source) {
+    const qrSource = source || '/qr.png';
+    if (qrSource.startsWith('data:')) return qrSource;
+    const separator = qrSource.includes('?') ? '&' : '?';
+    return `${qrSource}${separator}v=${Date.now()}`;
+}
+
+function showQrConnected(titleText = 'WhatsApp de grupos conectado') {
+    clearQrRequestPending();
+    if (_qrSkeletonTimer) clearTimeout(_qrSkeletonTimer);
+    _qrSkeletonTimer = null;
+    _lastRenderedQrSource = null;
+    const { section, title, skeleton, img, empty, pairing } = getQrElements();
+    if (section) section.style.display = 'block';
+    if (title) title.textContent = titleText;
+    if (skeleton) skeleton.style.display = 'none';
+    if (img) img.style.display = 'none';
+    if (pairing) pairing.style.display = 'none';
+    if (empty) {
+        empty.textContent = 'La sesion auxiliar de Baileys esta vinculada.';
+        empty.style.display = 'block';
+    }
+}
+
 function renderQrImage(source, titleText) {
     clearQrRequestPending();
     const qrSource = source || '/qr.png';
@@ -446,8 +476,10 @@ function renderQrImage(source, titleText) {
     if (_lastRenderedQrSource === qrSource) {
         if (_qrSkeletonTimer) return;
         if (skeleton) skeleton.style.display = 'none';
-        if (empty) empty.style.display = 'none';
-        img.style.display = 'block';
+        if (img.dataset.loadedQrSource === qrSource) {
+            if (empty) empty.style.display = 'none';
+            img.style.display = 'block';
+        }
         return;
     }
 
@@ -455,10 +487,22 @@ function renderQrImage(source, titleText) {
     showQrLoading(titleText || 'Escanea con WhatsApp');
     if (_qrSkeletonTimer) clearTimeout(_qrSkeletonTimer);
     _qrSkeletonTimer = setTimeout(() => {
-        if (skeleton) skeleton.style.display = 'none';
-        if (empty) empty.style.display = 'none';
-        img.src = qrSource;
-        img.style.display = 'block';
+        _qrSkeletonTimer = null;
+        img.onload = () => {
+            img.dataset.loadedQrSource = qrSource;
+            if (skeleton) skeleton.style.display = 'none';
+            if (empty) empty.style.display = 'none';
+            img.style.display = 'block';
+        };
+        img.onerror = () => {
+            if (skeleton) skeleton.style.display = 'none';
+            img.style.display = 'none';
+            if (empty) {
+                empty.textContent = 'No se pudo cargar el QR. Reintenta la vinculacion.';
+                empty.style.display = 'block';
+            }
+        };
+        img.src = getQrDisplaySource(qrSource);
     }, 2000);
 }
 
@@ -499,7 +543,8 @@ function hideQrPresentation() {
     showQrIdle();
 }
 
-async function fetchStatus() {    try {
+async function fetchStatus() {
+    try {
         const res = await fetch(getConexionStatusUrl());
         if (res.status === 401) return logout();
         const data = await res.json();
@@ -509,18 +554,21 @@ async function fetchStatus() {    try {
             currentProjectId = data.activeProjectId || (data.metaOnboarding && data.metaOnboarding.project_id) || 'default';
         }
 
-        const statusEl       = document.getElementById('session-status');
-        const sessionInfo    = document.getElementById('session-info');
-        const sessionError   = document.getElementById('session-error');
+        const statusEl = document.getElementById('session-status');
+        const sessionInfo = document.getElementById('session-info');
+        const sessionError = document.getElementById('session-error');
         const wsLinkContainer = document.getElementById('whatsapp-link-container');
         const groupContainer = document.getElementById('group-connection-container');
-        const groupStatusEl  = document.getElementById('group-session-status');
+        const groupStatusEl = document.getElementById('group-session-status');
         const startContainer = document.getElementById('baileys-start-container');
         const statusSkeleton = document.getElementById('session-status-skeleton');
+        const groupStatusSkeleton = document.getElementById('group-session-status-skeleton');
 
         if (!statusEl) return; // view desmontada
         statusEl.style.display = '';
         if (statusSkeleton) statusSkeleton.style.display = 'none';
+        if (groupStatusEl) groupStatusEl.style.display = '';
+        if (groupStatusSkeleton) groupStatusSkeleton.style.display = 'none';
         sessionInfo.style.display = 'none';
         wsLinkContainer.style.display = 'none';
         sessionError.innerHTML = '';
@@ -556,10 +604,16 @@ async function fetchStatus() {    try {
             if (groupStatus.active) {
                 groupStatusEl.textContent = 'Grupos: Baileys';
                 groupStatusEl.style.color = '#10b981';
+                showQrConnected();
                 if (!data.adapter?.qr && !data.adapter?.pairingCode) {
                     hideQrPresentation();
                 }
                 clearQrRequestPending();
+                setConnectionButtonsBusy(false);
+            } else if (groupStatus.pairingCode) {
+                groupStatusEl.textContent = 'Grupos: Esperando vinculacion por codigo';
+                groupStatusEl.style.color = '#f59e0b';
+                renderPairingCode(groupStatus.pairingCode, 'Codigo de vinculacion para grupos');
                 setConnectionButtonsBusy(false);
             } else if (groupStatus.qr) {
                 groupStatusEl.textContent = 'Grupos: Esperando vinculacion';
@@ -578,6 +632,7 @@ async function fetchStatus() {    try {
                     if (!data.adapter?.qr && !data.adapter?.pairingCode) {
                         hideQrPresentation();
                     }
+                    hideQrPresentation();
                     setConnectionButtonsBusy(false);
                 }
             }
@@ -588,6 +643,7 @@ async function fetchStatus() {    try {
             if (!data.adapter?.qr && !data.adapter?.pairingCode) {
                 hideQrPresentation();
             }
+            hideQrPresentation();
             setConnectionButtonsBusy(false);
         }
     } catch (e) {
@@ -673,7 +729,7 @@ window.initConexionView = function () {
     fetchStatus();
 
     // Intervalos de polling
-    _conexionIntervals.push(setInterval(fetchStatus,    5000));
+    _conexionIntervals.push(setInterval(fetchStatus, 5000));
     _conexionIntervals.push(setInterval(fetchBotStatus, 30000));
 
     // --- Toggle Bot Global ---
@@ -799,13 +855,13 @@ window.initConexionView = function () {
     }
 
     // --- Modal Reiniciar Sesion ---
-    const goResetBtn  = document.getElementById('go-reset');
-    const resetModal  = document.getElementById('resetModal');
-    const confirmSi   = document.getElementById('confirmSi');
-    const confirmNo   = document.getElementById('confirmNo');
+    const goResetBtn = document.getElementById('go-reset');
+    const resetModal = document.getElementById('resetModal');
+    const confirmSi = document.getElementById('confirmSi');
+    const confirmNo = document.getElementById('confirmNo');
 
-    if (goResetBtn)  goResetBtn.addEventListener('click', (e) => { e.preventDefault(); resetModal.classList.remove('hidden'); });
-    if (confirmNo)   confirmNo.addEventListener('click', () => resetModal.classList.add('hidden'));
+    if (goResetBtn) goResetBtn.addEventListener('click', (e) => { e.preventDefault(); resetModal.classList.remove('hidden'); });
+    if (confirmNo) confirmNo.addEventListener('click', () => resetModal.classList.add('hidden'));
     if (confirmSi) {
         confirmSi.addEventListener('click', async () => {
             confirmSi.disabled = true;
@@ -829,12 +885,12 @@ window.initConexionView = function () {
     }
 
     // --- Modal Desvincular Meta ---
-    const goUnlinkBtn     = document.getElementById('go-unlink-meta');
-    const unlinkModal     = document.getElementById('unlinkMetaModal');
+    const goUnlinkBtn = document.getElementById('go-unlink-meta');
+    const unlinkModal = document.getElementById('unlinkMetaModal');
     const confirmUnlinkSi = document.getElementById('confirmUnlinkSi');
     const confirmUnlinkNo = document.getElementById('confirmUnlinkNo');
 
-    if (goUnlinkBtn)     goUnlinkBtn.addEventListener('click', (e) => { e.preventDefault(); unlinkModal.classList.remove('hidden'); });
+    if (goUnlinkBtn) goUnlinkBtn.addEventListener('click', (e) => { e.preventDefault(); unlinkModal.classList.remove('hidden'); });
     if (confirmUnlinkNo) confirmUnlinkNo.addEventListener('click', () => unlinkModal.classList.add('hidden'));
     if (confirmUnlinkSi) {
         confirmUnlinkSi.addEventListener('click', async () => {
@@ -883,7 +939,7 @@ window.initConexionView = function () {
                     })
                 });
                 if (res.ok) {
-                    setTimeout(fetchStatus, 1500);
+                    scheduleConnectionStatusRefreshes();
                 } else {
                     const err = await res.json();
                     window.swalAlert('Error', 'Error al iniciar generador de QR: ' + (err.error || 'error desconocido'), 'error');
@@ -933,7 +989,7 @@ window.initConexionView = function () {
                     })
                 });
                 if (res.ok) {
-                    setTimeout(fetchStatus, 1500);
+                    scheduleConnectionStatusRefreshes();
                 } else {
                     const err = await res.json();
                     window.swalAlert('Error', 'Error al iniciar vinculacion: ' + (err.error || 'error desconocido'), 'error');

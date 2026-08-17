@@ -15,8 +15,14 @@ window.crmView = {
                 </div>
                 <div class="header-actions">
                     <div class="crm-subview-switch" role="tablist" aria-label="Vistas CRM">
-                        <button type="button" class="crm-subview-btn active" onclick="window.navigate('/crm')" role="tab" aria-selected="true">CRM</button>
-                        <button type="button" class="crm-subview-btn" onclick="window.navigate('/crm-tareas')" role="tab" aria-selected="false">Ver tareas</button>
+                        <button type="button" class="crm-subview-btn active" onclick="window.navigate('/crm')" role="tab" aria-selected="true">
+                            <span>CRM</span>
+                            <span class="nav-dot crm-subview-badge" data-dot-sync="dot-crm-leads" style="display:none;" aria-hidden="true"></span>
+                        </button>
+                        <button type="button" class="crm-subview-btn" onclick="window.navigate('/crm-tareas')" role="tab" aria-selected="false">
+                            <span>Ver tareas</span>
+                            <span class="nav-dot crm-subview-badge" data-dot-sync="dot-tareas" style="display:none;" aria-hidden="true"></span>
+                        </button>
                     </div>
                     <button class="btn btn-primary" onclick="window.openNewLeadModal()">
                         <i class="fas fa-plus"></i> Crear Lead

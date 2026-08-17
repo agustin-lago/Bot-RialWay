@@ -74,7 +74,7 @@ async function login() {
             } else {
                 clearRememberedLogin();
             }
-            const isSuperAdmin = result.isSuperAdmin === true;
+            const isSuperAdmin = result.isSuperAdmin === true || result.is_superadmin === true;
             localStorage.setItem('user_role', result.role || 'subuser');
             localStorage.setItem('user_id', result.userId || '');
             localStorage.setItem('user_name', result.user || user);

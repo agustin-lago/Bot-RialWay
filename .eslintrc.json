@@ -15,6 +15,9 @@
       "sourceType": "module"
     },
     "plugins": ["@typescript-eslint", "builderbot"],
+    "ignorePatterns": [
+      "src/frontend/style/vendor/**"
+    ],
     "rules": {
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-unused-vars": "off",
@@ -23,4 +26,4 @@
       "no-unsafe-optional-chaining": "off"
     }
   }
-  
+

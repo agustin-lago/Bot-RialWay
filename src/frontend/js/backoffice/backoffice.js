@@ -365,6 +365,43 @@ function closeMessageMenus() {
     });
 }
 
+function getSelectedTextForMessage(messageEl) {
+    const selection = window.getSelection ? window.getSelection() : null;
+    if (!selection || selection.rangeCount === 0) return '';
+
+    const selectedText = selection.toString().trim();
+    if (!selectedText) return '';
+
+    const range = selection.getRangeAt(0);
+    const anchorInside = messageEl && selection.anchorNode && messageEl.contains(selection.anchorNode);
+    const focusInside = messageEl && selection.focusNode && messageEl.contains(selection.focusNode);
+    const commonInside = messageEl && range.commonAncestorContainer && messageEl.contains(range.commonAncestorContainer);
+
+    return anchorInside || focusInside || commonInside ? selectedText : '';
+}
+
+function showCopyToast(message, type = 'success') {
+    if (typeof window.showToast === 'function') {
+        window.showToast(message, type);
+        return;
+    }
+
+    const toast = document.createElement('div');
+    toast.textContent = message;
+    toast.style.position = 'fixed';
+    toast.style.bottom = '20px';
+    toast.style.left = '50%';
+    toast.style.transform = 'translateX(-50%)';
+    toast.style.background = 'rgba(0,0,0,0.7)';
+    toast.style.color = 'white';
+    toast.style.padding = '8px 16px';
+    toast.style.borderRadius = '20px';
+    toast.style.zIndex = '9999';
+    toast.style.fontSize = '0.9rem';
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 2000);
+}
+
 function initMessageLongPressMenu() {
     const container = document.getElementById('messages');
     if (!container || container.dataset.longPressBound === 'true') return;
@@ -1669,7 +1706,10 @@ function generateMessageHtml(m, isNew = false) {
                     <i class="fas fa-share"></i> Reenviar
                 </div>
                 <div class="msg-dropdown-item" onclick="window.copyMessage('${externalId}')">
-                    <i class="fas fa-copy"></i> Copiar
+                    <i class="fas fa-copy"></i> Copiar mensaje
+                </div>
+                <div class="msg-dropdown-item" onclick="window.copySelectedMessageText('${externalId}')">
+                    <i class="fas fa-i-cursor"></i> Copiar selección
                 </div>
                 <div class="msg-dropdown-item text-red-500" onclick="window.deleteMessage('${externalId}')">
                     <i class="fas fa-trash"></i> Eliminar
@@ -5241,21 +5281,25 @@ window.copyMessage = function(msgId) {
     const msg = allMessages.find(m => m.id === msgId || m.external_id === msgId);
     if (!msg || !msg.content) return;
     navigator.clipboard.writeText(msg.content).then(() => {
-        const toast = document.createElement('div');
-        toast.textContent = 'Mensaje copiado';
-        toast.style.position = 'fixed';
-        toast.style.bottom = '20px';
-        toast.style.left = '50%';
-        toast.style.transform = 'translateX(-50%)';
-        toast.style.background = 'rgba(0,0,0,0.7)';
-        toast.style.color = 'white';
-        toast.style.padding = '8px 16px';
-        toast.style.borderRadius = '20px';
-        toast.style.zIndex = '9999';
-        toast.style.fontSize = '0.9rem';
-        document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 2000);
+        showCopyToast('Mensaje copiado');
     }).catch(err => console.error('Error copying text: ', err));
+};
+
+window.copySelectedMessageText = function(msgId) {
+    const menu = document.getElementById("dropdown-" + msgId);
+    const msgContainer = menu?.closest('.msg') || document.querySelector(`.msg[data-id="${CSS.escape(msgId)}"]`);
+    const selectedText = menu?.dataset.selectedText || getSelectedTextForMessage(msgContainer);
+
+    closeMessageMenus();
+
+    if (!selectedText) {
+        showCopyToast('No hay texto seleccionado', 'warning');
+        return;
+    }
+
+    navigator.clipboard.writeText(selectedText).then(() => {
+        showCopyToast('Selección copiada');
+    }).catch(err => console.error('Error copying selected text: ', err));
 };
 
 window.replyToMessage = function(msgId) {
@@ -5359,6 +5403,7 @@ window.toggleMsgDropdown = function(msgId) {
     menu.style.right = '';
     if (isShowing) return;
     const msgContainer = menu.closest('.msg');
+    menu.dataset.selectedText = getSelectedTextForMessage(msgContainer);
     const scrollContainer = document.getElementById('messages');
     if (msgContainer && scrollContainer) {
         const cRect = scrollContainer.getBoundingClientRect();
