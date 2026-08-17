@@ -515,13 +515,31 @@ window.notificationsWidget = (() => {
         const idSet = new Set(ids.map(String));
         _lastNotifications = _lastNotifications.map(n => idSet.has(String(n.id)) ? { ...n, read: true } : n);
         render(_lastNotifications);
-        await fetch(`/api/backoffice/notifications/read?token=${encodeURIComponent(token)}`, {
+
+        const currentCount = parseInt(document.getElementById('desktop-badge-notifications-count')?.innerText || '0');
+        const newCount = Math.max(0, currentCount - ids.length);
+        const label = newCount > 99 ? '+99' : newCount;
+        document.querySelectorAll('[data-notifications-badge]').forEach(badge => {
+            badge.innerText = label;
+            badge.style.display = newCount > 0 ? 'inline-flex' : 'none';
+        });
+
+        const res = await fetch(`/api/backoffice/notifications/read?token=${encodeURIComponent(token)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ids })
         });
+        const data = await res.json();
+        
+        if (data.success && typeof data.unread_notifications_count !== 'undefined') {
+            const finalLabel = data.unread_notifications_count > 99 ? '+99' : data.unread_notifications_count;
+            document.querySelectorAll('[data-notifications-badge]').forEach(badge => {
+                badge.innerText = finalLabel;
+                badge.style.display = data.unread_notifications_count > 0 ? 'inline-flex' : 'none';
+            });
+        }
+
         if (!options.silent && typeof showToast === 'function') showToast('Notificaci\u00f3n le\u00edda', 'success');
-        if (typeof updateNotificationDots === 'function') updateNotificationDots();
         if (options.refresh !== false) await load();
     }
 

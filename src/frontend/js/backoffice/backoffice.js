@@ -5426,3 +5426,31 @@ window.toggleMsgDropdown = function(msgId) {
     }
 };
 
+
+
+// --- Funciones Globales para Textareas de Chat (Movidas desde crm-common) ---
+window.handleChatTextareaKey = function(e, sendCallback) {
+    if (e.key === 'Enter') {
+        if (window.innerWidth <= 1024) {
+            return;
+        } else {
+            if (!e.shiftKey) {
+                e.preventDefault();
+                if (typeof sendCallback === 'function') sendCallback();
+            }
+        }
+    }
+};
+window.autoResizeChatTextarea = function(el) {
+    el.style.height = 'auto';
+    const paddingY = 16;
+    const lineHeight = 20;
+    const maxLines = window.innerWidth <= 1024 ? 5 : 8;
+    const maxHeight = paddingY + (lineHeight * maxLines);
+    el.style.height = Math.min(el.scrollHeight, maxHeight) + 'px';
+};
+window.resetChatTextarea = function(el) {
+    if (!el) return;
+    el.value = '';
+    el.style.height = 'auto';
+};

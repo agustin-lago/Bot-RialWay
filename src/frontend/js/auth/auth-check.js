@@ -22,3 +22,59 @@
         }
     }
 })();
+
+// Interceptor de Fetch global para codificar automáticamente el token en query strings
+(function() {
+    const originalFetch = window.fetch;
+    window.fetch = function(input, init) {
+        if (typeof input === 'string') {
+            const tokenIdx = input.indexOf('token=');
+            if (tokenIdx !== -1) {
+                const prefix = input.substring(0, tokenIdx + 6);
+                const remainder = input.substring(tokenIdx + 6);
+                const ampIdx = remainder.indexOf('&');
+                let rawToken, suffix;
+                if (ampIdx !== -1) {
+                    rawToken = remainder.substring(0, ampIdx);
+                    suffix = remainder.substring(ampIdx);
+                } else {
+                    rawToken = remainder;
+                    suffix = '';
+                }
+                const decodedToken = decodeURIComponent(rawToken);
+                const encodedToken = encodeURIComponent(decodedToken);
+                input = prefix + encodedToken + suffix;
+            }
+        } else if (input && typeof input === 'object' && typeof input.toString === 'function') {
+            let inputStr = input.toString();
+            const tokenIdx = inputStr.indexOf('token=');
+            if (tokenIdx !== -1) {
+                const prefix = inputStr.substring(0, tokenIdx + 6);
+                const remainder = inputStr.substring(tokenIdx + 6);
+                const ampIdx = remainder.indexOf('&');
+                let rawToken, suffix;
+                if (ampIdx !== -1) {
+                    rawToken = remainder.substring(0, ampIdx);
+                    suffix = remainder.substring(ampIdx);
+                } else {
+                    rawToken = remainder;
+                    suffix = '';
+                }
+                const decodedToken = decodeURIComponent(rawToken);
+                const encodedToken = encodeURIComponent(decodedToken);
+                input = prefix + encodedToken + suffix;
+            }
+        }
+        return originalFetch(input, init);
+    };
+})();
+
+/**
+ * Retorna el token de autenticación del backoffice listo para usar en URLs.
+ * Usa encodeURIComponent para evitar que caracteres especiales (#, &, etc.)
+ * rompan la query string.
+ */
+window.getAuthToken = function() {
+    const raw = localStorage.getItem('system_config_token') || localStorage.getItem('backoffice_token') || '';
+    return encodeURIComponent(raw);
+};

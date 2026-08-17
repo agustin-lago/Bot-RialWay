@@ -3,7 +3,7 @@
 
 <head>
     <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('theme') || 'light');</script>
-    <script src="/js/auth/auth-check.js?v=2"></script>
+    <script src="/js/auth/auth-check.js"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Backoffice - Neurolinks</title>
@@ -119,54 +119,6 @@
             }
         })();
     </script>
-    <style>
-        /* Previene auto-zoom en iOS en todos los inputs de la app */
-        @media (max-width: 1024px) {
-
-            input[type="text"],
-            input[type="email"],
-            input[type="number"],
-            input[type="password"],
-            input[type="search"],
-            input[type="tel"],
-            input[type="url"],
-            textarea,
-            select {
-                font-size: 16px !important;
-            }
-        }
-
-        /* Puntos de notificacion rojos en sidebar */
-        .nav-dot {
-            display: inline-block;
-            width: 10px;
-            height: 10px;
-            background: radial-gradient(circle, rgba(239, 68, 68, 1) 25%, rgba(239, 68, 68, 0.45) 65%, rgba(239, 68, 68, 0) 100%);
-            border-radius: 50%;
-            margin-left: 6px;
-            flex-shrink: 0;
-            vertical-align: middle;
-            position: relative;
-            animation: nav-dot-pulse 2s infinite ease-in-out;
-        }
-
-        @keyframes nav-dot-pulse {
-            0% {
-                transform: scale(0.95);
-                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
-            }
-
-            70% {
-                transform: scale(1.15);
-                box-shadow: 0 0 0 6px rgba(239, 68, 68, 0);
-            }
-
-            100% {
-                transform: scale(0.95);
-                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
-            }
-        }
-</style>
 </head>
 
 <body class="flex h-screen overflow-hidden font-body" style="height: 100dvh;">
@@ -276,7 +228,10 @@
 
         <div class="app-sidemenu-footer">
             <button type="button" class="app-sidemenu-profile" id="desktop-account-trigger" onclick="toggleDesktopAccountMenu(event)" aria-label="Menu de cuenta" aria-expanded="false">
-                <span class="app-sidemenu-avatar" id="sidemenu-project-avatar" data-project-name="{{PROJECT_NAME}}">{{PROJECT_NAME}}</span>
+                <div style="position:relative; display:inline-flex;">
+                    <span class="app-sidemenu-avatar" id="sidemenu-project-avatar" data-project-name="{{PROJECT_NAME}}">{{PROJECT_NAME}}</span>
+                    <span id="sidebar-global-dot" class="app-sidemenu-avatar-dot" style="display:none;"></span>
+                </div>
                 <span class="app-sidemenu-profile-text">
                     <strong>{{BOT_NAME}}</strong>
                     <span id="sidemenu-user-email"></span>
@@ -284,11 +239,11 @@
                 <span class="app-sidemenu-profile-indicators" aria-hidden="true">
                     <span class="app-sidemenu-profile-indicator">
                         <i class="fas fa-bell"></i>
-                        <span class="unread-badge app-sidemenu-profile-badge" data-notifications-badge style="display:none;">0</span>
+                        <span class="app-sidemenu-icon-dot" data-notifications-dot style="display:none;"></span>
                     </span>
                     <span class="app-sidemenu-profile-indicator">
                         <i class="fas fa-headset"></i>
-                        <span class="unread-badge app-sidemenu-profile-badge" data-support-badge style="display:none;">0</span>
+                        <span class="app-sidemenu-icon-dot" data-support-dot style="display:none;"></span>
                     </span>
                 </span>
                 <i class="fas fa-chevron-right app-sidemenu-profile-chevron"></i>
@@ -355,11 +310,10 @@
         <div id="view-content-root" class="flex flex-1 overflow-hidden relative"></div>
     </div>
 
-    <script src="/js/core/navigation-config.js?v=10"></script>
-    <script src="/js/crm/crm-common.js?v=8"></script>
+    <script src="/js/core/navigation-config.js"></script>
     <script src="/js/core/section-header.js"></script>
     <script src="/js/core/neural-bg.js"></script>
-    <script src="/app.js?v=8"></script>
+    <script src="/app.js"></script>
 </body>
 
 </html>

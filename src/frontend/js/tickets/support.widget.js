@@ -839,9 +839,17 @@ window.supportWidget = (() => {
         const date = new Date(t.created_at).toLocaleDateString('es-AR');
         let chatsAdj = _parseJson(t.chats_adjuntos, []);
         let needsResponse = false;
-        if (chatsAdj.length > 0) {
+        if (chatsAdj.length > 0 && t.estado !== 'Cerrado') {
             const lastMsg = chatsAdj[chatsAdj.length - 1];
-            if (lastMsg.rol === 'admin') needsResponse = true;
+            if (lastMsg.rol === 'admin') {
+                const readTimeStr = localStorage.getItem('sw_read_' + t.id);
+                const msgTimeStr = lastMsg.timestamp || lastMsg.fecha;
+                const msgTime = msgTimeStr ? new Date(msgTimeStr).getTime() : 0;
+                const isCurrentlyViewing = _isOpen && !_isMinimized && _activeTab === 'messages' && _activeTicket && String(_activeTicket.id) === String(t.id);
+                if (!isCurrentlyViewing && (!readTimeStr || msgTime > parseInt(readTimeStr))) {
+                    needsResponse = true;
+                }
+            }
         }
 
         const statusColor = { 'Abierto': '#ef4444', 'Cerrado': '#22c55e' }[t.estado] || '#64748b';
@@ -869,7 +877,7 @@ window.supportWidget = (() => {
                 const isFromAdmin = chatsAdj[chatsAdj.length - 1].rol === 'admin';
 
                 // Si el mensaje es de admin, verificamos si el usuario lo esta viendo activamente
-                const isCurrentlyViewing = _isOpen && !_isMinimized && _activeTab === 'messages' && _activeTicket && _activeTicket.id === t.id;
+                const isCurrentlyViewing = _isOpen && !_isMinimized && _activeTab === 'messages' && _activeTicket && String(_activeTicket.id) === String(t.id);
 
                 const lastMsg = chatsAdj[chatsAdj.length - 1];
                 if (isCurrentlyViewing && isFromAdmin) {
@@ -903,6 +911,12 @@ window.supportWidget = (() => {
             item.style.display = display;
             item.innerText = unreadCount;
         });
+        document.querySelectorAll('[data-support-dot]').forEach(item => {
+            item.style.display = display;
+        });
+        if (typeof window.checkSidebarGlobalDot === 'function') {
+            window.checkSidebarGlobalDot();
+        }
     }
 
     function _syncSidebarTrigger() {
@@ -913,7 +927,7 @@ window.supportWidget = (() => {
     }
 
     function openChat(ticketId) {
-        _activeTicket = _activeTicketsCache.find(t => t.id === ticketId);
+        _activeTicket = _activeTicketsCache.find(t => String(t.id) === String(ticketId));
         if (!_activeTicket) return;
 
         document.getElementById('sw-ticket-list-view').style.display = 'none';

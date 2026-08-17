@@ -71,7 +71,8 @@ window.crmTareasView = {
         if (typeof Sortable === 'undefined') {
             await loadViewScript('https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js');
         }
-        await loadViewScript('/js/crm/crm-tareas.js?v=8');
+        await loadViewScript('/js/crm/crm-common.js');
+        await loadViewScript('/js/crm/crm-tareas.js');
         if (typeof window.initCRMTareasView === 'function') await window.initCRMTareasView();
     },
 

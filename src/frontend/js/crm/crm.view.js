@@ -97,7 +97,8 @@ window.crmView = {
         if (typeof Sortable === 'undefined') {
             await loadViewScript('https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js');
         }
-        await loadViewScript('/js/crm/crm.js?v=4');
+        await loadViewScript('/js/crm/crm-common.js');
+        await loadViewScript('/js/crm/crm.js');
         if (typeof window.initCRMView === 'function') await window.initCRMView();
     },
 

@@ -1167,3 +1167,35 @@ Se cambio Filtros a un desplegable compacto en la cabecera y se agregaron filtro
 
 Que ocasionaba sin el arreglo:
 El usuario tenia que navegar mas de lo necesario para filtrar y podia necesitar cerrar/reabrir la eliminacion para ajustar que leads borrar.
+
+## 56. Error "Proveedor Meta no disponible" en descargas masivas y envios
+
+Problema:
+Al intentar exportar la plantilla a Excel o usar los envios masivos/rapidos, el sistema arrojaba el error "Proveedor Meta no disponible" (HTTP 400).
+
+Causa:
+Varias rutas en `backoffice.routes.ts` intentaban acceder a la variable `adapterProvider` y `groupProvider` sin inicializarlas mediante las funciones correspondientes (`getAdapterProvider()` y `getGroupProvider()`). Esto causaba que la validacion de proveedor fallara o se perdiera la referencia al proveedor real.
+
+Arreglo:
+Se instanciaron correctamente las variables en cada ruta afectada antes de evaluar la capacidad de MetaCloudProvider.
+
+Que ocasionaba sin el arreglo:
+El boton de Formato Excel y otras funciones de envio masivo fallaban inmediatamente porque el backend no lograba identificar al proveedor Meta conectado.
+
+## 57. Refactorización de Arquitectura: Aislamiento del CRM y limpieza Global
+
+Problema:
+El archivo crm-common.js operaba como un 'God Object' conteniendo lógica global no relacionada al CRM (modal de usuarios, interceptor de fetch, utilidades de textarea de chat, selectores custom), generando posibles fallas, colisiones de estado global y carga innecesaria en pantallas como login.
+
+Causa:
+Funcionalidades comunes de interfaz o autenticación estaban mezcladas junto a la lógica pesada del tablero Kanban, obligando a cargar crm-common.js indiscriminadamente en el shell global e incluso en el login, a menudo utilizando sufijos de cache busting (?v=X) que la ensuciaban.
+
+Arreglo:
+Se extrajo la lógica global y se repartió correctamente:
+- Interceptor Fetch y utilidades de Token fueron a auth-check.js.
+- UI global (modales de usuarios, CSD, Meta panel) a app.js.
+- Lógica de textareas de chat a backoffice.js.
+Se dejó a crm-common.js puramente para configuraciones y utilidades de las columnas del Kanban. Además, crm-common.js ahora se carga dinámicamente mediante lazy loading únicamente al visitar 'CRM' o 'Ver Tareas', y se removieron todos los sufijos ?v=X de los scripts cargados en el shell y login.
+
+Que ocasionaba sin el arreglo:
+Podían ocurrir errores de "is undefined" si los scripts no se inicializaban en el orden estricto esperado, tiempos de carga marginalmente más lentos y código difícil de mantener.
