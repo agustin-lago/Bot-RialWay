@@ -160,7 +160,7 @@ window.webchatView = {
     },
 
     async init() {
-        await loadViewScript('/js/webchat/webchat.js?v=2.4');
+        await loadViewScript('/js/webchat/webchat.js');
         if (typeof window.initWebchatView === 'function') window.initWebchatView();
     },
 

@@ -208,11 +208,22 @@ export const registerStaticRoutes = (app: any, { __dirname }: { __dirname: strin
     });
 
     // Servir archivos estáticos
+    const noCacheStaticOptions = {
+        setHeaders: (res: any) => {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+        }
+    };
+
     app.get('/app.js', (req: any, res: any) => {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
         res.sendFile(path.join(process.cwd(), 'src', 'frontend', 'app.js'));
     });
-    app.use("/js", serve(path.join(process.cwd(), "src", "frontend", "js")));
-    app.use("/style", serve(path.join(process.cwd(), "src", "frontend", "style")));
+    app.use("/js", serve(path.join(process.cwd(), "src", "frontend", "js"), noCacheStaticOptions));
+    app.use("/style", serve(path.join(process.cwd(), "src", "frontend", "style"), noCacheStaticOptions));
     app.use("/assets", serve(path.join(process.cwd(), "assets")));
     app.use("/assets", serve(path.join(process.cwd(), "src", "backend", "assets")));
     // Vendor packages instalados localmente

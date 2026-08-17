@@ -637,7 +637,7 @@ window.backofficeView = {
 
         // Cargar backoffice.js si no esta cargado (primera visita)
         if (!window._backofficeScriptLoaded) {
-            await loadViewScript('/js/backoffice/backoffice.js?v=15');
+            await loadViewScript('/js/backoffice/backoffice.js');
             window._backofficeScriptLoaded = true;
         }
         // Siempre re-inicializar: tanto primera visita como re-visitas

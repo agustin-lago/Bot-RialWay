@@ -1199,3 +1199,45 @@ Se dejó a crm-common.js puramente para configuraciones y utilidades de las colu
 
 Que ocasionaba sin el arreglo:
 Podían ocurrir errores de "is undefined" si los scripts no se inicializaban en el orden estricto esperado, tiempos de carga marginalmente más lentos y código difícil de mantener.
+
+## 58. Prevención de Caché Persistente en Assets (Archivos Estáticos)
+
+Problema:
+Al retirar los sufijos manuales de cache busting (?v=8) en el frontend, navegadores en producción conservaban copias antiguas de archivos críticos (como `app.js` y los módulos de `/js`), ejecutando lógica desactualizada y provocando errores fantasmas (como el fallo en envíos de Excel porque el JS viejo no pasaba `projectId`).
+
+Causa:
+Express utilizaba el middleware `serve-static` con configuración por defecto para las carpetas `/js` y `/style`. Al no enviar explícitamente cabeceras de prevención de caché, los navegadores y servicios Cloud guardaban agresivamente los archivos JS y CSS.
+
+Arreglo:
+Se inyectaron cabeceras HTTP de prevención de caché (`Cache-Control: no-cache, no-store, must-revalidate`, `Pragma: no-cache`, `Expires: 0`) en `static.routes.ts` para `app.js`, `/js` y `/style`.
+
+Impacto de la corrección:
+Ahora el navegador siempre validará y descargará las últimas versiones de la lógica de aplicación sin afectar configuraciones locales ni requerir que el desarrollador añada manualmente `?v=X` en cada cambio.
+
+## 59. Fix: Error "Proveedor Meta no disponible" en envíos de plantilla directa
+
+Problema:
+Al intentar enviar una plantilla individual desde el chat de conversaciones en entornos de Meta Cloud, el backend rechazaba la solicitud con el error "El proveedor WhatsApp configurado no soporta plantillas de Meta.", pese a que el proveedor activo sí era Meta.
+
+Causa:
+La ruta `/api/backoffice/whatsapp/send-single-template` solicitaba la instancia de `getAdapterProvider()` y `getGroupProvider()` sin enviarles los parámetros `projectId` y `serviceId`. Como la arquitectura multitenant los requiere para encontrar el proveedor correcto, el servidor resolvía un proveedor vacío o nulo, fallando la validación estricta de tipo `MetaCloudProvider`.
+
+Arreglo:
+Se modificaron las invocaciones a `getAdapterProvider(projectId, serviceId)` y `getGroupProvider(projectId, serviceId)` en `backoffice.routes.ts`, permitiendo que el backend capture correctamente la instancia asignada al espacio de trabajo.
+
+Impacto de la corrección:
+El envío directo de plantillas desde la interfaz de CRM o tickets (Conversaciones) ahora reconoce correctamente el proveedor de Meta Cloud y despacha la plantilla.
+
+## 60. Corrección estructural en validación de Proveedor Meta (Duck Typing)
+
+Problema:
+En entornos de producción, el envío de plantillas de forma individual o masiva, y la exportación de plantillas a Excel fallaban intermitentemente con el error "El proveedor WhatsApp configurado no soporta plantillas de Meta" o "Proveedor Meta no disponible", pese a tener un proveedor MetaCloudProvider conectado.
+
+Causa:
+Las rutas en `backoffice.routes.ts` validaban la instancia del proveedor comprobando rígidamente su nombre de clase (`activeAdapter.constructor.name === 'MetaCloudProvider'`). Durante el proceso de build/empaquetado en producción, o cuando la librería base envuelve la clase en un Proxy, el nombre del constructor cambia, haciendo que la validación falle y caiga en el proveedor de "fallback" (Baileys), el cual no soporta plantillas.
+
+Arreglo:
+Se reemplazó la validación estricta por "Duck Typing". Ahora el sistema verifica directamente si la instancia en cuestión posee los métodos necesarios (`typeof activeAdapter.sendTemplate === 'function'` o `getTemplates`). 
+
+Impacto de la corrección:
+Esto garantiza que la aplicación sea 100% resistente a procesos de compilación (minificación/mangling) y proxys, asegurando que las plantillas y el formato Excel funcionen perfectamente en producción.
