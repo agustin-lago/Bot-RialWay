@@ -13,53 +13,67 @@ export const startHumanInactivityWorker = (timeoutMinutes = 15) => {
             if (!supabase) return;
             const now = new Date();
             const threshold = new Date(now.getTime() - timeoutMinutes * 60 * 1000);
+            const minThreshold = new Date(now.getTime() - 24 * 60 * 60 * 1000); // Ventana de 24 horas para omitir chats inactivos antiguos
             
-            // 1. Obtener todos los chats con bot desactivado en cualquier proyecto
+            // 1. Obtener chats con bot desactivado y actividad humana reciente (entre 24 horas y 15 minutos atrás)
             const { data: inactiveChats, error } = await supabase
                 .from('chats')
                 .select('id, project_id, service_id, last_human_message_at')
                 .eq('bot_enabled', false)
-                .or(`last_human_message_at.lte.${threshold.toISOString()},last_human_message_at.is.null`);
+                .not('last_human_message_at', 'is', null)
+                .gte('last_human_message_at', minThreshold.toISOString())
+                .lte('last_human_message_at', threshold.toISOString());
 
             if (error) throw error;
+            if (!inactiveChats || inactiveChats.length === 0) return;
 
-            for (const chat of (inactiveChats || [])) {
+            // 2. Obtener lista negra en un solo lote (batch query) para evitar consultas en bucle
+            const chatIds = inactiveChats.map(c => c.id);
+            const { data: blacklistEntries, error: blError } = await supabase
+                .from('blacklist')
+                .select('chat_id, project_id, service_id')
+                .in('chat_id', chatIds)
+                .or('sin_bot.eq.true,bloqueado_crm.eq.true');
+
+            if (blError) {
+                console.error('[WORKER] Error consultando blacklist en lote:', blError);
+            }
+
+            const blockedKeys = new Set(
+                (blacklistEntries || []).map(entry => {
+                    const sId = entry.service_id || 'default';
+                    return `${entry.project_id}:${sId}:${entry.chat_id}`;
+                })
+            );
+
+            // Caché en memoria durante este tick para no consultar la misma configuración del mismo proyecto/servicio varias veces
+            const globalBotSettingsCache = new Map<string, boolean>();
+
+            for (const chat of inactiveChats) {
                 const projectId = chat.project_id;
-                const serviceId = chat.service_id;
+                const serviceId = chat.service_id || 'default';
+                const settingKey = `${projectId}:${serviceId}`;
 
-                // 2. Si el bot está desactivado globalmente para este proyecto, no auto-activar
-                const isGlobalBotEnabledSetting = await HistoryHandler.getSetting('GLOBAL_BOT_ENABLED', projectId, serviceId);
-                if (isGlobalBotEnabledSetting === 'false') {
-                    continue;
+                // 3. Obtener estado del bot global usando caché en memoria
+                let isGlobalBotEnabled = globalBotSettingsCache.get(settingKey);
+                if (isGlobalBotEnabled === undefined) {
+                    const settingValue = await HistoryHandler.getSetting('GLOBAL_BOT_ENABLED', projectId, chat.service_id);
+                    isGlobalBotEnabled = settingValue !== 'false';
+                    globalBotSettingsCache.set(settingKey, isGlobalBotEnabled);
                 }
 
-                // 3. Excluir chats en lista negra (marcados como sin_bot o bloqueado_crm)
-                let blQuery = supabase
-                    .from('blacklist')
-                    .select('chat_id')
-                    .eq('chat_id', chat.id)
-                    .eq('project_id', projectId);
-
-                if (serviceId && serviceId !== 'default' && serviceId !== 'default_service') {
-                    blQuery = blQuery.eq('service_id', serviceId);
+                if (!isGlobalBotEnabled) {
+                    continue; // Saltar si el bot está desactivado globalmente para este inquilino/servicio
                 }
 
-                const { data: blEntry, error: blError } = await blQuery
-                    .or('sin_bot.eq.true,bloqueado_crm.eq.true')
-                    .maybeSingle();
-
-                if (blError) {
-                    console.error(`[WORKER] Error consultando blacklist para chat ${chat.id}:`, blError);
-                    continue;
-                }
-
-                if (blEntry) {
-                    // Chat en lista negra, debe permanecer en intervención humana
-                    continue;
+                // 4. Filtrar lista negra usando el Set en memoria
+                const lookupKey = `${projectId}:${serviceId}:${chat.id}`;
+                if (blockedKeys.has(lookupKey)) {
+                    continue; // Saltar si está en lista negra
                 }
 
                 console.log(`[WORKER] [${new Date().toLocaleTimeString()}] Auto-activando bot para chat ${chat.id} en proyecto ${projectId} (Inactividad > ${timeoutMinutes} min)`);
-                await HistoryHandler.toggleBot(chat.id, true, projectId, serviceId);
+                await HistoryHandler.toggleBot(chat.id, true, projectId, chat.service_id);
             }
         } catch (e) {
             console.error('[WORKER] Error en check de inactividad humana:', e);
