@@ -1970,7 +1970,7 @@ export class HistoryHandler {
     /**
      * Cambia el estado del bot (Intervención humana)
      */
-    static async toggleBot(rawChatId: string, enabled: boolean, projectId: string | null = null, serviceId: string | null = null) {
+    static async toggleBot(rawChatId: string, enabled: boolean, projectId: string | null = null, serviceId: string | null = null, isManualAppIntervention: boolean = false) {
         const chatId = this.normalizeId(rawChatId);
         const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
         const currentServiceId = serviceId || this.SERVICE_IDENTIFIER;
@@ -1984,12 +1984,35 @@ export class HistoryHandler {
         this.invalidateChatCache(chatId, currentProjectId);
 
         try {
+            // Obtener el chat actual para ver su metadata antes de actualizar
+            const { data: currentChat } = await supabase
+                .from('chats')
+                .select('metadata')
+                .eq('id', chatId)
+                .eq('project_id', currentProjectId)
+                .maybeSingle();
+
             const updateData: any = { bot_enabled: enabled };
             if (enabled === false) {
                 updateData.last_human_message_at = new Date().toISOString();
+                if (isManualAppIntervention) {
+                    updateData.metadata = {
+                        ...(currentChat?.metadata || {}),
+                        manual_app_interacted: true,
+                        manual_app_interacted_at: new Date().toISOString()
+                    };
+                }
             } else {
                 // BUGFIX: Cuando el bot se vuelve a activar, el agente asignado DEBE volver al recepcionista (asistente1)
                 updateData.assigned_agent = 'asistente1';
+                
+                // Limpiar banderas de intervención manual desde la app al reactivar
+                if (currentChat?.metadata?.manual_app_interacted) {
+                    const newMetadata = { ...currentChat.metadata };
+                    delete newMetadata.manual_app_interacted;
+                    delete newMetadata.manual_app_interacted_at;
+                    updateData.metadata = newMetadata;
+                }
             }
 
             let query = supabase

@@ -2,10 +2,10 @@ import { HistoryHandler, supabase } from "../db/historyHandler";
 
 /**
  * Inicia un worker que verifica cada minuto los chats con intervención humana (bot desactivado).
- * Si no han recibido un mensaje humano en 15 minutos, reactiva el bot automáticamente.
+ * Si no han recibido un mensaje humano en 30 minutos (o 24 horas si fue manual de la app), reactiva el bot automáticamente.
  * Excluye contactos en lista negra (sin_bot o bloqueado_crm) que deben permanecer en atención humana.
  */
-export const startHumanInactivityWorker = (timeoutMinutes = 15) => {
+export const startHumanInactivityWorker = (timeoutMinutes = 30) => {
     console.log(`🤖 [Worker] Iniciando worker de inactividad humana multitenant (${timeoutMinutes} min)...`);
 
     setInterval(async () => {
@@ -13,12 +13,12 @@ export const startHumanInactivityWorker = (timeoutMinutes = 15) => {
             if (!supabase) return;
             const now = new Date();
             const threshold = new Date(now.getTime() - timeoutMinutes * 60 * 1000);
-            const minThreshold = new Date(now.getTime() - 24 * 60 * 60 * 1000); // Ventana de 24 horas para omitir chats inactivos antiguos
+            const minThreshold = new Date(now.getTime() - 48 * 60 * 60 * 1000); // Ventana extendida a 48 horas para contemplar desactivaciones de 24 horas
             
-            // 1. Obtener chats con bot desactivado y actividad humana reciente (entre 24 horas y 15 minutos atrás)
+            // 1. Obtener chats con bot desactivado y actividad humana reciente (entre 48 horas y 15 minutos atrás)
             const { data: inactiveChats, error } = await supabase
                 .from('chats')
-                .select('id, project_id, service_id, last_human_message_at')
+                .select('id, project_id, service_id, last_human_message_at, metadata')
                 .eq('bot_enabled', false)
                 .not('last_human_message_at', 'is', null)
                 .gte('last_human_message_at', minThreshold.toISOString())
@@ -70,6 +70,15 @@ export const startHumanInactivityWorker = (timeoutMinutes = 15) => {
                 const lookupKey = `${projectId}:${serviceId}:${chat.id}`;
                 if (blockedKeys.has(lookupKey)) {
                     continue; // Saltar si está en lista negra
+                }
+
+                // 5. Si fue una intervención manual desde la app móvil, el bot debe permanecer desactivado por 24 horas.
+                if ((chat.metadata as any)?.manual_app_interacted) {
+                    const manualThreshold = new Date(now.getTime() - 24 * 60 * 60 * 1000); // 24 horas de inactividad requeridas
+                    const lastHuman = new Date(chat.last_human_message_at);
+                    if (lastHuman > manualThreshold) {
+                        continue; // No reactivar aún porque no ha pasado la ventana de 24 horas
+                    }
                 }
 
                 console.log(`[WORKER] [${new Date().toLocaleTimeString()}] Auto-activando bot para chat ${chat.id} en proyecto ${projectId} (Inactividad > ${timeoutMinutes} min)`);

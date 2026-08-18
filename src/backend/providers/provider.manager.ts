@@ -472,7 +472,7 @@ export const registerProviderEvents = (provider: any, isGroupProvider: boolean =
                     console.log(`${prefix} ℹ️ Intervención desde App WhatsApp detectada para ${chatId}, pero DISABLE_AUTO_HUMAN_ON_APP_MESSAGE está activo (No se desactiva el bot).`);
                 } else {
                     console.log(`${prefix} 🛑 Activando modo Atención Humana para ${chatId} (operador escribió desde la app) para proyecto ${dynamicProjectId}`);
-                    await HistoryHandler.toggleBot(chatId, false, dynamicProjectId, dynamicServiceId);
+                    await HistoryHandler.toggleBot(chatId, false, dynamicProjectId, dynamicServiceId, true);
                     await HistoryHandler.updateLastHumanMessage(chatId, dynamicProjectId, dynamicServiceId);
                 }
             }

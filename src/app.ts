@@ -588,8 +588,8 @@ const main = async () => {
     }
         
     // 10. Workers Initialization
-    // Se ajusta a 45 minutos (anteriormente 15) según requerimiento del usuario
-    startHumanInactivityWorker(45);
+    // Se ajusta a 30 minutos (anteriormente 45) según requerimiento del usuario para activaciones manuales
+    startHumanInactivityWorker(30);
     startFileCleanupWorker(5);
 
     // 11. Start Server and Sockets
