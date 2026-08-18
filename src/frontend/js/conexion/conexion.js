@@ -632,7 +632,6 @@ async function fetchStatus() {
                     if (!data.adapter?.qr && !data.adapter?.pairingCode) {
                         hideQrPresentation();
                     }
-                    hideQrPresentation();
                     setConnectionButtonsBusy(false);
                 }
             }
@@ -643,7 +642,6 @@ async function fetchStatus() {
             if (!data.adapter?.qr && !data.adapter?.pairingCode) {
                 hideQrPresentation();
             }
-            hideQrPresentation();
             setConnectionButtonsBusy(false);
         }
     } catch (e) {
