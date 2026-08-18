@@ -27,20 +27,28 @@ export const startHumanInactivityWorker = (timeoutMinutes = 30) => {
             if (error) throw error;
             if (!inactiveChats || inactiveChats.length === 0) return;
 
-            // 2. Obtener lista negra en un solo lote (batch query) para evitar consultas en bucle
+            // 2. Obtener lista negra en lotes pequeños (chunks) para evitar desbordar el límite de URL/Headers (16KB) en Supabase/PostgREST
             const chatIds = inactiveChats.map(c => c.id);
-            const { data: blacklistEntries, error: blError } = await supabase
-                .from('blacklist')
-                .select('chat_id, project_id, service_id')
-                .in('chat_id', chatIds)
-                .or('sin_bot.eq.true,bloqueado_crm.eq.true');
+            const blacklistEntries: any[] = [];
+            const CHUNK_SIZE = 50;
 
-            if (blError) {
-                console.error('[WORKER] Error consultando blacklist en lote:', blError);
+            for (let i = 0; i < chatIds.length; i += CHUNK_SIZE) {
+                const chunk = chatIds.slice(i, i + CHUNK_SIZE);
+                const { data: chunkEntries, error: blError } = await supabase
+                    .from('blacklist')
+                    .select('chat_id, project_id, service_id')
+                    .in('chat_id', chunk)
+                    .or('sin_bot.eq.true,bloqueado_crm.eq.true');
+
+                if (blError) {
+                    console.error('[WORKER] Error consultando blacklist en lote (chunk):', blError);
+                } else if (chunkEntries) {
+                    blacklistEntries.push(...chunkEntries);
+                }
             }
 
             const blockedKeys = new Set(
-                (blacklistEntries || []).map(entry => {
+                blacklistEntries.map(entry => {
                     const sId = entry.service_id || 'default';
                     return `${entry.project_id}:${sId}:${entry.chat_id}`;
                 })
