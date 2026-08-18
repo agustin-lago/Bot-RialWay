@@ -442,7 +442,7 @@ const main = async () => {
         registerWebchatRoutes(app);
         registerWebhookRoutes(app);
 
-        registerExternalApiRoutes(app, { adapterProvider });
+        registerExternalApiRoutes(app, { adapterProvider, groupProvider });
         registerRailwayRoutes(app, { RailwayApi });
 
         // API Health & Info

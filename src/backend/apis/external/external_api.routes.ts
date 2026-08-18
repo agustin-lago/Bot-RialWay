@@ -183,10 +183,15 @@ export const registerExternalApiRoutes = (app: any, deps: any) => {
             await supabase.from('api_tokens').update({ is_used: true }).eq('id', tokenData.id);
 
             // Mapear template_id a templateName
-            const provider = adapterProvider.constructor.name === 'MetaCloudProvider' ? adapterProvider : groupProvider;
-            if (!provider) {
+            if (!adapterProvider) {
                 return res.status(503).json({ success: false, error: "Proveedor de WhatsApp no inicializado" });
             }
+
+            const isMeta = adapterProvider.constructor.name === 'MetaCloudProvider' || typeof adapterProvider.getTemplates === 'function';
+            if (!isMeta) {
+                return res.status(400).json({ success: false, error: "El envío de plantillas solo está disponible cuando se utiliza el proveedor de Meta (WhatsApp Business Cloud API)." });
+            }
+            const provider = adapterProvider;
 
             const templates = await provider.getTemplates();
             // Buscamos por ID (el que pasó el usuario) o por Name (como fallback)
@@ -381,7 +386,8 @@ export const registerExternalApiRoutes = (app: any, deps: any) => {
             // Marcar como usado inmediatamente (Atomicidad para prevenir Race Condition)
             await supabase.from('api_tokens').update({ is_used: true }).eq('id', tokenData.id);
 
-            const provider = adapterProvider.constructor.name === 'MetaCloudProvider' ? adapterProvider : groupProvider;
+            const isMeta = adapterProvider && (adapterProvider.constructor.name === 'MetaCloudProvider' || typeof adapterProvider.getTemplates === 'function');
+            const provider = isMeta ? adapterProvider : (groupProvider || adapterProvider);
             if (!provider) {
                 return res.status(503).json({ success: false, error: "Proveedor de WhatsApp no inicializado" });
             }
