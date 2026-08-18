@@ -158,7 +158,8 @@ async function triggerMetaSync(accessToken: string, phoneId: string) {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const isMetaProvider = (provider: any): boolean => {
-    return String(provider?.constructor?.name || '').includes('MetaCloudProvider');
+    if (!provider) return false;
+    return typeof provider.getTemplates === 'function' || typeof provider.sendTemplate === 'function';
 };
 
 const getStoredRawPayload = (messageData: any): any => {
@@ -403,7 +404,7 @@ export const processSendMessage = async (
                     }
                 } else {
                     opts.fileName = file.originalname;
-                    if (providerToSend.constructor.name === 'MetaCloudProvider') {
+                    if (isMetaProvider(providerToSend)) {
                         providerResponse = await providerToSend.sendMessage(jid, message || '', { ...opts, serviceId: targetServiceId, projectId: currentProjectId });
                     } else if (typeof (providerToSend as any).sendFile === 'function') {
                         providerResponse = await (providerToSend as any).sendFile(jid, absolutePath, message || file.originalname, { serviceId: targetServiceId, projectId: currentProjectId });
@@ -1877,7 +1878,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
         const isGroup = chatId.includes('@g.us');
         const provider = (isGroup && groupProvider) ? groupProvider : adapterProvider;
-        const isMeta = provider && provider.constructor.name === 'MetaCloudProvider';
+        const isMeta = isMetaProvider(provider);
 
         let deletedInWhatsApp = false;
 
@@ -1957,7 +1958,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
             const isGroup = chatId.includes('@g.us');
             const provider = (isGroup && groupProvider) ? groupProvider : adapterProvider;
-            const isMeta = provider && provider.constructor.name === 'MetaCloudProvider';
+            const isMeta = isMetaProvider(provider);
 
             let reactedInWhatsApp = false;
 
@@ -2147,7 +2148,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
     app.post('/api/backoffice/baileys/start', bodyParser.json(), async (req: any, res: any) => {
         const { isGroup, usePairingCode, phoneNumber } = req.body;
-        const adapterIsMeta = adapterProvider?.constructor?.name === 'MetaCloudProvider';
+        const adapterIsMeta = isMetaProvider(adapterProvider);
         const targetIsGroup = Boolean(isGroup) || Boolean(adapterIsMeta && groupProvider);
         const provider = targetIsGroup ? groupProvider : adapterProvider;
         const requestContext = {
@@ -2668,8 +2669,8 @@ export const registerBackofficeRoutes = (app: any) => {
 
             const activeAdapter = getAdapterProvider();
             const activeGroup = getGroupProvider();
-            const provider = (activeAdapter && activeAdapter.constructor.name === 'MetaCloudProvider') ? activeAdapter : activeGroup;
-            if (provider && provider.constructor.name === 'MetaCloudProvider') {
+            const provider = isMetaProvider(activeAdapter) ? activeAdapter : activeGroup;
+            if (isMetaProvider(provider)) {
                 wabaId = provider.config.waba_id;
                 token = provider.config.access_token;
             } else {
@@ -2706,8 +2707,8 @@ export const registerBackofficeRoutes = (app: any) => {
 
             const activeAdapter = getAdapterProvider();
             const activeGroup = getGroupProvider();
-            const provider = (activeAdapter && activeAdapter.constructor.name === 'MetaCloudProvider') ? activeAdapter : activeGroup;
-            if (provider && provider.constructor.name === 'MetaCloudProvider') {
+            const provider = isMetaProvider(activeAdapter) ? activeAdapter : activeGroup;
+            if (isMetaProvider(provider)) {
                 token = provider.config.access_token;
             } else {
                 const config = await depsHistoryHandler.getMetaOnboardingData(projectId || process.env.RAILWAY_PROJECT_ID, false, serviceId);
@@ -2769,7 +2770,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
             const activeAdapter = getAdapterProvider();
             const activeGroup = getGroupProvider();
-            const provider = (activeAdapter && activeAdapter.constructor.name === 'MetaCloudProvider') ? activeAdapter : activeGroup;
+            const provider = isMetaProvider(activeAdapter) ? activeAdapter : activeGroup;
             if (!provider || typeof provider.createTemplate !== 'function') {
                 return res.status(400).json({ success: false, error: 'Proveedor Meta no configurado o no soporta creación.' });
             }
@@ -3333,7 +3334,7 @@ export const registerBackofficeRoutes = (app: any) => {
             (async () => {
                 const activeAdapter = getAdapterProvider();
             const activeGroup = getGroupProvider();
-            const provider = (activeAdapter && activeAdapter.constructor.name === 'MetaCloudProvider') ? activeAdapter : activeGroup;
+            const provider = isMetaProvider(activeAdapter) ? activeAdapter : activeGroup;
                 const templates = await provider.getTemplates();
                 const template = templates.find((t: any) => t.name === templateName);
                 if (!template) {
@@ -4730,7 +4731,7 @@ Hemos recibido tu pago con Ã©xito.
             // @ts-ignore
             const provider = app.get('whatsappProvider');
 
-            if (!provider || provider.constructor.name !== 'MetaCloudProvider') {
+            if (!isMetaProvider(provider)) {
                 return res.status(400).json({
                     success: false,
                     error: 'El proveedor Meta Cloud no estÃ¡ activo. Verifique que el bot estÃ© configurado con Meta.'
