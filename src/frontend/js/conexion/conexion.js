@@ -484,26 +484,35 @@ function renderQrImage(source, titleText) {
     }
 
     _lastRenderedQrSource = qrSource;
-    showQrLoading(titleText || 'Escanea con WhatsApp');
     if (_qrSkeletonTimer) clearTimeout(_qrSkeletonTimer);
-    _qrSkeletonTimer = setTimeout(() => {
-        _qrSkeletonTimer = null;
-        img.onload = () => {
-            img.dataset.loadedQrSource = qrSource;
-            if (skeleton) skeleton.style.display = 'none';
-            if (empty) empty.style.display = 'none';
-            img.style.display = 'block';
-        };
-        img.onerror = () => {
-            if (skeleton) skeleton.style.display = 'none';
-            img.style.display = 'none';
-            if (empty) {
-                empty.textContent = 'No se pudo cargar el QR. Reintenta la vinculacion.';
-                empty.style.display = 'block';
-            }
-        };
-        img.src = getQrDisplaySource(qrSource);
-    }, 2000);
+    _qrSkeletonTimer = null;
+
+    const isDataUrl = qrSource.startsWith('data:');
+    if (isDataUrl) {
+        img.dataset.loadedQrSource = qrSource;
+        if (skeleton) skeleton.style.display = 'none';
+        if (empty) empty.style.display = 'none';
+        img.style.display = 'block';
+        img.src = qrSource;
+        return;
+    }
+
+    showQrLoading(titleText || 'Escanea con WhatsApp');
+    img.onload = () => {
+        img.dataset.loadedQrSource = qrSource;
+        if (skeleton) skeleton.style.display = 'none';
+        if (empty) empty.style.display = 'none';
+        img.style.display = 'block';
+    };
+    img.onerror = () => {
+        if (skeleton) skeleton.style.display = 'none';
+        img.style.display = 'none';
+        if (empty) {
+            empty.textContent = 'No se pudo cargar el QR. Reintenta la vinculacion.';
+            empty.style.display = 'block';
+        }
+    };
+    img.src = getQrDisplaySource(qrSource);
 }
 
 function renderPairingCode(code, titleText) {
@@ -640,9 +649,13 @@ async function fetchStatus() {
             groupStatusEl.style.color = '#94a3b8';
             setConnectionProviderTarget('primary');
             if (!data.adapter?.qr && !data.adapter?.pairingCode) {
-                hideQrPresentation();
+                if (!isQrRequestPending()) {
+                    hideQrPresentation();
+                    setConnectionButtonsBusy(false);
+                }
+            } else {
+                setConnectionButtonsBusy(false);
             }
-            setConnectionButtonsBusy(false);
         }
     } catch (e) {
         console.error(e);

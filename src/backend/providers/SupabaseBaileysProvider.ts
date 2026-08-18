@@ -298,12 +298,17 @@ export class SupabaseBaileysProvider extends BaileysProvider {
 
             let version: any = Array.isArray(this.globalVendorArgs.version)
                 ? this.globalVendorArgs.version
-                : [2, 3000, 1043857760];
-            try {
-                const latest = await fetchLatestBaileysVersion();
-                if (latest?.version) version = latest.version;
-            } catch (versionErr: any) {
-                console.warn(`[SupabaseBaileysProvider] No se pudo obtener la version latest de Baileys. Usando fallback: ${versionErr?.message || versionErr}`);
+                : null;
+            if (!version) {
+                try {
+                    const latest = await fetchLatestBaileysVersion();
+                    if (latest?.version) version = latest.version;
+                } catch (versionErr: any) {
+                    console.warn(`[SupabaseBaileysProvider] No se pudo obtener la version latest de Baileys. Usando fallback: ${versionErr?.message || versionErr}`);
+                }
+            }
+            if (!version) {
+                version = [2, 3000, 1043857760];
             }
             console.log(`[SupabaseBaileysProvider] Usando version de WhatsApp Web: v${version.join('.')}`);
 
@@ -659,11 +664,12 @@ export class SupabaseBaileysProvider extends BaileysProvider {
             return this.vendor;
         } catch (err: any) {
             console.error(`[SupabaseBaileysProvider] ❌ Error durante la inicialización del proveedor:`, err);
-            this.isConnecting = false;
             this.initialized = false;
             this.connectionState = 'close';
             this.emit('status_change', { active: false, connection: 'close', reason: err?.message });
             throw err;
+        } finally {
+            this.isConnecting = false;
         }
     }
 
