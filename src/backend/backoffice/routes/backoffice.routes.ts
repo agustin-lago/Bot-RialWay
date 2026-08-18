@@ -434,7 +434,7 @@ export const processSendMessage = async (
             await depsHistoryHandler.updateLastHumanMessage(chatId, currentProjectId, targetServiceId);
             await depsHistoryHandler.toggleBot(chatId, false, currentProjectId, targetServiceId);
 
-            res.json({ success: true, fileUrl: file ? fileUrl : undefined });
+            res.json({ success: true, messageId: externalId, fileUrl: file ? fileUrl : undefined });
         } catch (waError) {
             console.error('[BACKOFFICE] Error enviando a Whatsapp:', waError);
             // Si falló el envío, igual guardamos pero sin ID externo para que al menos quede el log local, marcado como 'failed'

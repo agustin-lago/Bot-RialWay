@@ -644,10 +644,16 @@ socket.on('new_message', (msg) => {
 
     // 1. Si es el chat activo, añadir mensaje a la vista
     if (normChatId(cid) === normChatId(activeChatId)) {
+        const normContent = (str) => (str || '').replace(/\r\n/g, '\n').trim();
+        const normMsg = normContent(msg.content);
+
         // Quitar el pending optimista que coincida con este mensaje real
         if (msg.role === 'assistant') {
             const pendingIdx = allMessages.findIndex(m =>
-                m._pending && m.role === 'assistant' && m.content === (msg.content || '')
+                m._pending && m.role === 'assistant' && (
+                    normContent(m.content) === normMsg ||
+                    (m.external_id && msg.external_id && m.external_id === msg.external_id)
+                )
             );
             if (pendingIdx !== -1) {
                 allMessages.splice(pendingIdx, 1);
@@ -657,7 +663,8 @@ socket.on('new_message', (msg) => {
 
         const isDuplicate = allMessages.some(m =>
             (m.id === msg.id && msg.id !== undefined) ||
-            (m.external_id === msg.external_id && msg.external_id !== undefined && msg.external_id !== null)
+            (m.external_id === msg.external_id && msg.external_id !== undefined && msg.external_id !== null) ||
+            (!m._pending && m.role === msg.role && normContent(m.content) === normMsg && Math.abs(new Date(m.created_at || 0) - new Date(msg.created_at || Date.now())) < 15000)
         );
         if (!isDuplicate) {
             allMessages.push(msg);
@@ -2089,8 +2096,6 @@ async function sendMessage() {
     renderMessages();
     _clearSendUI();
     scrollToBottom();
-    isSending = false;
-
     // POST en background
     try {
         const formData = new FormData();
@@ -2104,13 +2109,22 @@ async function sendMessage() {
             headers: { 'Authorization': 'token=' + token },
             body: formData
         });
-        if (!res.ok) {
+        if (res.ok) {
+            const data = await res.json().catch(() => ({}));
+            if (data.warning) window.swalAlert('Advertencia', data.warning, 'warning');
+            const idx = allMessages.findIndex(m => m.id === tempId);
+            if (idx !== -1 && data.messageId) {
+                allMessages[idx].external_id = data.messageId;
+            }
+        } else {
             const idx = allMessages.findIndex(m => m.id === tempId);
             if (idx !== -1) { allMessages[idx]._failed = true; allMessages[idx]._pending = false; renderMessages(); }
         }
     } catch (_) {
         const idx = allMessages.findIndex(m => m.id === tempId);
         if (idx !== -1) { allMessages[idx]._failed = true; allMessages[idx]._pending = false; renderMessages(); }
+    } finally {
+        isSending = false;
     }
 }
 
