@@ -275,6 +275,9 @@ window.backofficeView = {
                             oninput="window.handleMessageInputChange(this)"
                             style="flex:1;background:transparent;border:0;outline:none;color:var(--text-main);font-size:16px;padding:2px 0;min-width:0;resize:none;overflow-y:auto;max-height:120px;font-family:inherit;line-height:20px;display:block;"></textarea>
                     </div>
+                    <button class="btn-icon input-action-btn" id="mic-cancel-btn" title="Descartar grabación de audio" style="display:none; color:#ef4444;" onclick="window.cancelRecording ? window.cancelRecording() : cancelRecording()">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
                     <button class="btn-icon input-action-btn" id="mic-btn" title="Grabar audio" disabled onclick="toggleRecording()">
                         <i class="fas fa-microphone"></i>
                     </button>

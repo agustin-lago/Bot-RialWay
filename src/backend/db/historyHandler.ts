@@ -1104,13 +1104,14 @@ export class HistoryHandler {
             // 3. Si sigue sin existir, lo creamos
             if (!data) {
                 this.invalidateChatCache(chatId, currentProjectId);
+                const isBlacklisted = await this.isContactBlacklisted(chatId, currentProjectId, currentServiceId);
                 const insertData: any = {
                     id: chatId,
                     user_id: userId,
                     project_id: currentProjectId,
                     type,
                     name,
-                    bot_enabled: true,
+                    bot_enabled: !isBlacklisted,
                     assigned_agent: 'asistente1',
                     last_message_at: new Date().toISOString()
                 };
@@ -1589,9 +1590,11 @@ export class HistoryHandler {
         this.invalidateChatCache(chatId, currentProjectId);
 
         try {
+            const isBlacklisted = await this.isContactBlacklisted(chatId, currentProjectId, currentServiceId);
+            const targetBotEnabled = !isBlacklisted;
             const updateObj: any = {
                 assigned_agent: agentName,
-                bot_enabled: true // Si asignamos un agente bot, nos aseguramos que el bot esté ON
+                bot_enabled: targetBotEnabled
             };
             if (agentName === 'asistente1') {
                 updateObj.last_db_result = null;
@@ -1612,7 +1615,7 @@ export class HistoryHandler {
             // Emitir evento para refrescar la UI en tiempo real
             historyEvents.emit('bot_toggled', {
                 chatId,
-                enabled: true,
+                enabled: targetBotEnabled,
                 assigned_agent: agentName,
                 project_id: currentProjectId
             });
@@ -1646,8 +1649,9 @@ export class HistoryHandler {
         const originalIsLead = details.is_lead;
 
         if (details.crm_status === 'Cerrado') {
+            const isBlacklisted = await this.isContactBlacklisted(chatId, currentProjectId || HistoryHandler.PROJECT_IDENTIFIER, currentServiceId);
             (details as any).assigned_agent = 'asistente1';
-            (details as any).bot_enabled = true;
+            (details as any).bot_enabled = !isBlacklisted;
             (details as any).last_db_result = null;
             (details as any).is_lead = false;
             (details as any).crm_status = null;
@@ -2992,8 +2996,9 @@ export class HistoryHandler {
 
                 // Si el estado es cerrado, aplicar lógica de reset de bot y de-clasificación de lead
                 if (ticketUpdate.estado === 'Cerrado') {
+                    const isBlacklisted = await this.isContactBlacklisted(activeChatTargetId, currentProjectId, currentServiceId);
                     chatUpdate.assigned_agent = 'asistente1';
-                    chatUpdate.bot_enabled = true;
+                    chatUpdate.bot_enabled = !isBlacklisted;
                     chatUpdate.last_db_result = null;
                     chatUpdate.is_lead = false;
                     chatUpdate.crm_status = null;
@@ -3056,7 +3061,8 @@ export class HistoryHandler {
                 this.invalidateChatCache(activeChatTargetId, currentProjectId);
 
                 if (ticketUpdate.estado === 'Cerrado') {
-                    historyEvents.emit('bot_toggled', { chatId: activeChatTargetId, enabled: true, assigned_agent: 'asistente1', projectId: currentProjectId });
+                    const isBlacklisted = await this.isContactBlacklisted(activeChatTargetId, currentProjectId, currentServiceId);
+                    historyEvents.emit('bot_toggled', { chatId: activeChatTargetId, enabled: !isBlacklisted, assigned_agent: 'asistente1', projectId: currentProjectId });
                 }
             }
 
@@ -3099,12 +3105,13 @@ export class HistoryHandler {
             if (error) throw error;
 
             if (ticket && ticket.chat_id) {
+                const isBlacklisted = await this.isContactBlacklisted(ticket.chat_id, currentProjectId);
                 // Actualizar contacto para que deje de ser lead y resetear bot
                 const chatUpdate = {
                     is_lead: false,
                     crm_status: null,
                     assigned_agent: 'asistente1',
-                    bot_enabled: true,
+                    bot_enabled: !isBlacklisted,
                     last_db_result: null
                 };
 
@@ -3121,7 +3128,7 @@ export class HistoryHandler {
                 });
 
                 this.invalidateChatCache(ticket.chat_id, currentProjectId);
-                historyEvents.emit('bot_toggled', { chatId: ticket.chat_id, enabled: true, assigned_agent: 'asistente1', projectId: currentProjectId });
+                historyEvents.emit('bot_toggled', { chatId: ticket.chat_id, enabled: !isBlacklisted, assigned_agent: 'asistente1', projectId: currentProjectId });
             }
 
             historyEvents.emit('ticket_deleted', { id: ticketId, projectId: currentProjectId });

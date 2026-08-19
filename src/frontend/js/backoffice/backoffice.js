@@ -35,6 +35,8 @@ let isSending = false;
 let _mediaRecorder = null;
 let _audioChunks = [];
 let _isRecording = false;
+let _isAudioCancelled = false;
+let _audioStream = null;
 window.__activeBackofficeChatId = null;
 let _activeChatSyncTimer = null;
 let _syncingActiveChat = false;
@@ -1182,6 +1184,7 @@ async function checkPlatformVisibility() {
 }
 
 async function selectChat(id) {
+    if (_isRecording) cancelRecording();
     activeChatId = id;
     window.__activeBackofficeChatId = id;
     activeTicketId = null;
@@ -1927,6 +1930,9 @@ async function sendFromPreview() {
     await sendMessage();
 }
 
+window.toggleRecording = toggleRecording;
+window.cancelRecording = cancelRecording;
+
 async function toggleRecording() {
     if (_isRecording) {
         stopRecording();
@@ -1938,27 +1944,47 @@ async function toggleRecording() {
 async function startRecording() {
     if (!activeChatId) return;
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        _isAudioCancelled = false;
+        _audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         _audioChunks = [];
-        _mediaRecorder = new MediaRecorder(stream);
+        _mediaRecorder = new MediaRecorder(_audioStream);
         _mediaRecorder.ondataavailable = (e) => {
             if (e.data.size > 0) _audioChunks.push(e.data);
         };
         _mediaRecorder.onstop = async () => {
-            stream.getTracks().forEach(t => t.stop());
-            const mimeType = _mediaRecorder.mimeType || 'audio/webm';
+            if (_audioStream) {
+                _audioStream.getTracks().forEach(t => t.stop());
+                _audioStream = null;
+            }
+            if (_isAudioCancelled) {
+                _isAudioCancelled = false;
+                _audioChunks = [];
+                _resetRecordingUI();
+                return;
+            }
+            _resetRecordingUI();
+            const mimeType = _mediaRecorder?.mimeType || 'audio/webm';
             const ext = mimeType.includes('ogg') ? 'ogg' : 'webm';
             const blob = new Blob(_audioChunks, { type: mimeType });
+            _audioChunks = [];
             const file = new File([blob], `audio_${Date.now()}.${ext}`, { type: mimeType });
             await sendAudioFile(file);
         };
         _mediaRecorder.start();
         _isRecording = true;
+
         const micBtn = document.getElementById('mic-btn');
-        micBtn.classList.add('recording');
-        micBtn.querySelector('i').className = 'fas fa-stop';
-        micBtn.title = 'Detener grabacion';
+        if (micBtn) {
+            micBtn.classList.add('recording');
+            micBtn.querySelector('i').className = 'fas fa-paper-plane';
+            micBtn.title = 'Enviar audio grabado';
+        }
+        const cancelBtn = document.getElementById('mic-cancel-btn');
+        if (cancelBtn) {
+            cancelBtn.style.display = 'inline-flex';
+        }
     } catch (err) {
+        _resetRecordingUI();
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
             window.swalAlert('Permiso denegado', 'Permiso de microfono denegado. Habilitalo en la configuracion del navegador.', 'error');
         } else {
@@ -1969,12 +1995,34 @@ async function startRecording() {
 
 function stopRecording() {
     if (_mediaRecorder && _isRecording) {
-        _mediaRecorder.stop();
         _isRecording = false;
-        const micBtn = document.getElementById('mic-btn');
+        _mediaRecorder.stop();
+    }
+}
+
+function cancelRecording() {
+    if (_mediaRecorder && _isRecording) {
+        _isAudioCancelled = true;
+        _isRecording = false;
+        _mediaRecorder.stop();
+        _resetRecordingUI();
+        if (typeof window.showToast === 'function') {
+            window.showToast('Grabación de audio descartada');
+        }
+    }
+}
+
+function _resetRecordingUI() {
+    _isRecording = false;
+    const micBtn = document.getElementById('mic-btn');
+    if (micBtn) {
         micBtn.classList.remove('recording');
         micBtn.querySelector('i').className = 'fas fa-microphone';
         micBtn.title = 'Grabar audio';
+    }
+    const cancelBtn = document.getElementById('mic-cancel-btn');
+    if (cancelBtn) {
+        cancelBtn.style.display = 'none';
     }
 }
 

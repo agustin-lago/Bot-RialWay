@@ -229,11 +229,16 @@ export const registerStaticRoutes = (app: any, { __dirname }: { __dirname: strin
     // Vendor packages instalados localmente
     app.use("/vendor/toast", serve(path.join(process.cwd(), "node_modules", "nextjs-toast-notify", "dist")));
     app.use("/vendor/fontawesome", serve(path.join(process.cwd(), "node_modules", "@fortawesome", "fontawesome-free")));
+    const tempDir = path.join(process.cwd(), "temp");
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+    const tmpDir = path.join(process.cwd(), "tmp");
+    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+
     app.use("/uploads", serve(path.join(process.cwd(), "uploads")));
-    app.use("/temp", serve(path.join(process.cwd(), "tmp")));
-    app.use("/app/temp", serve(path.join(process.cwd(), "tmp")));
-    app.use("/tmp", serve(path.join(process.cwd(), "tmp")));
-    app.use("/app/tmp", serve(path.join(process.cwd(), "tmp")));
+    app.use("/temp", serve(tempDir));
+    app.use("/app/temp", serve(tempDir));
+    app.use("/tmp", serve(tmpDir));
+    app.use("/app/tmp", serve(tmpDir));
 
     app.get("/api/test-tmp", (_req: any, res: any) => {
         try {

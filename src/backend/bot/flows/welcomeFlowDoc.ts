@@ -238,7 +238,7 @@ export const welcomeFlowDoc = addKeyword<BaileysProvider, MemoryDB>(EVENTS.DOCUM
             console.error("Error procesando PDF:", err);
             await flowDynamic("Ocurrió un error al procesar el PDF.");
         } finally {
-            // Limpiar archivos temporales SIEMPRE
+            // Limpiar imágenes intermedias generadas para el OCR/Vision (mantener el documento original en tmp para descarga en CRM)
             if (imagenesGeneradas.length > 0) {
                 for (const imgPath of imagenesGeneradas) {
                     try { fs.unlinkSync(imgPath); } catch (e: any) { console.error("Ignorado:", e.message); }
@@ -246,9 +246,6 @@ export const welcomeFlowDoc = addKeyword<BaileysProvider, MemoryDB>(EVENTS.DOCUM
             }
             if (outputDir && fs.existsSync(outputDir)) {
                 try { fs.rmSync(outputDir, { recursive: true, force: true }); } catch (e: any) { console.error("Ignorado:", e.message); }
-            }
-            if (localPath && fs.existsSync(localPath)) {
-                try { fs.unlinkSync(localPath); } catch (e: any) { console.error("Ignorado:", e.message); }
             }
         }
     });
