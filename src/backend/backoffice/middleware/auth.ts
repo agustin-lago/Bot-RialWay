@@ -199,7 +199,7 @@ export const backofficeAuth = async (req: any, res: any, next: () => void) => {
         return next();
     }
     
-    console.warn(`[AUTH] Intento fallido para backoffice. project_id=${projectId}, token_present=${Boolean(token)}, admin_pass_configured=${Boolean(adminPass)}`);
+    console.warn(`[AUTH] Intento fallido para backoffice. project_id=${projectId}, token_present=${Boolean(token)}`);
     
     // Si res.status o res.json no existen (middleware antes de compatibilidad), los manejamos manualmente
     if (typeof res.status === 'function') {
