@@ -114,19 +114,21 @@ export class ReconectionFlow {
             }
 
             // --- Lógica para detectar y descargar PDF ---
-            const pdfRegex = /\[\s*PDF\s*:\s*([a-zA-Z0-9_-]+)\s*\]/gi;
+            const pdfRegex = /\[\s*PDF\s*:\s*([^\]]+)\s*\]/gi;
             const pdfPaths: string[] = [];
             let pdfMatch;
             const originalMsg = msg;
 
             while ((pdfMatch = pdfRegex.exec(originalMsg)) !== null) {
-                const fileId = pdfMatch[1];
+                const rawTarget = pdfMatch[1].trim();
                 try {
-                    // console.log(`[ReconectionFlow] Detectado PDF ID: ${fileId}. Descargando...`);
-                    const filePath = await downloadFileFromDrive(fileId);
-                    pdfPaths.push(filePath);
+                    console.log(`[ReconectionFlow] 📄 Detectado PDF: ${rawTarget}. Descargando...`);
+                    const filePath = await downloadFileFromDrive(rawTarget);
+                    if (filePath && fs.existsSync(filePath) && !pdfPaths.includes(filePath)) {
+                        pdfPaths.push(filePath);
+                    }
                 } catch (err: any) {
-                    // console.error(`[ReconectionFlow PDF] Error con ID ${fileId}:`, err.message);
+                    console.error(`[ReconectionFlow PDF] ❌ Error con ID/URL ${rawTarget}:`, err?.message || err);
                 }
             }
 

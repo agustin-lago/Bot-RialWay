@@ -309,21 +309,22 @@ export class AssistantResponseProcessor {
         }
 
 
-        // 4) Procesar [PDF: ID] si existen
-        const pdfRegex = /\[\s*PDF\s*:\s*([a-zA-Z0-9_-]+)\s*\]/gi;
+        // 4) Procesar [PDF: ID / URL / PATH] si existen
+        const pdfRegex = /\[\s*PDF\s*:\s*([^\]]+)\s*\]/gi;
         const pdfPaths: string[] = [];
         let pdfMatch;
 
         // Usar sanitizedTextResponse para buscar los IDs antes de limpiar
         while ((pdfMatch = pdfRegex.exec(sanitizedTextResponse)) !== null) {
-            const fileId = pdfMatch[1];
+            const rawTarget = pdfMatch[1].trim();
+            console.log(`[AssistantResponseProcessor] 📄 Detectado bloque [PDF: ${rawTarget}]`);
             try {
-                const filePath = await downloadFileFromDrive(fileId);
-                if (filePath && fs.existsSync(filePath)) {
+                const filePath = await downloadFileFromDrive(rawTarget);
+                if (filePath && fs.existsSync(filePath) && !pdfPaths.includes(filePath)) {
                     pdfPaths.push(filePath);
                 }
             } catch (err: any) {
-                // console.error(`[PDF Processor] Error con ID ${fileId}:`, err.message);
+                console.error(`[AssistantResponseProcessor] ❌ Error procesando PDF (${rawTarget}):`, err?.message || err);
             }
         }
 
@@ -411,23 +412,45 @@ export class AssistantResponseProcessor {
                 try {
                     const absolutePath = path.resolve(pdfPath);
                     const fromNumber = ctx?.from || ctx?.key?.remoteJid || '';
+                    const jid = fromNumber.includes('@') ? fromNumber : `${fromNumber}@s.whatsapp.net`;
+                    const fileName = path.basename(absolutePath);
                     
                     // Detectamos si el proveedor es Meta para usar su método nativo de subida
                     const isMeta = provider?.constructor?.name === 'MetaCloudProvider' || provider?.constructor?.name === 'MetaProvider';
 
+                    console.log(`[AssistantResponseProcessor] 📤 Enviando PDF vía ${isMeta ? 'Meta' : 'Baileys/Provider'}: ${absolutePath}`);
+
                     if (isMeta && fromNumber && typeof provider.sendMessage === 'function') {
-                        console.log(`[AssistantResponseProcessor] Enviando PDF vía Meta (Directo): ${absolutePath}`);
-                        await provider.sendMessage(fromNumber, absolutePath, { body: "📄 Documento adjunto:", mimetype: 'application/pdf' });
+                        await provider.sendMessage(fromNumber, absolutePath, { body: "📄 Documento adjunto:", mimetype: 'application/pdf', fileName });
+                    } else if (provider?.sendFile && typeof provider.sendFile === 'function') {
+                        await provider.sendFile(jid, absolutePath, "📄 Documento adjunto:");
+                    } else if (provider?.sendMessage && typeof provider.sendMessage === 'function') {
+                        await provider.sendMessage(jid, "📄 Documento adjunto:", { media: absolutePath, fileName });
                     } else {
-                        // Para Baileys y otros, flowDynamic es el método estándar y más fiable para enviar archivos locales
-                        console.log(`[AssistantResponseProcessor] Enviando PDF vía FlowDynamic: ${absolutePath}`);
                         await flowDynamic([{ body: "📄 Documento adjunto:", media: absolutePath }]);
+                    }
+
+                    // Persistir referencia al documento en el historial
+                    if (ctx?.from) {
+                        const platform = ctx.platform || 'whatsapp';
+                        await HistoryHandler.saveMessage(
+                            ctx.from,
+                            'assistant',
+                            `[Documento PDF: ${fileName}]`,
+                            'document',
+                            null,
+                            ctx.userId,
+                            null,
+                            platform,
+                            projectId,
+                            serviceId || undefined
+                        );
                     }
                     
                     // Breve espera entre archivos para asegurar el orden y evitar saturación
                     await new Promise(r => setTimeout(r, 1000));
                 } catch (err: any) {
-                    console.error('[AssistantResponseProcessor] Error enviando PDF:', err);
+                    console.error('[AssistantResponseProcessor] ❌ Error enviando PDF:', err);
                 }
             }
 

@@ -15,11 +15,50 @@ const getDriveClient = () => {
 
 
 /**
- * Descarga un archivo desde Google Drive dado su ID.
- * @param fileId ID del archivo en Google Drive.
+ * Extrae un ID limpio de archivo de Google Drive a partir de un ID directo o una URL.
+ */
+export const extractGoogleDriveFileId = (input: string): string => {
+    if (!input) return '';
+    const trimmed = input.trim();
+
+    // Si ya es una ruta existente en disco
+    if (fs.existsSync(trimmed)) return trimmed;
+
+    // 1. Extraer de URL estándar de Drive / Docs / Sheets
+    const urlMatch = trimmed.match(/\/d\/([a-zA-Z0-9_-]{15,})/i) || trimmed.match(/id=([a-zA-Z0-9_-]{15,})/i);
+    if (urlMatch) {
+        return urlMatch[1];
+    }
+
+    // 2. Si viene como ID directo con extensión (ej: ID.pdf)
+    const withoutExt = trimmed.replace(/\.pdf$/i, '').trim();
+
+    // 3. Si contiene una secuencia válida de ID de Drive (mínimo 15 caracteres)
+    const idMatch = withoutExt.match(/([a-zA-Z0-9_-]{15,})/);
+    if (idMatch) {
+        return idMatch[1];
+    }
+
+    return withoutExt;
+};
+
+/**
+ * Descarga un archivo desde Google Drive dado su ID o URL.
+ * @param rawFileId ID o URL del archivo en Google Drive, o ruta local.
  * @returns Path local del archivo descargado.
  */
-export const downloadFileFromDrive = async (fileId: string): Promise<string> => {
+export const downloadFileFromDrive = async (rawFileId: string): Promise<string> => {
+    if (!rawFileId) throw new Error("ID de archivo no proporcionado");
+    
+    // Si ya es un archivo local existente
+    const trimmed = rawFileId.trim();
+    if (fs.existsSync(trimmed)) {
+        return path.resolve(trimmed);
+    }
+
+    const fileId = extractGoogleDriveFileId(trimmed);
+    if (!fileId) throw new Error(`No se pudo extraer un ID válido de Google Drive desde: "${rawFileId}"`);
+
     try {
         // Asegurar que existe el directorio temporal
         const tempDir = path.join(process.cwd(), "temp", "drive");
@@ -42,9 +81,11 @@ export const downloadFileFromDrive = async (fileId: string): Promise<string> => 
         if ((isGoogleDoc || mimeType === "application/pdf") && !fileName.toLowerCase().endsWith(".pdf")) {
             fileName = `${fileName}.pdf`;
         }
-        const filePath = path.join(tempDir, fileName);
+        // Sanitizar el nombre del archivo para que no contenga caracteres inválidos en el sistema de archivos
+        const sanitizedFileName = fileName.replace(/[<>:"/\\|?*]/g, '_');
+        const filePath = path.join(tempDir, sanitizedFileName);
 
-        console.log(`[Drive] Iniciando descarga de archivo ID: ${fileId} (${fileName})... MimeType: ${mimeType}`);
+        console.log(`[Drive] 📥 Iniciando descarga de archivo ID: ${fileId} (${sanitizedFileName})... MimeType: ${mimeType}`);
 
         // Descargar/exportar el contenido del archivo
         let res;
@@ -63,13 +104,13 @@ export const downloadFileFromDrive = async (fileId: string): Promise<string> => 
 
         const dest = fs.createWriteStream(filePath);
         res.data.pipe(dest);
-        
+
         await finished(dest);
 
         console.log(`✅ [Drive] Archivo descargado con éxito: ${filePath}`);
         return filePath;
     } catch (error: any) {
-        console.error("❌ [Drive] Error al descargar de Google Drive:", error.message);
+        console.error(`❌ [Drive] Error al descargar de Google Drive (ID: ${fileId}):`, error.message);
         throw error;
     }
 };
