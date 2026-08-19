@@ -27,50 +27,50 @@ export function invalidateAuthCache() {
     console.log('[AUTH] Cache de credenciales invalidado.');
 }
 
-async function _getUserRole(userId: string): Promise<string> {
+async function _getUserRole(userId: string): Promise<string | null> {
     const now = Date.now();
-    const cached = _userCache.get(userId);
+    const cached = _userCache.get(userId) as any;
     if (cached && (now - cached.timestamp) < USER_ROLE_TTL) {
+        if (cached.notFound) return null;
         return cached.role;
     }
-    let role = 'subuser';
-    let projectId: string | null = null;
-    let serviceId: string | null = null;
     try {
         const user = await HistoryHandler.getUserById(userId);
         if (user) {
-            role = user.role || 'subuser';
-            projectId = user.project_id || null;
-            serviceId = user.service_id || null;
+            const role = user.role || 'subuser';
+            const projectId = user.project_id || null;
+            const serviceId = user.service_id || null;
+            _userCache.set(userId, { role, projectId, serviceId, timestamp: now } as any);
+            return role;
         }
     } catch (e) {
         console.error('[AUTH] Error obteniendo rol del usuario:', e);
     }
-    _userCache.set(userId, { role, projectId, serviceId, timestamp: now });
-    return role;
+    _userCache.set(userId, { notFound: true, timestamp: now } as any);
+    return null;
 }
 
-async function _getUserInfo(userId: string): Promise<{ role: string; projectId: string | null; serviceId: string | null }> {
+async function _getUserInfo(userId: string): Promise<{ role: string; projectId: string | null; serviceId: string | null } | null> {
     const now = Date.now();
-    const cached = _userCache.get(userId);
+    const cached = _userCache.get(userId) as any;
     if (cached && (now - cached.timestamp) < USER_ROLE_TTL) {
+        if (cached.notFound) return null;
         return { role: cached.role, projectId: cached.projectId, serviceId: cached.serviceId };
     }
-    let role = 'subuser';
-    let projectId: string | null = null;
-    let serviceId: string | null = null;
     try {
         const user = await HistoryHandler.getUserById(userId);
         if (user) {
-            role = user.role || 'subuser';
-            projectId = user.project_id || null;
-            serviceId = user.service_id || null;
+            const role = user.role || 'subuser';
+            const projectId = user.project_id || null;
+            const serviceId = user.service_id || null;
+            _userCache.set(userId, { role, projectId, serviceId, timestamp: now } as any);
+            return { role, projectId, serviceId };
         }
     } catch (e) {
         console.error('[AUTH] Error obteniendo info del usuario:', e);
     }
-    _userCache.set(userId, { role, projectId, serviceId, timestamp: now });
-    return { role, projectId, serviceId };
+    _userCache.set(userId, { notFound: true, timestamp: now } as any);
+    return null;
 }
 
 async function _fetchAdminPass(): Promise<string> {
@@ -124,7 +124,8 @@ export const backofficeAuth = async (req: any, res: any, next: () => void) => {
     const adminPass = await _fetchAdminPass();
 
     // Log de diagnóstico persistente para depurar fallos en producción
-    const projectId = (HistoryHandler as any).PROJECT_ID || process.env.RAILWAY_PROJECT_ID || 'unknown';
+    const projectId = (HistoryHandler as any).PROJECT_IDENTIFIER || process.env.RAILWAY_PROJECT_ID || 'unknown';
+    const currentServiceId = (HistoryHandler as any).SERVICE_IDENTIFIER || 'default_service';
 
     if (!adminPass) {
         console.error('⚡⚡ [AUTH-NON-CONFIGURED] ⚡⚡');
@@ -142,12 +143,29 @@ export const backofficeAuth = async (req: any, res: any, next: () => void) => {
 
     if (!isValid && typeof token === 'string' && token.startsWith('sub:')) {
         userId = token.split(':')[1];
-        isValid = true;
-        isSubUser = true;
         const userInfo = await _getUserInfo(userId);
-        userRole = userInfo.role;
-        userProjectId = userInfo.projectId;
-        userServiceId = userInfo.serviceId;
+        if (userInfo) {
+            if (userInfo.projectId === projectId && (userInfo.serviceId === null || userInfo.serviceId === currentServiceId)) {
+                isValid = true;
+                isSubUser = true;
+                userRole = userInfo.role;
+                userProjectId = userInfo.projectId;
+                userServiceId = userInfo.serviceId;
+            } else {
+                console.warn(`[AUTH] Usuario subuser existe pero no corresponde a este proyecto/servicio. project=${projectId}, userProject=${userInfo.projectId}`);
+            }
+        } else {
+            console.warn(`[AUTH] Token subuser inválido o usuario no existe. id=${userId}`);
+        }
+    }
+
+    // Bloquear acceso de ADMIN normal si el proyecto está huérfano
+    if (isValid && !isSuperAdmin) {
+        const tenantResolution = await (HistoryHandler as any).resolveTenantIdByProjectId(projectId);
+        if (!tenantResolution.resolved && !tenantResolution.globalScope) {
+            console.warn(`[AUTH] Proyecto ${projectId} huérfano. Rechazando acceso a ADMIN normal / Subuser.`);
+            isValid = false;
+        }
     }
     
     if (token && isValid) {
