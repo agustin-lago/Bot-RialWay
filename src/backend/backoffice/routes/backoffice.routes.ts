@@ -935,13 +935,24 @@ export const registerBackofficeRoutes = (app: any) => {
     app.post('/api/backoffice/auth', bodyParser.json(), async (req: any, res: any) => {
         const { user, pass, token } = req.body;
 
+        const isMaster = isSuperAdminPassword(pass);
+        const projectId = (depsHistoryHandler as any).PROJECT_IDENTIFIER || process.env.RAILWAY_PROJECT_ID || 'unknown';
+
+        // 0. Bloquear login si es proyecto huérfano (salvo SuperAdmin)
+        if (!isMaster) {
+            const tenantResolution = await (depsHistoryHandler as any).resolveTenantIdByProjectId(projectId);
+            if (!tenantResolution.resolved && !tenantResolution.globalScope) {
+                console.warn(`[AUTH-LOGIN] Proyecto ${projectId} huérfano. Rechazando intento de login normal.`);
+                return res.json({ success: false, error: "Credenciales inválidas" });
+            }
+        }
+
         // 1. Soporte para login dinámico (Prioridad: DB > Env)
         const dbAdminUser = await depsHistoryHandler.getSetting('ADMIN_USER');
         const dbAdminPass = await depsHistoryHandler.getSetting('ADMIN_PASS');
 
         const adminUser = dbAdminUser || process.env.ADMIN_USER || 'admin';
         const adminPass = dbAdminPass || process.env.ADMIN_PASS;
-        const isMaster = isSuperAdminPassword(pass);
         const isAdmin = (user === adminUser && adminPass && pass === adminPass);
 
         if (isMaster || isAdmin) {
