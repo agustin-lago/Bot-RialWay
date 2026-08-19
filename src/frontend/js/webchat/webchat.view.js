@@ -104,6 +104,21 @@ window.webchatView = {
                                 </button>
                             </div>
                         </div>
+                        <div class="webchat-command-card">
+                            <div class="webchat-command-copy">
+                                <span class="webchat-command-action-icon"><i class="fas fa-eraser"></i></span>
+                                <div>
+                                    <h3>Eliminar contexto</h3>
+                                    <p>Borra los datos recordados del cliente (ID, dirección) de esta sesión.</p>
+                                </div>
+                            </div>
+                            <div class="webchat-command-card-footer">
+                                <button class="btn webchat-command-button" data-webchat-command="CLEAR_CONTEXT">
+                                    <i class="fas fa-eraser"></i>
+                                    Eliminar contexto
+                                </button>
+                            </div>
+                        </div>
                         <div class="webchat-command-note">
                             <i class="fas fa-shield-halved"></i>
                             Estos comandos son exclusivos del webchat.
@@ -146,6 +161,21 @@ window.webchatView = {
                                 <button class="btn webchat-command-button" data-webchat-command="HILO_NUEVO">
                                     <i class="fas fa-broom"></i>
                                     Hilo nuevo
+                                </button>
+                            </div>
+                        </div>
+                        <div class="webchat-command-card">
+                            <div class="webchat-command-copy">
+                                <span class="webchat-command-action-icon"><i class="fas fa-eraser"></i></span>
+                                <div>
+                                    <h3>Eliminar contexto</h3>
+                                    <p>Borra los datos recordados del cliente (ID, dirección) de esta sesión.</p>
+                                </div>
+                            </div>
+                            <div class="webchat-command-card-footer">
+                                <button class="btn webchat-command-button" data-webchat-command="CLEAR_CONTEXT">
+                                    <i class="fas fa-eraser"></i>
+                                    Eliminar contexto
                                 </button>
                             </div>
                         </div>

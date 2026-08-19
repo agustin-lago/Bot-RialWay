@@ -81,6 +81,12 @@ window.initWebchatView = function () {
     }
 
     const token = localStorage.getItem('backoffice_token');
+    
+    let webchatClientId = localStorage.getItem('webchat_client_id');
+    if (!webchatClientId) {
+        webchatClientId = 'wc_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+        localStorage.setItem('webchat_client_id', webchatClientId);
+    }
 
     async function _runWebchatCommand(command) {
         const res = await fetch(`/webchat-api/command?token=${encodeURIComponent(token || '')}`, {
@@ -89,7 +95,8 @@ window.initWebchatView = function () {
             body: JSON.stringify({
                 command,
                 projectId: window.railwayProjectId || '',
-                serviceId: window.railwayServiceId || ''
+                serviceId: window.railwayServiceId || '',
+                clientId: webchatClientId
             })
         });
         if (res.status === 401) {
@@ -123,7 +130,7 @@ window.initWebchatView = function () {
         fetch(`/webchat-api?token=${token}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: msg })
+            body: JSON.stringify({ message: msg, clientId: webchatClientId })
         }).then(r => {
             if (r.status === 401) { logout(); return null; }
             return r.json();
@@ -138,7 +145,7 @@ window.initWebchatView = function () {
         fetch(`/webchat-api?token=${token}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: '', file: { base64, name: filename, mime: mimeType, type } })
+            body: JSON.stringify({ message: '', file: { base64, name: filename, mime: mimeType, type }, clientId: webchatClientId })
         }).then(r => r.json())
           .then(d => { if (d?.reply) _addMsg(d.reply, 'assistant'); })
           .catch(() => _addMsg('Error enviando archivo.', 'assistant'));
@@ -229,14 +236,18 @@ window.initWebchatView = function () {
                 const confirmed = await window.swalConfirm('Iniciar hilo nuevo?', 'Se limpiara solo la sesion actual del webchat.');
                 if (!confirmed) return;
             }
-            _setCommandBusy(button, true, command === 'RESET' ? 'Reiniciando...' : 'Limpiando...');
+            if (command === 'CLEAR_CONTEXT') {
+                const confirmed = await window.swalConfirm('Eliminar contexto?', 'Se borraran los datos del cliente recordados en la sesion.');
+                if (!confirmed) return;
+            }
+            _setCommandBusy(button, true, command === 'RESET' ? 'Reiniciando...' : (command === 'CLEAR_CONTEXT' ? 'Eliminando...' : 'Limpiando...'));
             try {
                 const data = await _runWebchatCommand(command);
                 if (data?.clearChat) _clearChat();
                 if (data?.message) _addMsg(data.message, 'assistant');
                 _closeActionsModal();
             } catch (err) {
-                const fallback = command === 'RESET' ? 'No se pudo ejecutar Reset.' : 'No se pudo iniciar un hilo nuevo.';
+                const fallback = command === 'RESET' ? 'No se pudo ejecutar Reset.' : (command === 'CLEAR_CONTEXT' ? 'No se pudo eliminar el contexto.' : 'No se pudo iniciar un hilo nuevo.');
                 const message = err instanceof Error ? err.message : fallback;
                 window.swalAlert('Error', message, 'error');
             } finally {
@@ -261,4 +272,17 @@ window.initWebchatView = function () {
         const el = document.getElementById('assistantName');
         if (el && d.name) el.textContent = d.name;
     }).catch(() => {});
+
+    // Cargar historial
+    fetch(`/webchat-api/history?token=${encodeURIComponent(token || '')}&clientId=${encodeURIComponent(webchatClientId)}`)
+        .then(r => r.json())
+        .then(d => {
+            if (d.success && d.history && d.history.length > 0) {
+                _clearChat();
+                for (const msg of d.history) {
+                    _addMsg(msg.content, msg.role);
+                }
+            }
+        })
+        .catch(() => {});
 };
