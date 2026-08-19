@@ -1,4 +1,5 @@
 export class WebChatSession {
+  [key: string]: any;
   public history: { role: string, content: string }[] = [];
   public thread_id: string | null = null;
 
@@ -17,5 +18,6 @@ export class WebChatSession {
   clear() {
     this.history = [];
     this.thread_id = null;
+    // Do not wipe other context keys to keep continuity of client info
   }
 }

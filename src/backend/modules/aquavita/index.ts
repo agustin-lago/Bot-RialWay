@@ -21,6 +21,9 @@ function toDDMMYYYY(fecha: string): string {
         const y = today.getFullYear();
         return `${d}/${m}/${y}`;
     }
+    if (fecha.toLowerCase().includes('dd/mm')) {
+        return '';
+    }
     if (/^\d{2}\/\d{2}\/\d{4}$/.test(fecha)) return fecha;
     if (/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
         const [y, m, d] = fecha.split('-');
@@ -449,7 +452,23 @@ export const aquavitaModule = {
     // 14. historialFacturas
     historialFacturas: async (args: any) => {
       const clientId = args.cliente_id ?? args.ClienteId ?? args.clienteId;
-      const { desde, hasta } = validarRangoFechas(args.fechaDesde ?? '', args.fechaHasta ?? '');
+      
+      let desdeVal = args.fechaDesde ?? '';
+      let hastaVal = args.fechaHasta ?? '';
+      if (!desdeVal || desdeVal.toLowerCase().includes('dd/mm')) {
+        // Por defecto, buscar últimos 6 meses si no se especifican fechas, para tener margen
+        const sixMonthsAgo = new Date();
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+        const d = String(sixMonthsAgo.getDate()).padStart(2, '0');
+        const m = String(sixMonthsAgo.getMonth() + 1).padStart(2, '0');
+        const y = sixMonthsAgo.getFullYear();
+        desdeVal = `${d}/${m}/${y}`;
+      }
+      if (!hastaVal || hastaVal.toLowerCase().includes('dd/mm')) {
+        hastaVal = '{{HOY}}';
+      }
+
+      const { desde, hasta } = validarRangoFechas(desdeVal, hastaVal);
       const apiResponse = await AdministracionApi.historialFacturasCliente(
         clientId,
         desde,
@@ -464,7 +483,22 @@ export const aquavitaModule = {
     // 15. recibosPago
     recibosPago: async (args: any) => {
       const clientId = args.cliente_id ?? args.clienteId ?? args.ClienteId;
-      const { desde, hasta } = validarRangoFechas(args.fechaReciboDesde ?? '', args.fechaReciboHasta ?? '');
+      
+      let desdeVal = args.fechaReciboDesde ?? '';
+      let hastaVal = args.fechaReciboHasta ?? '';
+      if (!desdeVal || desdeVal.toLowerCase().includes('dd/mm')) {
+        const sixMonthsAgo = new Date();
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+        const d = String(sixMonthsAgo.getDate()).padStart(2, '0');
+        const m = String(sixMonthsAgo.getMonth() + 1).padStart(2, '0');
+        const y = sixMonthsAgo.getFullYear();
+        desdeVal = `${d}/${m}/${y}`;
+      }
+      if (!hastaVal || hastaVal.toLowerCase().includes('dd/mm')) {
+        hastaVal = '{{HOY}}';
+      }
+
+      const { desde, hasta } = validarRangoFechas(desdeVal, hastaVal);
       const apiResponse = await AdministracionApi.recibosPagoCliente(
         clientId,
         desde,
