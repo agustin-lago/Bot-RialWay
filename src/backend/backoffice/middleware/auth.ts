@@ -86,9 +86,12 @@ async function _fetchAdminPass(projectId: string, tenantId: string | null): Prom
     // Timeout de 3s: si Supabase tarda, no bloqueamos todas las requests
     const fallback = new Promise<string>(resolve => setTimeout(() => resolve(''), 3000));
     _adminPassPromise = Promise.race([
-        HistoryHandler.getSetting('ADMIN_PASS').then(
-            (dbPass) => dbPass || process.env.ADMIN_PASS || process.env.BACKOFFICE_TOKEN || ''
-        ),
+        HistoryHandler.getSetting('ADMIN_PASS').then((dbPass) => {
+            if (tenantId) {
+                return dbPass || '';
+            }
+            return dbPass || process.env.ADMIN_PASS || process.env.BACKOFFICE_TOKEN || '';
+        }),
         fallback
     ]);
     return _adminPassPromise;
