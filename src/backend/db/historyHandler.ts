@@ -3905,7 +3905,13 @@ export class HistoryHandler {
 
             if (masterSettings && masterSettings.length > 0) {
                 // Lista de llaves que NUNCA deben clonarse automáticamente desde el maestro
-                const protectedKeys = ['OPENAI_API_KEY', 'OPENAI_ADMIN_API_KEY', 'OPENAI_API_KEY_TOOLS'];
+                const protectedKeys = [
+                    'OPENAI_API_KEY', 
+                    'OPENAI_ADMIN_API_KEY', 
+                    'OPENAI_API_KEY_TOOLS',
+                    'ADMIN_USER',
+                    'ADMIN_PASS'
+                ];
 
                 const settingsToInsert = masterSettings
                     .filter(s => !protectedKeys.includes(s.key)) // Protección extra para llaves sensibles
