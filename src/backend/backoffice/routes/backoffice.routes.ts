@@ -5277,16 +5277,7 @@ Hemos recibido tu pago con Ã©xito.
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
             const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
-            const upsertData: any = { project_id: projectId, key: 'BLACKLIST_ACTIVE', value: 'true' };
-            if (serviceId && serviceId !== 'default' && serviceId !== 'default_service') {
-                upsertData.service_id = serviceId;
-            }
-            const { error } = await supabase
-                .from('settings')
-                .upsert(upsertData, { onConflict: 'project_id,service_id,key' });
-            if (error) throw error;
-            // Invalidar cachÃ©
-            (depsHistoryHandler as any).settingsCache?.delete?.(`${projectId}:${serviceId || 'default'}:BLACKLIST_ACTIVE`);
+            await depsHistoryHandler.saveSetting('BLACKLIST_ACTIVE', 'true', projectId, serviceId && serviceId !== 'default' && serviceId !== 'default_service' ? serviceId : null);
             res.json({ success: true });
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });
@@ -5311,15 +5302,7 @@ Hemos recibido tu pago con Ã©xito.
             const { error: delErr } = await blQuery;
             if (delErr) throw delErr;
             // 2. Desactivar el setting
-            const upsertData: any = { project_id: projectId, key: 'BLACKLIST_ACTIVE', value: 'false' };
-            if (serviceId && serviceId !== 'default' && serviceId !== 'default_service') {
-                upsertData.service_id = serviceId;
-            }
-            const { error: settErr } = await supabase
-                .from('settings')
-                .upsert(upsertData, { onConflict: 'project_id,service_id,key' });
-            if (settErr) throw settErr;
-            (depsHistoryHandler as any).settingsCache?.delete?.(`${projectId}:${serviceId || 'default'}:BLACKLIST_ACTIVE`);
+            await depsHistoryHandler.saveSetting('BLACKLIST_ACTIVE', 'false', projectId, serviceId && serviceId !== 'default' && serviceId !== 'default_service' ? serviceId : null);
             res.json({ success: true });
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });
@@ -5515,11 +5498,7 @@ Hemos recibido tu pago con Ã©xito.
     app.post('/api/backoffice/notifications/activate', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         try {
             const projectId = depsHistoryHandler.PROJECT_IDENTIFIER;
-            const { error } = await supabase
-                .from('settings')
-                .upsert({ project_id: projectId, key: 'NOTIFICATIONS_ACTIVE', value: 'true' }, { onConflict: 'project_id,key' });
-            if (error) throw error;
-            (depsHistoryHandler as any).settingsCache?.delete?.(`${projectId}:NOTIFICATIONS_ACTIVE`);
+            await depsHistoryHandler.saveSetting('NOTIFICATIONS_ACTIVE', 'true', projectId);
             res.json({ success: true });
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });
@@ -5544,11 +5523,7 @@ Hemos recibido tu pago con Ã©xito.
                 if (resetErr) throw resetErr;
             }
             // 2. Guardar setting como false
-            const { error: settErr } = await supabase
-                .from('settings')
-                .upsert({ project_id: projectId, key: 'NOTIFICATIONS_ACTIVE', value: 'false' }, { onConflict: 'project_id,key' });
-            if (settErr) throw settErr;
-            (depsHistoryHandler as any).settingsCache?.delete?.(`${projectId}:NOTIFICATIONS_ACTIVE`);
+            await depsHistoryHandler.saveSetting('NOTIFICATIONS_ACTIVE', 'false', projectId);
 
             // Notificar a clientes conectados que la integraciÃ³n se desactivÃ³ para limpiar badges
             historyEvents.emit('notifications_deactivated', { projectId });

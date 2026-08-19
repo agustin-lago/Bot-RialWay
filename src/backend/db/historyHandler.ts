@@ -176,8 +176,60 @@ export class HistoryHandler {
     // In-memory caches to optimize database performance and avoid Disk I/O exhaustion (Supabase Best Practice)
     private static settingsCache = new Map<string, { value: string | null, timestamp: number }>();
     private static chatCache = new Map<string, { data: any, timestamp: number }>();
+    private static tenantCache = new Map<string, { tenantId: string | null, resolved: boolean, globalScope: boolean, timestamp: number }>();
     private static readonly CACHE_TTL_MS = 60 * 1000; // Settings cache: 1 minute
     private static readonly CHAT_CACHE_TTL_MS = 15 * 1000; // Chat cache: 15 seconds
+    private static readonly TENANT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos para hits positivos
+
+    static async resolveTenantIdByProjectId(projectId: string): Promise<{ tenantId: string | null, resolved: boolean, globalScope: boolean }> {
+        if (!projectId) return { tenantId: null, resolved: false, globalScope: false };
+
+        if (projectId === 'default_project' || projectId === 'neurolinks-control' || projectId === 'defaul') {
+            return { tenantId: null, resolved: true, globalScope: true };
+        }
+
+        if (projectId.startsWith('client_')) {
+            const cached = this.tenantCache.get(projectId);
+            if (cached && (Date.now() - cached.timestamp < this.TENANT_CACHE_TTL_MS)) {
+                return { tenantId: cached.tenantId, resolved: cached.resolved, globalScope: cached.globalScope };
+            }
+
+            const clientId = projectId.replace('client_', '');
+            const { data, error } = await supabase.from('clientes').select('auth_user_id').eq('id', clientId).maybeSingle();
+            if (error) {
+                console.error(`[HistoryHandler] Error consultando cliente ${clientId}:`, error);
+                throw error;
+            }
+            if (data && data.auth_user_id) {
+                const result = { tenantId: data.auth_user_id, resolved: true, globalScope: false };
+                this.tenantCache.set(projectId, { ...result, timestamp: Date.now() });
+                return result;
+            }
+            return { tenantId: null, resolved: false, globalScope: false };
+        }
+
+        // Para projects railway, NO usamos cache para detectar UNLINK rápido y desvincular inmediatamente
+        const { data: link, error: linkError } = await supabase.from('proyectos_railway').select('cliente_id').eq('railway_project_id', projectId).maybeSingle();
+        if (linkError) {
+            console.error(`[HistoryHandler] Error consultando proyecto ${projectId}:`, linkError);
+            throw linkError;
+        }
+
+        if (link && link.cliente_id) {
+            const { data: client, error: clientError } = await supabase.from('clientes').select('auth_user_id').eq('id', link.cliente_id).maybeSingle();
+            if (clientError) {
+                console.error(`[HistoryHandler] Error consultando cliente ${link.cliente_id}:`, clientError);
+                throw clientError;
+            }
+
+            if (client && client.auth_user_id) {
+                return { tenantId: client.auth_user_id, resolved: true, globalScope: false };
+            }
+        }
+        
+        // Si no hay error pero no hay tenant_id (porque el proyecto o el cliente no existe/no está vinculado)
+        return { tenantId: null, resolved: false, globalScope: false };
+    }
 
     private static invalidateChatCache(rawChatId: string, projectId?: string) {
         const chatId = this.normalizeId(rawChatId);
@@ -243,6 +295,7 @@ export class HistoryHandler {
                 name: 'chats',
                 sql: `CREATE TABLE IF NOT EXISTS chats (
                     id TEXT,
+                    tenant_id UUID,
                     user_id TEXT,
                     project_id TEXT,
                     service_id TEXT,
@@ -307,6 +360,7 @@ export class HistoryHandler {
                 name: 'messages',
                 sql: `CREATE TABLE IF NOT EXISTS messages (
                     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+                    tenant_id UUID,
                     chat_id TEXT,
                     project_id TEXT,
                     service_id TEXT,
@@ -329,6 +383,7 @@ export class HistoryHandler {
                 name: 'tickets',
                 sql: `CREATE TABLE IF NOT EXISTS tickets (
                     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+                    tenant_id UUID,
                     project_id TEXT,
                     service_id TEXT,
                     chat_id TEXT,
@@ -367,6 +422,7 @@ export class HistoryHandler {
             {
                 name: 'settings',
                 sql: `CREATE TABLE IF NOT EXISTS settings (
+                    tenant_id UUID,
                     project_id TEXT,
                     service_id TEXT,
                     key TEXT,
@@ -382,6 +438,7 @@ export class HistoryHandler {
                 name: 'users',
                 sql: `CREATE TABLE IF NOT EXISTS users (
                     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+                    tenant_id UUID,
                     project_id TEXT,
                     service_id TEXT,
                     username TEXT NOT NULL,
@@ -3566,15 +3623,23 @@ export class HistoryHandler {
         const cacheKey = `${targetProjectId}:${targetServiceId}:${key}`;
         this.settingsCache.delete(cacheKey);
 
+        const tenantResolution = await this.resolveTenantIdByProjectId(targetProjectId);
+        
+        const payload: any = {
+            project_id: targetProjectId,
+            service_id: targetServiceId,
+            key,
+            value,
+            updated_at: new Date().toISOString()
+        };
+
+        if (tenantResolution.resolved) {
+            payload.tenant_id = tenantResolution.tenantId;
+        }
+
         const { error } = await supabase
             .from('settings')
-            .upsert({
-                project_id: targetProjectId,
-                service_id: targetServiceId,
-                key,
-                value,
-                updated_at: new Date().toISOString()
-            }, { onConflict: 'project_id,service_id,key' });
+            .upsert(payload, { onConflict: 'project_id,service_id,key' });
 
         if (error) {
             console.error(`❌ [HistoryHandler] Error guardando setting ${key}:`, error);
@@ -3821,6 +3886,8 @@ export class HistoryHandler {
                 return;
             }
 
+            const tenantResolution = await this.resolveTenantIdByProjectId(currentProjectId);
+
             // 1. Obtener todas las llaves configuradas en el proyecto actual
             const { data: currentSettings } = await supabase.from('settings')
                 .select('key')
@@ -3843,13 +3910,19 @@ export class HistoryHandler {
                 const settingsToInsert = masterSettings
                     .filter(s => !protectedKeys.includes(s.key)) // Protección extra para llaves sensibles
                     .filter(s => !currentKeys.has(s.key)) // Solo las que no existen en el proyecto actual
-                    .map(s => ({
-                        project_id: currentProjectId,
-                        service_id: HistoryHandler.SERVICE_IDENTIFIER,
-                        key: s.key,
-                        value: s.value,
-                        updated_at: new Date().toISOString()
-                    }));
+                    .map(s => {
+                        const payload: any = {
+                            project_id: currentProjectId,
+                            service_id: HistoryHandler.SERVICE_IDENTIFIER,
+                            key: s.key,
+                            value: s.value,
+                            updated_at: new Date().toISOString()
+                        };
+                        if (tenantResolution.resolved) {
+                            payload.tenant_id = tenantResolution.tenantId;
+                        }
+                        return payload;
+                    });
 
                 if (settingsToInsert.length > 0) {
                     console.log(`🆕 [Bootstrap] Backfill/Clonando ${settingsToInsert.length} variables faltantes desde '${MASTER_ID}' para ${currentProjectId}...`);
@@ -3879,13 +3952,17 @@ export class HistoryHandler {
             if (!apiKeySetting) {
                 const uniqueKey = `sk_rialway_${crypto.randomBytes(16).toString('hex')}`;
                 console.log(`🆕 [Bootstrap] Generando API_KEY única para el proyecto: ${uniqueKey}`);
-                await supabase.from('settings').insert({
+                const payload: any = {
                     project_id: currentProjectId,
                     service_id: HistoryHandler.SERVICE_IDENTIFIER,
                     key: 'api_key',
                     value: uniqueKey,
                     updated_at: new Date().toISOString()
-                });
+                };
+                if (tenantResolution.resolved) {
+                    payload.tenant_id = tenantResolution.tenantId;
+                }
+                await supabase.from('settings').insert(payload);
             }
 
             // 4. Asegurar existencia de variables obligatorias (priorizando ENV > DB_MASTER)
@@ -3938,13 +4015,17 @@ export class HistoryHandler {
 
                     if (finalValue !== 'PENDING') {
                         // console.log(`🆕 [Bootstrap] ${!existingEntry ? 'Creando' : 'Actualizando'} variable '${item.key}' con valor: ${finalValue.substring(0, 10)}...`);
-                        await supabase.from('settings').upsert({
+                        const payload: any = {
                             project_id: currentProjectId,
                             service_id: HistoryHandler.SERVICE_IDENTIFIER,
                             key: item.key,
                             value: finalValue,
                             updated_at: new Date().toISOString()
-                        }, { onConflict: 'project_id,service_id,key' });
+                        };
+                        if (tenantResolution.resolved) {
+                            payload.tenant_id = tenantResolution.tenantId;
+                        }
+                        await supabase.from('settings').upsert(payload, { onConflict: 'project_id,service_id,key' });
                     }
                 }
             }
@@ -4027,9 +4108,20 @@ export class HistoryHandler {
 
     static async createUser(username: string, pass: string, role: string = 'subuser') {
         try {
+            const tenantResolution = await this.resolveTenantIdByProjectId(HistoryHandler.PROJECT_IDENTIFIER);
+            if (!tenantResolution.resolved || tenantResolution.globalScope || !tenantResolution.tenantId) {
+                return { success: false, error: 'No se pudo resolver un tenant_id válido. No se puede crear el usuario.' };
+            }
+
             const { data, error } = await supabase
                 .from('users')
-                .insert({ project_id: HistoryHandler.PROJECT_IDENTIFIER, username, password: pass, role })
+                .insert({ 
+                    tenant_id: tenantResolution.tenantId, 
+                    project_id: HistoryHandler.PROJECT_IDENTIFIER, 
+                    username, 
+                    password: pass, 
+                    role 
+                })
                 .select()
                 .single();
             if (error) throw error;
@@ -4115,13 +4207,21 @@ export class HistoryHandler {
         }
     }
 
-    static async getUserById(userId: string) {
+    static async getUserById(userId: string, projectId: string | null = null, tenantId: string | null = null) {
         try {
-            const { data, error } = await supabase
+            let query = supabase
                 .from('users')
                 .select('*')
-                .eq('id', userId)
-                .maybeSingle();
+                .eq('id', userId);
+            
+            if (projectId) {
+                query = query.eq('project_id', projectId);
+            }
+            if (tenantId) {
+                query = query.eq('tenant_id', tenantId);
+            }
+
+            const { data, error } = await query.maybeSingle();
             if (error) throw error;
             return data || null;
         } catch (err) {

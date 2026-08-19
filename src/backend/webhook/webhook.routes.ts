@@ -59,21 +59,10 @@ export const registerWebhookRoutes = (app: any) => {
             // Convertir webhookEvents a formato string JSON para almacenar en settings
             const eventsValue = Array.isArray(webhookEvents) ? JSON.stringify(webhookEvents) : '[]';
 
-            // Guardar settings en Supabase usando upsert
-            const settingsToUpsert = [
-                { project_id: projectId, service_id: serviceId, key: 'WEBHOOK_URL', value: (webhookUrl || '').trim(), updated_at: new Date().toISOString() },
-                { project_id: projectId, service_id: serviceId, key: 'WEBHOOK_SECRET', value: (webhookSecret || '').trim(), updated_at: new Date().toISOString() },
-                { project_id: projectId, service_id: serviceId, key: 'WEBHOOK_EVENTS', value: eventsValue, updated_at: new Date().toISOString() }
-            ];
-
-            const { error } = await supabase
-                .from('settings')
-                .upsert(settingsToUpsert, { onConflict: 'project_id,key' });
-
-            if (error) throw error;
-
-            // Invalidad caches en HistoryHandler
-            (HistoryHandler as any).settingsCache?.clear();
+            // Guardar settings usando HistoryHandler.saveSetting para heredar resolución de tenant_id
+            await HistoryHandler.saveSetting('WEBHOOK_URL', (webhookUrl || '').trim(), projectId, serviceId);
+            await HistoryHandler.saveSetting('WEBHOOK_SECRET', (webhookSecret || '').trim(), projectId, serviceId);
+            await HistoryHandler.saveSetting('WEBHOOK_EVENTS', eventsValue, projectId, serviceId);
 
             res.json({ success: true, message: 'Configuración de webhooks guardada correctamente' });
         } catch (err: any) {
