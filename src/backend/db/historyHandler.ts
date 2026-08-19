@@ -414,8 +414,27 @@ export class HistoryHandler {
                     status TEXT DEFAULT 'active',
                     created_at TIMESTAMPTZ DEFAULT NOW(),
                     updated_at TIMESTAMPTZ DEFAULT NOW(),
-                    PRIMARY KEY (project_id, service_id)
+                    PRIMARY KEY (project_id, service_id),
+                    CONSTRAINT meta_onboarding_tenant_id_fkey
+                        FOREIGN KEY (tenant_id)
+                        REFERENCES public.clientes(auth_user_id)
+                        ON UPDATE CASCADE
+                        ON DELETE RESTRICT,
+                    CONSTRAINT meta_onboarding_tenant_scope_check
+                        CHECK (
+                            (
+                                project_id = 'main_token'
+                                AND tenant_id IS NULL
+                            )
+                            OR
+                            (
+                                project_id <> 'main_token'
+                                AND tenant_id IS NOT NULL
+                            )
+                        )
                 );
+                CREATE INDEX IF NOT EXISTS idx_meta_onboarding_tenant_id
+                    ON meta_onboarding(tenant_id);
                 GRANT ALL ON TABLE meta_onboarding TO service_role;
                 GRANT ALL ON TABLE meta_onboarding TO authenticated;
                 GRANT SELECT ON TABLE meta_onboarding TO anon;`
@@ -458,13 +477,20 @@ export class HistoryHandler {
                 name: 'routing_table',
                 sql: `CREATE TABLE IF NOT EXISTS routing_table (
                     phone_number_id TEXT PRIMARY KEY,
-                    tenant_id UUID,
+                    tenant_id UUID NOT NULL,
                     waba_id TEXT,
                     project_id TEXT,
                     service_id TEXT,
                     project_url TEXT,
-                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                    updated_at TIMESTAMPTZ DEFAULT NOW(),
+                    CONSTRAINT routing_table_tenant_id_fkey
+                        FOREIGN KEY (tenant_id)
+                        REFERENCES public.clientes(auth_user_id)
+                        ON UPDATE CASCADE
+                        ON DELETE RESTRICT
                 );
+                CREATE INDEX IF NOT EXISTS idx_routing_table_tenant_id
+                    ON routing_table(tenant_id);
                 GRANT ALL ON TABLE routing_table TO service_role;
                 GRANT ALL ON TABLE routing_table TO authenticated;
                 GRANT SELECT ON TABLE routing_table TO anon;`
