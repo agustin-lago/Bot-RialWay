@@ -1955,10 +1955,50 @@ export class HistoryHandler {
     }
 
     /**
+     * Verifica si un contacto está en lista negra (sin_bot o bloqueado_crm)
+     */
+    static async isContactBlacklisted(rawChatId: string, projectId?: string | null, serviceId?: string | null): Promise<boolean> {
+        if (!supabase) return false;
+        try {
+            const chatId = this.normalizeId(rawChatId);
+            const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
+            const currentServiceId = serviceId || this.SERVICE_IDENTIFIER;
+
+            const possibleIds = Array.from(new Set([chatId, `${chatId}@s.whatsapp.net`, `${chatId}@c.us`, rawChatId])).filter(Boolean);
+
+            let query = supabase
+                .from('blacklist')
+                .select('sin_bot, bloqueado_crm')
+                .in('chat_id', possibleIds)
+                .eq('project_id', currentProjectId)
+                .or('sin_bot.eq.true,bloqueado_crm.eq.true');
+
+            if (isScopedServiceId(currentServiceId)) {
+                query = query.or(`service_id.eq.${currentServiceId},service_id.is.null,service_id.eq.default,service_id.eq.default_service`);
+            }
+
+            const { data, error } = await query.limit(1);
+            if (error) {
+                console.warn('[HistoryHandler] Error consultando isContactBlacklisted:', error.message);
+                return false;
+            }
+
+            return !!(data && data.length > 0);
+        } catch (err: any) {
+            console.warn('[HistoryHandler] Excepción en isContactBlacklisted:', err?.message || err);
+            return false;
+        }
+    }
+
+    /**
      * Verifica si el bot está habilitado para un usuario
      */
     static async isBotEnabled(rawChatId: string, projectId?: string | null, serviceId?: string | null): Promise<boolean> {
         try {
+            const isBlocked = await this.isContactBlacklisted(rawChatId, projectId, serviceId);
+            if (isBlocked) {
+                return false;
+            }
             const chat = await this.getChat(rawChatId, projectId || undefined, serviceId || undefined);
             return chat ? (chat.bot_enabled !== false) : true;
         } catch (err) {
@@ -1970,10 +2010,20 @@ export class HistoryHandler {
     /**
      * Cambia el estado del bot (Intervención humana)
      */
-    static async toggleBot(rawChatId: string, enabled: boolean, projectId: string | null = null, serviceId: string | null = null, isManualAppIntervention: boolean = false) {
+    static async toggleBot(rawChatId: string, enabled: boolean, projectId: string | null = null, serviceId: string | null = null, isManualAppIntervention: boolean = false, force: boolean = false) {
         const chatId = this.normalizeId(rawChatId);
         const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
         const currentServiceId = serviceId || this.SERVICE_IDENTIFIER;
+
+        // Si se intenta habilitar el bot, verificar que el contacto no esté en lista negra (a menos que se fuerce explícitamente)
+        if (enabled === true && !force) {
+            const isBlocked = await this.isContactBlacklisted(chatId, currentProjectId, currentServiceId);
+            if (isBlocked) {
+                console.log(`[HistoryHandler] ⛔ Bloqueada activación de bot para ${chatId} en proyecto ${currentProjectId}: contacto en LISTA NEGRA.`);
+                return { success: false, error: 'Contacto en lista negra (Sin Bot / Bloqueado)' };
+            }
+        }
+
         if (process.env.STORAGE_MODE === "local") {
             const res = await LocalHistoryStore.toggleBot(chatId, enabled, currentProjectId);
             historyEvents.emit('bot_toggled', { chatId, enabled, assigned_agent: 'asistente1', projectId: currentProjectId, serviceId: currentServiceId });

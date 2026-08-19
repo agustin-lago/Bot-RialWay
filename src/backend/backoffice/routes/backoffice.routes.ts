@@ -2221,7 +2221,10 @@ export const registerBackofficeRoutes = (app: any) => {
         try {
             const projectId = resolveProjectId(req);
             const serviceId = resolveServiceId(req);
-            await depsHistoryHandler.toggleBot(chatId, enabled, projectId, serviceId);
+            const result = await depsHistoryHandler.toggleBot(chatId, enabled, projectId, serviceId, false, req.body?.force === true);
+            if (result && !result.success) {
+                return res.status(400).json({ success: false, error: result.error || 'No se pudo cambiar el estado del bot' });
+            }
             if ((adapterProvider as any).server?.io) {
                 (adapterProvider as any).server.io.emit('bot_toggled', { chatId, enabled, projectId, serviceId });
             }
@@ -5366,7 +5369,7 @@ Hemos recibido tu pago con Ã©xito.
         }
     });
 
-    /** POST /api/backoffice/blacklist â€” Upsert de una entrada */
+    /** POST /api/backoffice/blacklist — Upsert de una entrada */
     app.post('/api/backoffice/blacklist', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         try {
             const { chat_id, sin_bot, bloqueado_crm, notes } = req.body;
@@ -5390,21 +5393,30 @@ Hemos recibido tu pago con Ã©xito.
                 .from('blacklist')
                 .upsert(upsertData, { onConflict: 'chat_id,project_id' });
             if (error) throw error;
+
+            if (sin_bot || bloqueado_crm) {
+                await depsHistoryHandler.toggleBot(chat_id, false, projectId, serviceId);
+            }
+
             res.json({ success: true });
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });
         }
     });
 
-    /** DELETE /api/backoffice/blacklist/:chatId â€” Elimina una entrada */
+    /** DELETE /api/backoffice/blacklist/:chatId — Elimina una entrada */
     app.delete('/api/backoffice/blacklist/:chatId', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
             const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+            const chatId = req.params.chatId;
+            const normId = depsHistoryHandler.normalizeId(chatId);
+            const possibleIds = Array.from(new Set([chatId, normId, `${normId}@s.whatsapp.net`, `${normId}@c.us`]));
+
             let query = supabase
                 .from('blacklist')
                 .delete()
-                .eq('chat_id', req.params.chatId)
+                .in('chat_id', possibleIds)
                 .eq('project_id', projectId);
 
             if (serviceId && serviceId !== 'default' && serviceId !== 'default_service') {
@@ -5419,29 +5431,21 @@ Hemos recibido tu pago con Ã©xito.
         }
     });
 
-    /** GET /api/backoffice/blacklist/check/:chatId â€” Verifica si un chat estÃ¡ en lista negra */
+    /** GET /api/backoffice/blacklist/check/:chatId — Verifica si un chat está en lista negra */
     app.get('/api/backoffice/blacklist/check/:chatId', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
             const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
-            let query = supabase
-                .from('blacklist')
-                .select('sin_bot, bloqueado_crm')
-                .eq('chat_id', req.params.chatId)
-                .eq('project_id', projectId);
+            const chatId = req.params.chatId;
 
-            if (serviceId && serviceId !== 'default' && serviceId !== 'default_service') {
-                query = query.eq('service_id', serviceId);
-            }
-
-            const { data } = await query.maybeSingle();
-            res.json({ inBlacklist: !!data, sin_bot: data?.sin_bot || false, bloqueado_crm: data?.bloqueado_crm || false });
+            const isBlocked = await depsHistoryHandler.isContactBlacklisted(chatId, projectId, serviceId);
+            res.json({ inBlacklist: isBlocked, sin_bot: isBlocked, bloqueado_crm: false });
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });
         }
     });
 
-    /** POST /api/backoffice/blacklist/toggle/:chatId â€” Agrega o quita de lista negra (toggle rÃ¡pido desde header) */
+    /** POST /api/backoffice/blacklist/toggle/:chatId — Agrega o quita de lista negra (toggle rápido desde header) */
     app.post('/api/backoffice/blacklist/toggle/:chatId', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
@@ -5467,12 +5471,18 @@ Hemos recibido tu pago con Ã©xito.
                     .from('blacklist')
                     .upsert(upsertData, { onConflict: 'chat_id,project_id' });
                 if (error) throw error;
+
+                // Desactivar el bot inmediatamente para este contacto
+                await depsHistoryHandler.toggleBot(chatId, false, projectId, serviceId);
             } else {
                 // Quitar de la lista
+                const normId = depsHistoryHandler.normalizeId(chatId);
+                const possibleIds = Array.from(new Set([chatId, normId, `${normId}@s.whatsapp.net`, `${normId}@c.us`]));
+
                 let query = supabase
                     .from('blacklist')
                     .delete()
-                    .eq('chat_id', chatId)
+                    .in('chat_id', possibleIds)
                     .eq('project_id', projectId);
 
                 if (serviceId && serviceId !== 'default' && serviceId !== 'default_service') {

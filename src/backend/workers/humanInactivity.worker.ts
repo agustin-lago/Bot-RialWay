@@ -28,12 +28,17 @@ export const startHumanInactivityWorker = (timeoutMinutes = 30) => {
             if (!inactiveChats || inactiveChats.length === 0) return;
 
             // 2. Obtener lista negra en lotes pequeños (chunks) para evitar desbordar el límite de URL/Headers (16KB) en Supabase/PostgREST
-            const chatIds = inactiveChats.map(c => c.id);
+            const allQueryIds = Array.from(new Set(
+                inactiveChats.flatMap(c => {
+                    const norm = HistoryHandler.normalizeId(c.id);
+                    return [c.id, norm, `${norm}@s.whatsapp.net`, `${norm}@c.us`];
+                })
+            ));
             const blacklistEntries: any[] = [];
             const CHUNK_SIZE = 50;
 
-            for (let i = 0; i < chatIds.length; i += CHUNK_SIZE) {
-                const chunk = chatIds.slice(i, i + CHUNK_SIZE);
+            for (let i = 0; i < allQueryIds.length; i += CHUNK_SIZE) {
+                const chunk = allQueryIds.slice(i, i + CHUNK_SIZE);
                 const { data: chunkEntries, error: blError } = await supabase
                     .from('blacklist')
                     .select('chat_id, project_id, service_id')
@@ -47,12 +52,17 @@ export const startHumanInactivityWorker = (timeoutMinutes = 30) => {
                 }
             }
 
-            const blockedKeys = new Set(
-                blacklistEntries.map(entry => {
-                    const sId = entry.service_id || 'default';
-                    return `${entry.project_id}:${sId}:${entry.chat_id}`;
-                })
-            );
+            const blockedKeys = new Set<string>();
+            blacklistEntries.forEach(entry => {
+                const normEntryId = HistoryHandler.normalizeId(entry.chat_id);
+                // Bloqueo a nivel de proyecto (cualquier service_id)
+                blockedKeys.add(`${entry.project_id}:${normEntryId}`);
+                blockedKeys.add(`${entry.project_id}:${entry.chat_id}`);
+                // Bloqueo a nivel de proyecto + service_id
+                const sId = entry.service_id || 'default';
+                blockedKeys.add(`${entry.project_id}:${sId}:${normEntryId}`);
+                blockedKeys.add(`${entry.project_id}:${sId}:${entry.chat_id}`);
+            });
 
             // Caché en memoria durante este tick para no consultar la misma configuración del mismo proyecto/servicio varias veces
             const globalBotSettingsCache = new Map<string, boolean>();
@@ -75,8 +85,13 @@ export const startHumanInactivityWorker = (timeoutMinutes = 30) => {
                 }
 
                 // 4. Filtrar lista negra usando el Set en memoria
-                const lookupKey = `${projectId}:${serviceId}:${chat.id}`;
-                if (blockedKeys.has(lookupKey)) {
+                const normChatId = HistoryHandler.normalizeId(chat.id);
+                const isBlocked = blockedKeys.has(`${projectId}:${normChatId}`) ||
+                    blockedKeys.has(`${projectId}:${chat.id}`) ||
+                    blockedKeys.has(`${projectId}:${serviceId}:${normChatId}`) ||
+                    blockedKeys.has(`${projectId}:${serviceId}:${chat.id}`);
+
+                if (isBlocked) {
                     continue; // Saltar si está en lista negra
                 }
 
