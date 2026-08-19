@@ -31,6 +31,29 @@ class MetaCloudProvider extends ProviderClass {
     }
 
     /**
+     * Elimina de memoria las credenciales Meta pertenecientes al tenant actual.
+     * Se utiliza durante UNLINK para impedir que un tenant nuevo herede
+     * access_token / phone_number_id / waba_id del tenant anterior.
+     */
+    public clearTenantConfig() {
+        this.config = {
+            ...this.config,
+            access_token: null,
+            jwtToken: null,
+            phone_number_id: null,
+            numberId: null,
+            waba_id: null,
+            businessId: null
+        };
+
+        this.globalVendorArgs = this.config;
+
+        console.log(
+            '🧹 [MetaCloudProvider] Credenciales tenant de Meta eliminadas de memoria.'
+        );
+    }
+
+    /**
      * Anula el marcado automático como leído de BuilderBot
      */
     public sendSeen = async (number: string): Promise<any> => {
