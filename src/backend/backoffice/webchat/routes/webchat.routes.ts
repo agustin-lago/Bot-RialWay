@@ -51,10 +51,31 @@ export const registerWebchatRoutes = (app: any) => {
                 return res.json({ success: true, command: 'HILO_NUEVO', clearChat: true, message: 'Hilo nuevo iniciado solo para el webchat.' });
             }
 
+            if (command === 'CLEAR_CONTEXT' || command === '#CLEAR_CONTEXT#') {
+                const keys = Object.keys(session);
+                for (const k of keys) {
+                    if (k !== 'history' && k !== 'thread_id') {
+                        delete session[k];
+                    }
+                }
+                return res.json({ success: true, command: 'CLEAR_CONTEXT', message: 'Contexto de cliente eliminado de la sesión del webchat.' });
+            }
+
             return res.status(400).json({ success: false, error: 'Comando no soportado para webchat.' });
         } catch (err: any) {
             console.error('[Webchat Command] Error:', err.message);
             return res.status(500).json({ success: false, error: err.message || 'No se pudo ejecutar el comando.' });
+        }
+    });
+
+    app.get('/webchat-api/history', backofficeAuth, async (req: any, res: any) => {
+        const ip = getWebchatClientKey(req);
+        try {
+            const session = webChatManager.getSession(ip);
+            return res.json({ success: true, history: session.history });
+        } catch (err: any) {
+            console.error('[Webchat History] Error:', err.message);
+            return res.status(500).json({ success: false, error: 'No se pudo obtener el historial.' });
         }
     });
 

@@ -226,7 +226,7 @@ export class HistoryHandler {
                 return { tenantId: client.auth_user_id, resolved: true, globalScope: false };
             }
         }
-        
+
         // Si no hay error pero no hay tenant_id (porque el proyecto o el cliente no existe/no está vinculado)
         return { tenantId: null, resolved: false, globalScope: false };
     }
@@ -403,6 +403,7 @@ export class HistoryHandler {
             {
                 name: 'meta_onboarding',
                 sql: `CREATE TABLE IF NOT EXISTS meta_onboarding (
+                    tenant_id UUID,
                     project_id TEXT,
                     service_id TEXT,
                     waba_id TEXT,
@@ -413,8 +414,27 @@ export class HistoryHandler {
                     status TEXT DEFAULT 'active',
                     created_at TIMESTAMPTZ DEFAULT NOW(),
                     updated_at TIMESTAMPTZ DEFAULT NOW(),
-                    PRIMARY KEY (project_id, service_id)
+                    PRIMARY KEY (project_id, service_id),
+                    CONSTRAINT meta_onboarding_tenant_id_fkey
+                        FOREIGN KEY (tenant_id)
+                        REFERENCES public.clientes(auth_user_id)
+                        ON UPDATE CASCADE
+                        ON DELETE RESTRICT,
+                    CONSTRAINT meta_onboarding_tenant_scope_check
+                        CHECK (
+                            (
+                                project_id = 'main_token'
+                                AND tenant_id IS NULL
+                            )
+                            OR
+                            (
+                                project_id <> 'main_token'
+                                AND tenant_id IS NOT NULL
+                            )
+                        )
                 );
+                CREATE INDEX IF NOT EXISTS idx_meta_onboarding_tenant_id
+                    ON meta_onboarding(tenant_id);
                 GRANT ALL ON TABLE meta_onboarding TO service_role;
                 GRANT ALL ON TABLE meta_onboarding TO authenticated;
                 GRANT SELECT ON TABLE meta_onboarding TO anon;`
@@ -457,12 +477,20 @@ export class HistoryHandler {
                 name: 'routing_table',
                 sql: `CREATE TABLE IF NOT EXISTS routing_table (
                     phone_number_id TEXT PRIMARY KEY,
+                    tenant_id UUID NOT NULL,
                     waba_id TEXT,
                     project_id TEXT,
                     service_id TEXT,
                     project_url TEXT,
-                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                    updated_at TIMESTAMPTZ DEFAULT NOW(),
+                    CONSTRAINT routing_table_tenant_id_fkey
+                        FOREIGN KEY (tenant_id)
+                        REFERENCES public.clientes(auth_user_id)
+                        ON UPDATE CASCADE
+                        ON DELETE RESTRICT
                 );
+                CREATE INDEX IF NOT EXISTS idx_routing_table_tenant_id
+                    ON routing_table(tenant_id);
                 GRANT ALL ON TABLE routing_table TO service_role;
                 GRANT ALL ON TABLE routing_table TO authenticated;
                 GRANT SELECT ON TABLE routing_table TO anon;`
@@ -1001,10 +1029,10 @@ export class HistoryHandler {
      * @param forcedProjectId - ID opcional del proyecto para forzar el ruteo
      */
     static async getOrCreateChat(
-        rawChatId: string, 
-        type: 'whatsapp' | 'webchat' | 'instagram' | 'messenger', 
-        name: string | null = null, 
-        userId: string | null = null, 
+        rawChatId: string,
+        type: 'whatsapp' | 'webchat' | 'instagram' | 'messenger',
+        name: string | null = null,
+        userId: string | null = null,
         forcedProjectId?: string,
         forcedServiceId?: string | null
     ): Promise<Chat | null> {
@@ -1853,7 +1881,7 @@ export class HistoryHandler {
             }
 
             // Emitir evento para actualización en tiempo real en el Backoffice/CRM
-             historyEvents.emit('contact_updated', {
+            historyEvents.emit('contact_updated', {
                 chatId,
                 project_id: currentProjectId,
                 details: chatDetails,
@@ -2112,7 +2140,7 @@ export class HistoryHandler {
             } else {
                 // BUGFIX: Cuando el bot se vuelve a activar, el agente asignado DEBE volver al recepcionista (asistente1)
                 updateData.assigned_agent = 'asistente1';
-                
+
                 // Limpiar banderas de intervención manual desde la app al reactivar
                 if (currentChat?.metadata?.manual_app_interacted) {
                     const newMetadata = { ...currentChat.metadata };
@@ -2136,10 +2164,10 @@ export class HistoryHandler {
 
             if (error) throw error;
             // Emitir evento para WebSockets (ahora incluimos el agente y projectId para sincronización frontend)
-            historyEvents.emit('bot_toggled', { 
-                chatId, 
-                enabled, 
-                assigned_agent: 'asistente1', 
+            historyEvents.emit('bot_toggled', {
+                chatId,
+                enabled,
+                assigned_agent: 'asistente1',
                 projectId: currentProjectId,
                 serviceId: currentServiceId,
                 service_id: currentServiceId
@@ -2701,11 +2729,11 @@ export class HistoryHandler {
                 .select('*', { count: 'exact', head: true })
                 .eq('project_id', currentProjectId)
                 .in('estado', ['Abierto', 'En progreso']);
-            
+
             if (tipo) {
                 query = query.eq('tipo', tipo);
             }
-            
+
             const { count, error } = await query;
             if (error) throw error;
             return count || 0;
@@ -3210,6 +3238,19 @@ export class HistoryHandler {
         try {
             const targetProjectId = projectId || PROJECT_ID;
             const targetServiceId = serviceId || HistoryHandler.SERVICE_IDENTIFIER;
+            const tenantResolution = await this.resolveTenantIdByProjectId(targetProjectId);
+
+            if (
+                !tenantResolution.resolved ||
+                tenantResolution.globalScope ||
+                !tenantResolution.tenantId
+            ) {
+                throw new Error(
+                    `[Tenant] No se pudo resolver tenant para Meta onboarding del proyecto ${targetProjectId}`
+                );
+            }
+
+            const tenantId = tenantResolution.tenantId;
 
             // Identificar al Super Usuario (Carlitos Pepe) para asignar propiedad
             let superUserId = null;
@@ -3234,6 +3275,7 @@ export class HistoryHandler {
             const { data, error } = await supabase
                 .from('meta_onboarding')
                 .upsert({
+                    tenant_id: tenantId,
                     project_id: targetProjectId,
                     service_id: targetServiceId,
                     waba_id: wabaId,
@@ -3266,6 +3308,7 @@ export class HistoryHandler {
                 await supabase
                     .from('routing_table')
                     .upsert({
+                        tenant_id: tenantId,
                         phone_number_id: phoneId,
                         waba_id: wabaId,
                         project_id: targetProjectId,
@@ -3380,6 +3423,24 @@ export class HistoryHandler {
     static async syncRoutingTableOnStartup() {
         try {
             if (!supabase) return;
+
+            const tenantResolution = await this.resolveTenantIdByProjectId(
+                this.PROJECT_IDENTIFIER
+            );
+
+            if (
+                !tenantResolution.resolved ||
+                tenantResolution.globalScope ||
+                !tenantResolution.tenantId
+            ) {
+                console.warn(
+                    `[HistoryHandler] Omitiendo sync de routing_table: tenant no resuelto para ${this.PROJECT_IDENTIFIER}`
+                );
+                return;
+            }
+
+            const tenantId = tenantResolution.tenantId;
+
             const onboardingData = await this.getMetaOnboardingData();
             if (!onboardingData || !onboardingData.phone_number_id) return;
 
@@ -3390,14 +3451,22 @@ export class HistoryHandler {
                     : (process.env.RAILWAY_PUBLIC_DOMAIN || process.env.PROJECT_URL);
 
             if (publicDomain) {
-                let projectUrl = publicDomain.startsWith('http') ? publicDomain : `https://${publicDomain}`;
-                if (projectUrl.endsWith('/')) projectUrl = projectUrl.slice(0, -1);
+                let projectUrl = publicDomain.startsWith('http')
+                    ? publicDomain
+                    : `https://${publicDomain}`;
 
-                console.log(`📡 [HistoryHandler] Auto-sincronizando routing_table al inicio para phoneId ${onboardingData.phone_number_id} -> ${projectUrl} (Service: ${this.SERVICE_IDENTIFIER})`);
+                if (projectUrl.endsWith('/')) {
+                    projectUrl = projectUrl.slice(0, -1);
+                }
+
+                console.log(
+                    `📡 [HistoryHandler] Auto-sincronizando routing_table al inicio para phoneId ${onboardingData.phone_number_id} -> ${projectUrl} (Service: ${this.SERVICE_IDENTIFIER})`
+                );
 
                 await supabase
                     .from('routing_table')
                     .upsert({
+                        tenant_id: tenantId,
                         phone_number_id: onboardingData.phone_number_id,
                         waba_id: onboardingData.waba_id,
                         project_id: this.PROJECT_IDENTIFIER,
@@ -3407,7 +3476,10 @@ export class HistoryHandler {
                     }, { onConflict: 'phone_number_id' });
             }
         } catch (err: any) {
-            console.error('❌ [HistoryHandler] Error en syncRoutingTableOnStartup:', err?.message || err);
+            console.error(
+                '❌ [HistoryHandler] Error en syncRoutingTableOnStartup:',
+                err?.message || err
+            );
         }
     }
 
@@ -3431,7 +3503,7 @@ export class HistoryHandler {
 
             if (defaultSettings && defaultSettings.length > 0) {
                 console.log(`📡 [HistoryHandler] Asignando automáticamente ${defaultSettings.length} settings de 'default_service' -> '${currentServiceId}' (Proyecto: ${currentProjectId})...`);
-                
+
                 for (const setting of defaultSettings) {
                     await supabase
                         .from('settings')
@@ -3624,7 +3696,7 @@ export class HistoryHandler {
         this.settingsCache.delete(cacheKey);
 
         const tenantResolution = await this.resolveTenantIdByProjectId(targetProjectId);
-        
+
         const payload: any = {
             project_id: targetProjectId,
             service_id: targetServiceId,
@@ -3658,19 +3730,39 @@ export class HistoryHandler {
                         ? process.env.RAILWAY_PUBLIC_DOMAIN
                         : (process.env.RAILWAY_PUBLIC_DOMAIN || process.env.PROJECT_URL);
                 if (publicDomain && value) {
-                    let projectUrl = publicDomain.startsWith('http') ? publicDomain : `https://${publicDomain}`;
-                    if (projectUrl.endsWith('/')) projectUrl = projectUrl.slice(0, -1);
-                    console.log(`📡 [HistoryHandler] Sincronizando routing_table para ${key}: ${value} -> ${projectUrl}`);
+                    if (
+                        !tenantResolution.resolved ||
+                        tenantResolution.globalScope ||
+                        !tenantResolution.tenantId
+                    ) {
+                        console.warn(
+                            `[HistoryHandler] Omitiendo routing_table para ${key}: tenant no resuelto para ${targetProjectId}`
+                        );
+                    } else {
+                        let projectUrl = publicDomain.startsWith('http')
+                            ? publicDomain
+                            : `https://${publicDomain}`;
 
-                    await supabase
-                        .from('routing_table')
-                        .upsert({
-                            phone_number_id: value, // Reutilizamos esta columna como identificador remoto universal (PhoneID o PageID)
-                            waba_id: null,
-                            project_id: targetProjectId,
-                            project_url: projectUrl,
-                            updated_at: new Date().toISOString()
-                        }, { onConflict: 'phone_number_id' });
+                        if (projectUrl.endsWith('/')) {
+                            projectUrl = projectUrl.slice(0, -1);
+                        }
+
+                        console.log(
+                            `📡 [HistoryHandler] Sincronizando routing_table para ${key}: ${value} -> ${projectUrl}`
+                        );
+
+                        await supabase
+                            .from('routing_table')
+                            .upsert({
+                                tenant_id: tenantResolution.tenantId,
+                                phone_number_id: value,
+                                waba_id: null,
+                                project_id: targetProjectId,
+                                service_id: targetServiceId,
+                                project_url: projectUrl,
+                                updated_at: new Date().toISOString()
+                            }, { onConflict: 'phone_number_id' });
+                    }
                 }
             }
         }
@@ -3703,11 +3795,11 @@ export class HistoryHandler {
         const targetProjectId = projectId || HistoryHandler.PROJECT_IDENTIFIER;
         const rawServiceId = serviceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || HistoryHandler.SERVICE_IDENTIFIER;
 
-        const isGenericService = !rawServiceId || 
-                                 rawServiceId === 'default_service' || 
-                                 rawServiceId === 'generic' || 
-                                 rawServiceId === 'null' || 
-                                 rawServiceId.trim() === '';
+        const isGenericService = !rawServiceId ||
+            rawServiceId === 'default_service' ||
+            rawServiceId === 'generic' ||
+            rawServiceId === 'null' ||
+            rawServiceId.trim() === '';
 
         const targetServiceId = isGenericService ? null : rawServiceId;
         const cacheKey = `${targetProjectId}:${targetServiceId || 'default'}:${key}`;
@@ -3760,7 +3852,7 @@ export class HistoryHandler {
         if (key === 'CRM_FIELDS_CONFIG' && (!value || value.trim() === '')) {
             const slug = await this.getConfig('CLIENT_SLUG', targetProjectId);
             const cleanSlug = String(slug || '').trim().toLowerCase();
-            
+
             if (cleanSlug === 'ganemos' || cleanSlug === 'ganemos-net' || cleanSlug === 'cas-epc' || cleanSlug === 'casepc') {
                 value = JSON.stringify([
                     { id: 'crm-ticket-title', label: 'Titulo del Ticket', visible: true, order: 0 },
@@ -3906,8 +3998,8 @@ export class HistoryHandler {
             if (masterSettings && masterSettings.length > 0) {
                 // Lista de llaves que NUNCA deben clonarse automáticamente desde el maestro
                 const protectedKeys = [
-                    'OPENAI_API_KEY', 
-                    'OPENAI_ADMIN_API_KEY', 
+                    'OPENAI_API_KEY',
+                    'OPENAI_ADMIN_API_KEY',
                     'OPENAI_API_KEY_TOOLS',
                     'ADMIN_USER',
                     'ADMIN_PASS'
@@ -4068,7 +4160,7 @@ export class HistoryHandler {
             if (data && data.length > 0) {
                 // Agrupar para dar prioridad a la específica del servicio
                 const selectedSettings: Record<string, typeof data[0]> = {};
-                
+
                 data.forEach(setting => {
                     const existing = selectedSettings[setting.key];
                     if (!existing) {
@@ -4087,7 +4179,7 @@ export class HistoryHandler {
                         const isFixed = HistoryHandler.FIXED_KEYS.includes(setting.key);
                         const envVal = process.env[setting.key];
                         const isEnvInvalid = !envVal || envVal.trim() === '' || envVal.trim() === 'PENDING';
-                        
+
                         if (isFixed && !isEnvInvalid) {
                             if (envVal !== setting.value) {
                                 // console.log(`ℹ️ [HistoryHandler] Manteniendo valor de entorno estático para la llave fija '${setting.key}' (ignorando valor DB: ${setting.value.substring(0, 5)}...)`);
@@ -4121,12 +4213,12 @@ export class HistoryHandler {
 
             const { data, error } = await supabase
                 .from('users')
-                .insert({ 
-                    tenant_id: tenantResolution.tenantId, 
-                    project_id: HistoryHandler.PROJECT_IDENTIFIER, 
-                    username, 
-                    password: pass, 
-                    role 
+                .insert({
+                    tenant_id: tenantResolution.tenantId,
+                    project_id: HistoryHandler.PROJECT_IDENTIFIER,
+                    username,
+                    password: pass,
+                    role
                 })
                 .select()
                 .single();
@@ -4219,7 +4311,7 @@ export class HistoryHandler {
                 .from('users')
                 .select('*')
                 .eq('id', userId);
-            
+
             if (projectId) {
                 query = query.eq('project_id', projectId);
             }
@@ -4724,11 +4816,11 @@ export class HistoryHandler {
     ): Promise<any> {
         const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
         const currentServiceId = serviceId || this.SERVICE_IDENTIFIER;
-        
+
         if (process.env.STORAGE_MODE === "local") {
             return LocalHistoryStore.createSystemNotification(currentProjectId, currentServiceId, type, title, description, metadata);
         }
-        
+
         try {
             const insertData: any = {
                 project_id: currentProjectId,
@@ -4748,7 +4840,7 @@ export class HistoryHandler {
                 .single();
 
             if (error) throw error;
-            
+
             // Emitir evento en tiempo real para avisar al Backoffice (Socket.IO / Realtime)
             historyEvents.emit('notification_created', { projectId: currentProjectId, serviceId: currentServiceId, notification: data });
 
