@@ -528,7 +528,7 @@ const main = async () => {
         });
 
         // API Session Control
-        app.post("/api/delete-session", async (_req: any, res: any) => {
+        app.post("/api/delete-session", backofficeAuth, async (_req: any, res: any) => {
             try {
                 console.log(`[API] 🗑️ Petición de eliminación de todas las sesiones para el proyecto`);
                 
