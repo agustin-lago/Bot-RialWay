@@ -528,33 +528,58 @@ const main = async () => {
         });
 
         // API Session Control
-        app.post("/api/delete-session", async (_req: any, res: any) => {
+        app.post("/api/delete-session", backofficeAuth, async (_req: any, res: any) => {
             try {
                 console.log(`[API] 🗑️ Petición de eliminación de todas las sesiones para el proyecto`);
                 
                 // 1. Borrar todas las sesiones del proyecto de la base de datos
                 await deleteAllProjectSessionsFromDb();
 
-                // 2. Detener los proveedores y limpiar su memoria para que no re-guarden la sesión antigua
+                // 2. Detener los proveedores y limpiar su memoria para que no re-guarden
+                // credenciales o sesiones pertenecientes al tenant anterior.
                 const providers = [adapterProvider, groupProvider];
+
                 for (const provider of providers) {
-                    if (provider && provider.constructor.name === 'SupabaseBaileysProvider') {
-                        console.log(`[API] Deteniendo proveedor Baileys: ${provider.globalVendorArgs?.name || 'default'}`);
+                    if (!provider) continue;
+
+                    // Baileys: detener socket, listeners y cualquier posibilidad de
+                    // re-persistir la sesión anterior.
+                    if (provider.constructor.name === 'SupabaseBaileysProvider') {
+                        console.log(
+                            `[API] Deteniendo proveedor Baileys: ${provider.globalVendorArgs?.name || 'default'}`
+                        );
+
                         provider.preventAutoStart = true;
+
                         if (provider.vendor) {
                             try {
                                 provider.vendor.ev.removeAllListeners('connection.update');
                                 provider.vendor.ev.removeAllListeners('creds.update');
                                 provider.vendor.end(undefined);
                             } catch (e: any) {
-                                console.warn('[API] Error cerrando socket de Baileys:', e.message);
+                                console.warn(
+                                    '[API] Error cerrando socket de Baileys:',
+                                    e.message
+                                );
                             }
+
                             provider.vendor = null;
                         }
+
                         provider.initialized = false;
                         provider.qrCodeString = null;
                         provider.pairingCode = null;
                         provider.connectionState = 'close';
+                    }
+
+                    // Meta Cloud API: eliminar access_token, phone_number_id y waba_id
+                    // pertenecientes al tenant anterior.
+                    if (typeof provider.clearTenantConfig === 'function') {
+                        console.log(
+                            '[API] Invalidando credenciales Meta del tenant actual en memoria...'
+                        );
+
+                        provider.clearTenantConfig();
                     }
                 }
 
