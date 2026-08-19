@@ -188,42 +188,47 @@ export class HistoryHandler {
             return { tenantId: null, resolved: true, globalScope: true };
         }
 
-        const cached = this.tenantCache.get(projectId);
-        if (cached && (Date.now() - cached.timestamp < this.TENANT_CACHE_TTL_MS)) {
-            return { tenantId: cached.tenantId, resolved: cached.resolved, globalScope: cached.globalScope };
-        }
-
-        try {
-            if (projectId.startsWith('client_')) {
-                const clientId = projectId.replace('client_', '');
-                const { data, error } = await supabase.from('clientes').select('auth_user_id').eq('id', clientId).maybeSingle();
-                if (error) throw error;
-                if (data && data.auth_user_id) {
-                    const result = { tenantId: data.auth_user_id, resolved: true, globalScope: false };
-                    this.tenantCache.set(projectId, { ...result, timestamp: Date.now() });
-                    return result;
-                }
-                return { tenantId: null, resolved: false, globalScope: false };
+        if (projectId.startsWith('client_')) {
+            const cached = this.tenantCache.get(projectId);
+            if (cached && (Date.now() - cached.timestamp < this.TENANT_CACHE_TTL_MS)) {
+                return { tenantId: cached.tenantId, resolved: cached.resolved, globalScope: cached.globalScope };
             }
 
-            const { data: link, error: linkError } = await supabase.from('proyectos_railway').select('cliente_id').eq('railway_project_id', projectId).maybeSingle();
-            if (linkError) throw linkError;
-
-            if (link && link.cliente_id) {
-                const { data: client, error: clientError } = await supabase.from('clientes').select('auth_user_id').eq('id', link.cliente_id).maybeSingle();
-                if (clientError) throw clientError;
-
-                if (client && client.auth_user_id) {
-                    const result = { tenantId: client.auth_user_id, resolved: true, globalScope: false };
-                    this.tenantCache.set(projectId, { ...result, timestamp: Date.now() });
-                    return result;
-                }
+            const clientId = projectId.replace('client_', '');
+            const { data, error } = await supabase.from('clientes').select('auth_user_id').eq('id', clientId).maybeSingle();
+            if (error) {
+                console.error(`[HistoryHandler] Error consultando cliente ${clientId}:`, error);
+                throw error;
+            }
+            if (data && data.auth_user_id) {
+                const result = { tenantId: data.auth_user_id, resolved: true, globalScope: false };
+                this.tenantCache.set(projectId, { ...result, timestamp: Date.now() });
+                return result;
             }
             return { tenantId: null, resolved: false, globalScope: false };
-        } catch (err) {
-            console.error(`[HistoryHandler] Error resolviendo tenant_id para ${projectId}:`, err);
-            return { tenantId: null, resolved: false, globalScope: false };
         }
+
+        // Para projects railway, NO usamos cache para detectar UNLINK rápido y desvincular inmediatamente
+        const { data: link, error: linkError } = await supabase.from('proyectos_railway').select('cliente_id').eq('railway_project_id', projectId).maybeSingle();
+        if (linkError) {
+            console.error(`[HistoryHandler] Error consultando proyecto ${projectId}:`, linkError);
+            throw linkError;
+        }
+
+        if (link && link.cliente_id) {
+            const { data: client, error: clientError } = await supabase.from('clientes').select('auth_user_id').eq('id', link.cliente_id).maybeSingle();
+            if (clientError) {
+                console.error(`[HistoryHandler] Error consultando cliente ${link.cliente_id}:`, clientError);
+                throw clientError;
+            }
+
+            if (client && client.auth_user_id) {
+                return { tenantId: client.auth_user_id, resolved: true, globalScope: false };
+            }
+        }
+        
+        // Si no hay error pero no hay tenant_id (porque el proyecto o el cliente no existe/no está vinculado)
+        return { tenantId: null, resolved: false, globalScope: false };
     }
 
     private static invalidateChatCache(rawChatId: string, projectId?: string) {
@@ -4104,8 +4109,8 @@ export class HistoryHandler {
     static async createUser(username: string, pass: string, role: string = 'subuser') {
         try {
             const tenantResolution = await this.resolveTenantIdByProjectId(HistoryHandler.PROJECT_IDENTIFIER);
-            if (!tenantResolution.resolved) {
-                return { success: false, error: 'No se pudo resolver el tenant_id. No se puede crear el usuario.' };
+            if (!tenantResolution.resolved || tenantResolution.globalScope || !tenantResolution.tenantId) {
+                return { success: false, error: 'No se pudo resolver un tenant_id válido. No se puede crear el usuario.' };
             }
 
             const { data, error } = await supabase
