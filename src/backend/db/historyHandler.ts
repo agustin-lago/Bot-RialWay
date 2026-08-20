@@ -231,6 +231,22 @@ export class HistoryHandler {
         return { tenantId: null, resolved: false, globalScope: false };
     }
 
+    private static async requireTenantIdByProjectId(projectId: string, context: string): Promise<string> {
+        const tenantResolution = await this.resolveTenantIdByProjectId(projectId);
+
+        if (
+            !tenantResolution.resolved ||
+            tenantResolution.globalScope ||
+            !tenantResolution.tenantId
+        ) {
+            throw new Error(
+                `[Tenant] No se pudo resolver tenant_id para ${context} del proyecto ${projectId}`
+            );
+        }
+
+        return tenantResolution.tenantId;
+    }
+
     private static invalidateChatCache(rawChatId: string, projectId?: string) {
         const chatId = this.normalizeId(rawChatId);
         const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
@@ -317,6 +333,7 @@ export class HistoryHandler {
                 name: 'tags',
                 sql: `CREATE TABLE IF NOT EXISTS tags (
                     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+                    tenant_id UUID,
                     project_id TEXT,
                     service_id TEXT,
                     name TEXT NOT NULL,
@@ -347,6 +364,7 @@ export class HistoryHandler {
                 sql: `CREATE TABLE IF NOT EXISTS chat_tags (
                     chat_id TEXT,
                     tag_id uuid REFERENCES tags(id) ON DELETE CASCADE,
+                    tenant_id UUID,
                     project_id TEXT,
                     service_id TEXT,
                     PRIMARY KEY (chat_id, tag_id, project_id),
@@ -635,6 +653,37 @@ export class HistoryHandler {
                             console.error(`❌ Error en migración de '${table.name}':`, alterError.message);
                         } else {
                             console.log(`✅ Tabla '${table.name}' migrada a multitenancy.`);
+                        }
+                    }
+
+                    // Migración tenant_id para tags/chat_tags.
+                    // Solo agrega la columna si falta.
+                    // El backfill y los constraints se gestionan por migración controlada.
+                    if (table.name === 'tags' || table.name === 'chat_tags') {
+                        const { error: tenantIdErr } = await supabase
+                            .from(table.name)
+                            .select('tenant_id')
+                            .limit(1);
+
+                        const missingTenantId = tenantIdErr && (
+                            tenantIdErr.code === '42703' ||
+                            tenantIdErr.code === 'PGRST204' ||
+                            String(tenantIdErr.message || '').includes('tenant_id')
+                        );
+
+                        if (missingTenantId) {
+                            console.log(`🔧 Agregando columna tenant_id a ${table.name}...`);
+
+                            const { error: alterTenantError } = await supabase.rpc('exec_sql', {
+                                query: `ALTER TABLE ${table.name} ADD COLUMN IF NOT EXISTS tenant_id UUID;`
+                            });
+
+                            if (alterTenantError) {
+                                console.error(
+                                    `❌ Error agregando tenant_id a ${table.name}:`,
+                                    alterTenantError.message
+                                );
+                            }
                         }
                     }
 
@@ -1901,24 +1950,37 @@ export class HistoryHandler {
     }
 
     /**
-     * Asegura que un tag exista para un proyecto y devuelve su ID.
+    /**
+     * Asegura que un tag exista para un proyecto/tenant y devuelve su ID.
      */
     static async ensureTagExists(tagName: string, projectId: string): Promise<string | null> {
         try {
-            // 1. Buscar si ya existe
-            const { data: existingTag } = await supabase
+            const tenantId = await this.requireTenantIdByProjectId(
+                projectId,
+                `ensureTagExists(${tagName})`
+            );
+
+            // 1. Buscar únicamente dentro del owner correcto.
+            const { data: existingTag, error: existingError } = await supabase
                 .from('tags')
                 .select('id')
+                .eq('tenant_id', tenantId)
                 .eq('project_id', projectId)
                 .eq('name', tagName)
                 .maybeSingle();
 
+            if (existingError) throw existingError;
             if (existingTag) return existingTag.id;
 
-            // 2. Si no existe, crearlo
+            // 2. Si no existe, crearlo SIEMPRE con tenant_id.
             const { data: newTag, error } = await supabase
                 .from('tags')
-                .insert({ project_id: projectId, service_id: HistoryHandler.SERVICE_IDENTIFIER, name: tagName })
+                .insert({
+                    tenant_id: tenantId,
+                    project_id: projectId,
+                    service_id: HistoryHandler.SERVICE_IDENTIFIER,
+                    name: tagName
+                })
                 .select('id')
                 .single();
 
@@ -1942,31 +2004,60 @@ export class HistoryHandler {
         this.invalidateChatCache(chatId, projectId);
 
         try {
+            const tenantId = await this.requireTenantIdByProjectId(
+                projectId,
+                `assignTagsToContact(${chatId})`
+            );
+
+            // No permitir asociar etiquetas a un chat perteneciente a otro tenant.
+            const { data: ownedChat, error: chatError } = await supabase
+                .from('chats')
+                .select('id')
+                .eq('id', chatId)
+                .eq('project_id', projectId)
+                .eq('tenant_id', tenantId)
+                .maybeSingle();
+
+            if (chatError) throw chatError;
+
+            if (!ownedChat) {
+                throw new Error(
+                    `[Tenant] El chat ${chatId} no pertenece al tenant ${tenantId}`
+                );
+            }
+
             for (const tagName of tagsList) {
                 const tagId = await this.ensureTagExists(tagName, projectId);
+
                 if (tagId) {
-                    // Intentar insertar en la tabla intermedia (join table)
-                    // Usamos upsert o simplemente insert ignorando errores de duplicado
                     await supabase
                         .from('chat_tags')
                         .upsert({
                             chat_id: chatId,
                             tag_id: tagId,
+                            tenant_id: tenantId,
                             project_id: projectId,
                             service_id: HistoryHandler.SERVICE_IDENTIFIER
-                        }, { onConflict: 'chat_id,tag_id,project_id' });
+                        }, {
+                            onConflict: 'chat_id,tag_id,project_id'
+                        });
                 }
             }
-            console.log(`🏷️ [HistoryHandler] ${tagsList.length} etiquetas procesadas para ${chatId}`);
 
-            // Emitir evento para refrescar UI
+            console.log(
+                `🏷️ [HistoryHandler] ${tagsList.length} etiquetas procesadas para ${chatId}`
+            );
+
             historyEvents.emit('contact_updated', {
                 chatId,
                 project_id: projectId,
                 tags: tagsList
             });
         } catch (err) {
-            console.error(`❌ [HistoryHandler] Error asignando etiquetas a ${chatId}:`, err);
+            console.error(
+                `❌ [HistoryHandler] Error asignando etiquetas a ${chatId}:`,
+                err
+            );
         }
     }
 
@@ -2431,22 +2522,37 @@ export class HistoryHandler {
     static async getTags(projectId: string | null = null, serviceId: string | null = null) {
         const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
         const currentServiceId = serviceId || this.SERVICE_IDENTIFIER;
+
         if (process.env.STORAGE_MODE === "local") {
             return LocalHistoryStore.getTags(currentProjectId);
         }
+
         if (!supabase) return [];
+
         try {
+            const tenantId = await this.requireTenantIdByProjectId(
+                currentProjectId,
+                'getTags'
+            );
+
             let query = supabase
                 .from('tags')
                 .select('*')
+                .eq('tenant_id', tenantId)
                 .eq('project_id', currentProjectId);
 
-            if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
+            if (
+                currentServiceId &&
+                currentServiceId !== 'default' &&
+                currentServiceId !== 'default_service'
+            ) {
                 query = query.eq('service_id', currentServiceId);
             }
 
             const { data, error } = await query.order('name');
+
             if (error) throw error;
+
             return data || [];
         } catch (err) {
             console.error('[HistoryHandler] Error en getTags:', err);
@@ -2454,22 +2560,51 @@ export class HistoryHandler {
         }
     }
 
-    static async createTag(name: string, color: string = '#6366f1', projectId: string | null = null, serviceId: string | null = null) {
+    static async createTag(
+        name: string,
+        color: string = '#6366f1',
+        projectId: string | null = null,
+        serviceId: string | null = null
+    ) {
         const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
         const currentServiceId = serviceId || this.SERVICE_IDENTIFIER;
+
         if (process.env.STORAGE_MODE === "local") {
-            const tag = await LocalHistoryStore.createTag(name, color, currentProjectId);
+            const tag = await LocalHistoryStore.createTag(
+                name,
+                color,
+                currentProjectId
+            );
+
             return { success: true, tag };
         }
-        if (!supabase) return { success: false, error: 'Supabase not initialized' };
+
+        if (!supabase) {
+            return {
+                success: false,
+                error: 'Supabase not initialized'
+            };
+        }
+
         try {
+            const tenantId = await this.requireTenantIdByProjectId(
+                currentProjectId,
+                `createTag(${name})`
+            );
+
             const insertData: any = {
+                tenant_id: tenantId,
                 name,
                 color,
                 project_id: currentProjectId,
                 created_at: new Date().toISOString()
             };
-            if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
+
+            if (
+                currentServiceId &&
+                currentServiceId !== 'default' &&
+                currentServiceId !== 'default_service'
+            ) {
                 insertData.service_id = currentServiceId;
             }
 
@@ -2478,88 +2613,220 @@ export class HistoryHandler {
                 .insert(insertData)
                 .select()
                 .single();
+
             if (error) throw error;
-            return { success: true, tag: data };
+
+            return {
+                success: true,
+                tag: data
+            };
         } catch (err: any) {
             console.error('[HistoryHandler] Error en createTag:', err);
-            return { success: false, error: err.message };
+
+            return {
+                success: false,
+                error: err.message
+            };
         }
     }
 
-    static async updateTag(id: string, name: string, color: string, projectId: string | null = null, serviceId: string | null = null) {
+    static async updateTag(
+        id: string,
+        name: string,
+        color: string,
+        projectId: string | null = null,
+        serviceId: string | null = null
+    ) {
         const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
         const currentServiceId = serviceId || this.SERVICE_IDENTIFIER;
+
         if (process.env.STORAGE_MODE === "local") {
-            const res = await LocalHistoryStore.updateTag(id, name, color, currentProjectId);
+            const res = await LocalHistoryStore.updateTag(
+                id,
+                name,
+                color,
+                currentProjectId
+            );
+
             return { success: res };
         }
+
         try {
+            const tenantId = await this.requireTenantIdByProjectId(
+                currentProjectId,
+                `updateTag(${id})`
+            );
+
             let query = supabase
                 .from('tags')
                 .update({ name, color })
                 .eq('id', id)
+                .eq('tenant_id', tenantId)
                 .eq('project_id', currentProjectId);
 
-            if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
+            if (
+                currentServiceId &&
+                currentServiceId !== 'default' &&
+                currentServiceId !== 'default_service'
+            ) {
                 query = query.eq('service_id', currentServiceId);
             }
 
             const { error } = await query;
+
             if (error) throw error;
+
             return { success: true };
         } catch (err: any) {
-            return { success: false, error: err.message };
+            return {
+                success: false,
+                error: err.message
+            };
         }
     }
 
-    static async deleteTag(id: string, projectId: string | null = null, serviceId: string | null = null) {
+    static async deleteTag(
+        id: string,
+        projectId: string | null = null,
+        serviceId: string | null = null
+    ) {
         const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
         const currentServiceId = serviceId || this.SERVICE_IDENTIFIER;
+
         if (process.env.STORAGE_MODE === "local") {
-            const res = await LocalHistoryStore.deleteTag(id, currentProjectId);
+            const res = await LocalHistoryStore.deleteTag(
+                id,
+                currentProjectId
+            );
+
             return { success: res };
         }
+
         try {
+            const tenantId = await this.requireTenantIdByProjectId(
+                currentProjectId,
+                `deleteTag(${id})`
+            );
+
             let query = supabase
                 .from('tags')
                 .delete()
                 .eq('id', id)
+                .eq('tenant_id', tenantId)
                 .eq('project_id', currentProjectId);
 
-            if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
+            if (
+                currentServiceId &&
+                currentServiceId !== 'default' &&
+                currentServiceId !== 'default_service'
+            ) {
                 query = query.eq('service_id', currentServiceId);
             }
 
             const { error } = await query;
+
             if (error) throw error;
+
             return { success: true };
         } catch (err: any) {
-            return { success: false, error: err.message };
+            return {
+                success: false,
+                error: err.message
+            };
         }
     }
 
-    static async addTagToChat(rawChatId: string, tagId: string, projectId: string | null = null, serviceId: string | null = null) {
+    static async addTagToChat(
+        rawChatId: string,
+        tagId: string,
+        projectId: string | null = null,
+        serviceId: string | null = null
+    ) {
         const chatId = this.normalizeId(rawChatId);
         const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
         const currentServiceId = serviceId || this.SERVICE_IDENTIFIER;
+
         if (process.env.STORAGE_MODE === "local") {
-            const res = await LocalHistoryStore.addTagToChat(chatId, tagId, currentProjectId);
+            const res = await LocalHistoryStore.addTagToChat(
+                chatId,
+                tagId,
+                currentProjectId
+            );
+
             return { success: res };
         }
+
         try {
-            // Invalidar cache
+            const tenantId = await this.requireTenantIdByProjectId(
+                currentProjectId,
+                `addTagToChat(${chatId}, ${tagId})`
+            );
+
             this.invalidateChatCache(chatId, currentProjectId);
 
-            // Aseguramos que el chat base existe antes de vincular la etiqueta
-            // para evitar fallos de clave foránea si el chat no ha sido persistido aún.
-            await this.getOrCreateChat(chatId, 'whatsapp', null, null, currentProjectId, currentServiceId);
+            // Mantener compatibilidad legacy:
+            // asegurar que el chat exista antes de crear la asociación.
+            const ensuredChat = await this.getOrCreateChat(
+                chatId,
+                'whatsapp',
+                null,
+                null,
+                currentProjectId,
+                currentServiceId
+            );
+
+            if (!ensuredChat) {
+                throw new Error(
+                    `[Tenant] No se pudo asegurar la existencia del chat ${chatId}`
+                );
+            }
+
+            // Verificación fuerte de ownership del chat.
+            const { data: ownedChat, error: chatError } = await supabase
+                .from('chats')
+                .select('id')
+                .eq('id', chatId)
+                .eq('project_id', currentProjectId)
+                .eq('tenant_id', tenantId)
+                .maybeSingle();
+
+            if (chatError) throw chatError;
+
+            if (!ownedChat) {
+                throw new Error(
+                    `[Tenant] El chat ${chatId} no pertenece al tenant ${tenantId}`
+                );
+            }
+
+            // Verificación fuerte de ownership del tag.
+            const { data: ownedTag, error: tagError } = await supabase
+                .from('tags')
+                .select('id')
+                .eq('id', tagId)
+                .eq('project_id', currentProjectId)
+                .eq('tenant_id', tenantId)
+                .maybeSingle();
+
+            if (tagError) throw tagError;
+
+            if (!ownedTag) {
+                throw new Error(
+                    `[Tenant] El tag ${tagId} no pertenece al tenant ${tenantId}`
+                );
+            }
 
             const insertData: any = {
                 chat_id: chatId,
                 tag_id: tagId,
+                tenant_id: tenantId,
                 project_id: currentProjectId
             };
-            if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
+
+            if (
+                currentServiceId &&
+                currentServiceId !== 'default' &&
+                currentServiceId !== 'default_service'
+            ) {
                 insertData.service_id = currentServiceId;
             }
 
@@ -2568,26 +2835,50 @@ export class HistoryHandler {
                 .insert(insertData);
 
             if (error) {
-                if (error.code === '23505') return { success: true }; // Ya existe
+                if (error.code === '23505') {
+                    return { success: true };
+                }
+
                 throw error;
             }
+
             return { success: true };
         } catch (err: any) {
             console.error('[HistoryHandler] Error en addTagToChat:', err);
-            return { success: false, error: err.message };
+
+            return {
+                success: false,
+                error: err.message
+            };
         }
     }
 
-    static async removeTagFromChat(rawChatId: string, tagId: string, projectId: string | null = null, serviceId: string | null = null) {
+    static async removeTagFromChat(
+        rawChatId: string,
+        tagId: string,
+        projectId: string | null = null,
+        serviceId: string | null = null
+    ) {
         const chatId = this.normalizeId(rawChatId);
         const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
         const currentServiceId = serviceId || this.SERVICE_IDENTIFIER;
+
         if (process.env.STORAGE_MODE === "local") {
-            const res = await LocalHistoryStore.removeTagFromChat(chatId, tagId, currentProjectId);
+            const res = await LocalHistoryStore.removeTagFromChat(
+                chatId,
+                tagId,
+                currentProjectId
+            );
+
             return { success: res };
         }
+
         try {
-            // Invalidar cache
+            const tenantId = await this.requireTenantIdByProjectId(
+                currentProjectId,
+                `removeTagFromChat(${chatId}, ${tagId})`
+            );
+
             this.invalidateChatCache(chatId, currentProjectId);
 
             let query = supabase
@@ -2595,18 +2886,29 @@ export class HistoryHandler {
                 .delete()
                 .eq('chat_id', chatId)
                 .eq('tag_id', tagId)
+                .eq('tenant_id', tenantId)
                 .eq('project_id', currentProjectId);
 
-            if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
+            if (
+                currentServiceId &&
+                currentServiceId !== 'default' &&
+                currentServiceId !== 'default_service'
+            ) {
                 query = query.eq('service_id', currentServiceId);
             }
 
             const { error } = await query;
+
             if (error) throw error;
+
             return { success: true };
         } catch (err: any) {
             console.error('[HistoryHandler] Error en removeTagFromChat:', err);
-            return { success: false, error: err.message };
+
+            return {
+                success: false,
+                error: err.message
+            };
         }
     }
 
@@ -4519,38 +4821,129 @@ export class HistoryHandler {
     /**
      * Sincronización masiva de etiquetas (tags)
      */
-    static async syncTags(tags: any[], forcedProjectId?: string, forcedServiceId?: string | null) {
-        if (!supabase) return { success: false, error: 'Supabase not initialized' };
-        const targetProjectId = forcedProjectId || HistoryHandler.PROJECT_IDENTIFIER;
-        const targetServiceId = forcedServiceId || HistoryHandler.SERVICE_IDENTIFIER;
+    static async syncTags(
+        tags: any[],
+        forcedProjectId?: string,
+        forcedServiceId?: string | null
+    ) {
+        if (!supabase) {
+            return {
+                success: false,
+                error: 'Supabase not initialized'
+            };
+        }
+
+        const targetProjectId =
+            forcedProjectId || HistoryHandler.PROJECT_IDENTIFIER;
+
+        const targetServiceId =
+            forcedServiceId || HistoryHandler.SERVICE_IDENTIFIER;
 
         try {
-            if (tags.length === 0) return { success: true, data: [] };
+            if (tags.length === 0) {
+                return {
+                    success: true,
+                    data: []
+                };
+            }
 
-            const tagsToUpsert = tags.map(t => {
+            const tenantId = await this.requireTenantIdByProjectId(
+                targetProjectId,
+                'syncTags'
+            );
+
+            /*
+             * IMPORTANTE:
+             *
+             * No utilizar nuevamente:
+             *
+             * onConflict: 'project_id,name'
+             *
+             * porque si un project_id legacy fue reutilizado por otro cliente,
+             * eso podría actualizar un tag histórico perteneciente al tenant
+             * anterior y transferir su ownership.
+             *
+             * Buscamos únicamente tags pertenecientes al tenant actual y,
+             * cuando existen, hacemos el UPSERT mediante su PK global "id".
+             */
+
+            const { data: existingRows, error: existingError } = await supabase
+                .from('tags')
+                .select('id, name')
+                .eq('tenant_id', tenantId)
+                .eq('project_id', targetProjectId);
+
+            if (existingError) throw existingError;
+
+            const existingByName = new Map<string, string>();
+
+            for (const row of existingRows || []) {
+                existingByName.set(String(row.name), row.id);
+            }
+
+            // Evitar que el mismo tag aparezca dos veces dentro del mismo UPSERT.
+            const uniqueTags = new Map<string, any>();
+
+            for (const tag of tags) {
+                if (!tag || !tag.name) continue;
+                uniqueTags.set(String(tag.name), tag);
+            }
+
+            const tagsToUpsert = Array.from(uniqueTags.values()).map(tag => {
+                const tagName = String(tag.name);
+
                 const upsertData: any = {
+                    tenant_id: tenantId,
                     project_id: targetProjectId,
-                    name: t.name,
-                    color: t.color || '#6366f1',
+                    name: tag.name,
+                    color: tag.color || '#6366f1',
                     created_at: new Date().toISOString()
                 };
-                if (targetServiceId && targetServiceId !== 'default' && targetServiceId !== 'default_service') {
+
+                const existingId = existingByName.get(tagName);
+
+                if (existingId) {
+                    upsertData.id = existingId;
+                }
+
+                if (
+                    targetServiceId &&
+                    targetServiceId !== 'default' &&
+                    targetServiceId !== 'default_service'
+                ) {
                     upsertData.service_id = targetServiceId;
                 }
+
                 return upsertData;
             });
 
-            // Usamos onConflict 'project_id,name' para no duplicar etiquetas con el mismo nombre en el mismo proyecto
+            if (tagsToUpsert.length === 0) {
+                return {
+                    success: true,
+                    data: []
+                };
+            }
+
             const { data, error } = await supabase
                 .from('tags')
-                .upsert(tagsToUpsert, { onConflict: 'project_id,name' })
+                .upsert(tagsToUpsert, {
+                    onConflict: 'id'
+                })
                 .select();
 
             if (error) throw error;
-            return { success: true, data };
+
+            return {
+                success: true,
+                data
+            };
         } catch (err: any) {
             console.error('[HistoryHandler] Error en syncTags:', err);
-            return { success: false, error: err.message };
+
+            return {
+                success: false,
+                error: err.message
+            };
         }
     }
 
@@ -4610,35 +5003,164 @@ export class HistoryHandler {
     /**
      * Sincronización masiva de asociaciones chat-etiqueta
      */
-    static async syncChatTags(associations: any[], forcedProjectId?: string, forcedServiceId?: string | null) {
-        if (!supabase) return { success: false, error: 'Supabase not initialized' };
-        const targetProjectId = forcedProjectId || HistoryHandler.PROJECT_IDENTIFIER;
-        const targetServiceId = forcedServiceId || HistoryHandler.SERVICE_IDENTIFIER;
+    static async syncChatTags(
+        associations: any[],
+        forcedProjectId?: string,
+        forcedServiceId?: string | null
+    ) {
+        if (!supabase) {
+            return {
+                success: false,
+                error: 'Supabase not initialized'
+            };
+        }
+
+        const targetProjectId =
+            forcedProjectId || HistoryHandler.PROJECT_IDENTIFIER;
+
+        const targetServiceId =
+            forcedServiceId || HistoryHandler.SERVICE_IDENTIFIER;
 
         try {
-            if (associations.length === 0) return { success: true, data: [] };
+            if (associations.length === 0) {
+                return {
+                    success: true,
+                    data: []
+                };
+            }
 
-            const associationsToUpsert = associations.map(a => {
+            const tenantId = await this.requireTenantIdByProjectId(
+                targetProjectId,
+                'syncChatTags'
+            );
+
+            const validAssociations = associations.filter(
+                association =>
+                    association &&
+                    association.chat_id &&
+                    association.tag_id
+            );
+
+            if (validAssociations.length === 0) {
+                return {
+                    success: true,
+                    data: []
+                };
+            }
+
+            /*
+             * Validar ownership de TODOS los tags utilizados.
+             * Se hace por chunks para no generar queries IN excesivamente largas.
+             */
+            const uniqueTagIds = Array.from(
+                new Set(
+                    validAssociations.map(
+                        association => String(association.tag_id)
+                    )
+                )
+            );
+
+            const ownedTagIds = new Set<string>();
+            const chunkSize = 200;
+
+            for (let index = 0; index < uniqueTagIds.length; index += chunkSize) {
+                const chunk = uniqueTagIds.slice(index, index + chunkSize);
+
+                const { data: ownedTags, error: ownedTagsError } = await supabase
+                    .from('tags')
+                    .select('id')
+                    .eq('tenant_id', tenantId)
+                    .eq('project_id', targetProjectId)
+                    .in('id', chunk);
+
+                if (ownedTagsError) throw ownedTagsError;
+
+                for (const tag of ownedTags || []) {
+                    ownedTagIds.add(String(tag.id));
+                }
+            }
+
+            if (ownedTagIds.size !== uniqueTagIds.length) {
+                throw new Error(
+                    '[Tenant] syncChatTags contiene tags que no pertenecen al tenant actual'
+                );
+            }
+
+            /*
+             * Validar ownership de TODOS los chats utilizados.
+             */
+            const uniqueChatIds = Array.from(
+                new Set(
+                    validAssociations.map(
+                        association => String(association.chat_id)
+                    )
+                )
+            );
+
+            const ownedChatIds = new Set<string>();
+
+            for (let index = 0; index < uniqueChatIds.length; index += chunkSize) {
+                const chunk = uniqueChatIds.slice(index, index + chunkSize);
+
+                const { data: ownedChats, error: ownedChatsError } = await supabase
+                    .from('chats')
+                    .select('id')
+                    .eq('tenant_id', tenantId)
+                    .eq('project_id', targetProjectId)
+                    .in('id', chunk);
+
+                if (ownedChatsError) throw ownedChatsError;
+
+                for (const chat of ownedChats || []) {
+                    ownedChatIds.add(String(chat.id));
+                }
+            }
+
+            if (ownedChatIds.size !== uniqueChatIds.length) {
+                throw new Error(
+                    '[Tenant] syncChatTags contiene chats que no pertenecen al tenant actual'
+                );
+            }
+
+            const associationsToUpsert = validAssociations.map(association => {
                 const upsertData: any = {
-                    chat_id: a.chat_id,
-                    tag_id: a.tag_id,
+                    chat_id: association.chat_id,
+                    tag_id: association.tag_id,
+                    tenant_id: tenantId,
                     project_id: targetProjectId
                 };
-                if (targetServiceId && targetServiceId !== 'default' && targetServiceId !== 'default_service') {
+
+                if (
+                    targetServiceId &&
+                    targetServiceId !== 'default' &&
+                    targetServiceId !== 'default_service'
+                ) {
                     upsertData.service_id = targetServiceId;
                 }
+
                 return upsertData;
             });
 
             const { data, error } = await supabase
                 .from('chat_tags')
-                .upsert(associationsToUpsert, { onConflict: 'chat_id,tag_id,project_id' })
+                .upsert(associationsToUpsert, {
+                    onConflict: 'chat_id,tag_id,project_id'
+                })
                 .select();
+
             if (error) throw error;
-            return { success: true, data };
+
+            return {
+                success: true,
+                data
+            };
         } catch (err: any) {
             console.error('[HistoryHandler] Error en syncChatTags:', err);
-            return { success: false, error: err.message };
+
+            return {
+                success: false,
+                error: err.message
+            };
         }
     }
 
