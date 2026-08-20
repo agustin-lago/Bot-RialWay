@@ -1221,6 +1221,35 @@ export const registerBackofficeRoutes = (app: any) => {
         res.json(chats);
     });
 
+    // --- IMPORTACIÓN Y GESTIÓN DE CONTACTOS (Debe ir antes de :chatId) ---
+    app.get('/api/backoffice/chats/import-template', backofficeAuth, (req: any, res: any) => {
+        try {
+            const data = [
+                { phone: '5491122334455', name: 'Juan Perez', tags: 'Cliente, Interesado' },
+                { phone: '5491166778899', name: 'Maria Lopez', tags: 'Soporte' }
+            ];
+            const ws = XLSX.utils.json_to_sheet(data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Plantilla");
+            const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+            res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            res.setHeader('Content-Disposition', 'attachment; filename=plantilla_contactos.xlsx');
+            res.end(buf);
+        } catch (error: any) {
+            console.error('Error generando plantilla de importación:', error);
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/backoffice/chats/import', backofficeAuth, (req: any, res: any) => {
+        return processImportExcel(req, res);
+    });
+
+    app.post('/api/backoffice/chats/create-individual', backofficeAuth, (req: any, res: any) => {
+        return processCreateIndividualContact(req, res);
+    });
+
     app.get('/api/backoffice/chats/:chatId', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
@@ -1427,47 +1456,6 @@ export const registerBackofficeRoutes = (app: any) => {
         } catch (e: any) {
             res.status(500).json({ success: false, error: e.message });
         }
-    });
-
-    // --- NUEVO: IMPORTACIÓN DE CONTACTOS ---
-    app.get('/api/backoffice/chats/import-template', backofficeAuth, (req: any, res: any) => {
-        try {
-            const data = [
-                { phone: '5491122334455', name: 'Juan Perez', tags: 'Cliente, Interesado' },
-                { phone: '5491166778899', name: 'Maria Lopez', tags: 'Soporte' }
-            ];
-            const ws = XLSX.utils.json_to_sheet(data);
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "Plantilla");
-            const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-
-            res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            res.setHeader('Content-Disposition', 'attachment; filename=plantilla_contactos.xlsx');
-            res.end(buf);
-        } catch (error: any) {
-            res.status(500).json({ success: false, error: error.message });
-        }
-    });
-
-    app.get('/api/backoffice/chats/:id', backofficeAuth, async (req: any, res: any) => {
-        try {
-            const { id } = req.params;
-            const projectId = resolveProjectId(req);
-            const serviceId = resolveServiceId(req);
-            const chat = await depsHistoryHandler.getChat(id, projectId || undefined, serviceId || undefined);
-            if (!chat) return res.status(404).json({ success: false, error: 'Chat not found' });
-            res.json(chat);
-        } catch (err: any) {
-            res.status(500).json({ success: false, error: err.message });
-        }
-    });
-
-    app.post('/api/backoffice/chats/import', backofficeAuth, (req: any, res: any) => {
-        return processImportExcel(req, res);
-    });
-
-    app.post('/api/backoffice/chats/create-individual', backofficeAuth, (req: any, res: any) => {
-        return processCreateIndividualContact(req, res);
     });
 
     app.delete('/api/backoffice/chats/:chatId', backofficeAuth, (req: any, res: any) => {
@@ -3530,26 +3518,6 @@ export const registerBackofficeRoutes = (app: any) => {
             if (!res.headersSent) {
                 res.status(500).json({ success: false, error: error.message });
             }
-        }
-    });
-
-    // --- IMPORTACION EXTERNA DE CONTACTOS ---
-
-    app.get('/api/backoffice/chats/import-template', backofficeAuth, async (req: any, res: any) => {
-        try {
-            const wb = XLSX.utils.book_new();
-            const headers = [['phone', 'name', 'tags']];
-            const ws = XLSX.utils.aoa_to_sheet(headers);
-            XLSX.utils.book_append_sheet(wb, ws, 'Plantilla');
-
-            const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-
-            res.setHeader('Content-Disposition', 'attachment; filename="plantilla_importacion.xlsx"');
-            res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            res.end(buf);
-        } catch (error: any) {
-            console.error('Error generando plantilla de importaciÃ³n:', error);
-            res.status(500).json({ success: false, error: error.message });
         }
     });
 
