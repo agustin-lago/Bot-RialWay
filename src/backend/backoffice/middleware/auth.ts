@@ -185,6 +185,13 @@ export const backofficeAuth = async (req: any, res: any, next: () => void) => {
             }
             if (adminPass && token === adminPass) {
                 isValid = true;
+
+                // Un ADMIN normal queda autorizado exclusivamente
+                // para el proyecto del runtime donde autenticó.
+                //
+                // Esto evita que posteriormente query/body/headers
+                // puedan seleccionar arbitrariamente otro project_id.
+                userProjectId = projectId;
             }
         }
     }

@@ -98,20 +98,121 @@ historyEvents.on('setting_changed', async ({ key, value, projectId, serviceId }:
 });
 
 
-// Helper to dynamically extract projectId from query, body, or headers
+// Helper seguro para resolver projectId.
+//
+// REGLA:
+// - ADMIN/SUBUSER autenticado: manda siempre req.auth.projectId.
+// - SUPERADMIN: puede seleccionar explícitamente otro projectId.
+// - Request sin auth mantiene compatibilidad con callbacks/flujos legacy.
 export const resolveProjectId = (req: any): string | null => {
-    const pId = req?.query?.projectId || (req?.body && req?.body.projectId) || req?.headers?.['x-project-id'] || (req?.auth && req?.auth.projectId);
-    if (pId && pId !== 'default') return pId;
-    if (req?.hostInfo) return req.hostInfo.projectId;
+    const requestedProjectId =
+        req?.query?.projectId ||
+        (req?.body && req.body.projectId) ||
+        req?.headers?.['x-project-id'] ||
+        null;
+
+    const authProjectId = req?.auth?.projectId || null;
+    const isSuperAdmin = req?.auth?.isSuperAdmin === true;
+
+    // Request autenticado normal:
+    // JAMÁS confiar en projectId enviado por el cliente.
+    if (req?.auth && !isSuperAdmin) {
+        if (
+            requestedProjectId &&
+            requestedProjectId !== 'default' &&
+            authProjectId &&
+            String(requestedProjectId) !== String(authProjectId)
+        ) {
+            console.warn(
+                `[SECURITY] Override de projectId bloqueado. ` +
+                `requested=${requestedProjectId}, authorized=${authProjectId}`
+            );
+        }
+
+        if (authProjectId) {
+            return String(authProjectId);
+        }
+
+        // Fail-safe:
+        // si por algún motivo existe auth pero no tiene projectId,
+        // usar exclusivamente el proyecto del runtime.
+        console.warn(
+            '[SECURITY] Request autenticado sin projectId autorizado. ' +
+            'Usando PROJECT_IDENTIFIER del runtime.'
+        );
+
+        return HistoryHandlerClass.PROJECT_IDENTIFIER || null;
+    }
+
+    // SUPERADMIN o flujo no autenticado legacy.
+    if (requestedProjectId && requestedProjectId !== 'default') {
+        return String(requestedProjectId);
+    }
+
+    if (req?.hostInfo?.projectId) {
+        return req.hostInfo.projectId;
+    }
+
+    if (authProjectId) {
+        return String(authProjectId);
+    }
+
     return null;
 };
 
-// Helper to dynamically extract serviceId from query, body, or headers
+// Helper seguro para resolver serviceId.
+//
+// Un SubUser con service_id específico NO puede sobreescribirlo.
+// Admins normales siguen pudiendo seleccionar líneas del mismo proyecto.
+// SuperAdmin mantiene comportamiento actual.
 export const resolveServiceId = (req: any): string | null => {
-    const sId = req?.query?.serviceId || (req?.body && req?.body.serviceId) || req?.headers?.['x-service-id'] || (req?.auth && req?.auth.serviceId);
-    if (sId && sId !== 'default') return sId;
-    if (req?.hostInfo) return req.hostInfo.serviceId;
-    return (process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || 'default_service');
+    const requestedServiceId =
+        req?.query?.serviceId ||
+        (req?.body && req.body.serviceId) ||
+        req?.headers?.['x-service-id'] ||
+        null;
+
+    const authServiceId = req?.auth?.serviceId || null;
+    const isSuperAdmin = req?.auth?.isSuperAdmin === true;
+    const isSubUser = req?.auth?.isSubUser === true;
+
+    if (
+        req?.auth &&
+        !isSuperAdmin &&
+        isSubUser &&
+        authServiceId
+    ) {
+        if (
+            requestedServiceId &&
+            requestedServiceId !== 'default' &&
+            String(requestedServiceId) !== String(authServiceId)
+        ) {
+            console.warn(
+                `[SECURITY] Override de serviceId bloqueado para SubUser. ` +
+                `requested=${requestedServiceId}, authorized=${authServiceId}`
+            );
+        }
+
+        return String(authServiceId);
+    }
+
+    if (requestedServiceId && requestedServiceId !== 'default') {
+        return String(requestedServiceId);
+    }
+
+    if (req?.hostInfo?.serviceId) {
+        return req.hostInfo.serviceId;
+    }
+
+    if (authServiceId) {
+        return String(authServiceId);
+    }
+
+    return (
+        process.env.SERVICE_ID ||
+        process.env.RAILWAY_SERVICE_ID ||
+        'default_service'
+    );
 };
 
 // CachÃ© para fotos de perfil (chatId -> {url, timestamp})
@@ -250,10 +351,16 @@ export const processSendMessage = async (
     file: any,
     replyTo?: string
 ) => {
-    const projectId = req.query.projectId || (req.body && req.body.projectId) || req.headers['x-project-id'] || (req.auth && req.auth.projectId) || null;
-    const currentProjectId = projectId || HistoryHandlerClass.PROJECT_IDENTIFIER;
-    const currentServiceId = resolveServiceId(req) || HistoryHandlerClass.SERVICE_IDENTIFIER;
-    const serviceId = req.query.serviceId || (req.body && req.body.serviceId) || req.headers['x-service-id'] || (req.auth && req.auth.serviceId) || null;
+    const currentProjectId =
+        resolveProjectId(req) ||
+        HistoryHandlerClass.PROJECT_IDENTIFIER;
+
+    const currentServiceId =
+        resolveServiceId(req) ||
+        HistoryHandlerClass.SERVICE_IDENTIFIER;
+
+    const serviceId = currentServiceId;
+
     const adapterProvider = getAdapterProvider();
     const depsHistoryHandler = HistoryHandlerClass;
     const openaiMain = await getOpenAI(currentProjectId, currentServiceId);
@@ -463,8 +570,14 @@ const sendJson = (res: any, statusCode: number, data: any) => {
 
 export const processBulkTemplate = async (req: any, res: any) => {
     const depsHistoryHandler = HistoryHandlerClass;
-    const projectId = resolveProjectId(req) || req.query.projectId || (req.body && req.body.projectId) || req.headers['x-project-id'] || (req.auth && req.auth.projectId) || null;
-    const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+
+    const projectId =
+        resolveProjectId(req) ||
+        depsHistoryHandler.PROJECT_IDENTIFIER;
+
+    const serviceId =
+        resolveServiceId(req) ||
+        depsHistoryHandler.SERVICE_IDENTIFIER;
     const file = (req as any).file;
     const { templateName, languageCode } = req.body;
     const adapterProvider = getAdapterProvider();
@@ -6542,9 +6655,33 @@ export const processImportExcel = async (req: any, res: any) => {
 
 export const processCreateIndividualContact = async (req: any, res: any) => {
     try {
-        const { rawPhone, name, tagIds, projectId: bodyProjectId } = req.body;
-        const targetProjectId = bodyProjectId || req.query.projectId || resolveProjectId(req) || (HistoryHandlerClass as any).PROJECT_ID || 'default';
-        const targetServiceId = resolveServiceId(req) || (HistoryHandlerClass as any).SERVICE_IDENTIFIER;
+        const { rawPhone, name, tagIds } = req.body;
+
+        const targetProjectId =
+            resolveProjectId(req) ||
+            HistoryHandlerClass.PROJECT_IDENTIFIER;
+
+        const targetServiceId =
+            resolveServiceId(req) ||
+            HistoryHandlerClass.SERVICE_IDENTIFIER;
+
+        const tenantResolution =
+            await HistoryHandlerClass.resolveTenantIdByProjectId(
+                targetProjectId
+            );
+
+        if (
+            !tenantResolution.resolved ||
+            tenantResolution.globalScope ||
+            !tenantResolution.tenantId
+        ) {
+            return res.status(403).json({
+                success: false,
+                error: 'No se pudo resolver el tenant propietario del proyecto.'
+            });
+        }
+
+        const tenantId = tenantResolution.tenantId;
 
         let phone = String(rawPhone || '').replace(/\D/g, '').trim();
         if (!phone) {
@@ -6569,8 +6706,11 @@ export const processCreateIndividualContact = async (req: any, res: any) => {
 
         const chatRow: any = {
             id: phone,
+            tenant_id: tenantId,
             project_id: targetProjectId,
-            name: name && String(name).trim() !== '' ? String(name).trim() : null,
+            name: name && String(name).trim() !== ''
+                ? String(name).trim()
+                : null,
             type: 'whatsapp',
             bot_enabled: true,
             assigned_agent: 'asistente1',
@@ -6593,26 +6733,34 @@ export const processCreateIndividualContact = async (req: any, res: any) => {
         }
 
         if (Array.isArray(tagIds) && tagIds.length > 0) {
-            const tagRows = tagIds.map((tagId: string) => {
-                const row: any = {
+            const associations = tagIds
+                .filter((tagId: any) => !!tagId)
+                .map((tagId: string) => ({
                     chat_id: phone,
-                    tag_id: tagId,
-                    project_id: targetProjectId
-                };
-                if (targetServiceId && targetServiceId !== 'default' && targetServiceId !== 'default_service') {
-                    row.service_id = targetServiceId;
-                } else {
-                    row.service_id = HistoryHandlerClass.SERVICE_IDENTIFIER;
+                    tag_id: tagId
+                }));
+
+            if (associations.length > 0) {
+                const tagSyncResult =
+                    await HistoryHandlerClass.syncChatTags(
+                        associations,
+                        targetProjectId,
+                        targetServiceId
+                    );
+
+                if (!tagSyncResult.success) {
+                    console.error(
+                        '[create-individual] Error asignando etiquetas:',
+                        tagSyncResult.error
+                    );
+
+                    return res.status(400).json({
+                        success: false,
+                        error:
+                            tagSyncResult.error ||
+                            'No se pudieron asignar las etiquetas.'
+                    });
                 }
-                return row;
-            });
-
-            const { error: tagErr } = await supabase
-                .from('chat_tags')
-                .upsert(tagRows, { onConflict: 'chat_id,tag_id,project_id' });
-
-            if (tagErr) {
-                console.error('[create-individual] Error asignando etiquetas:', tagErr.message);
             }
         }
 
@@ -6633,7 +6781,10 @@ export const processCreateIndividualContact = async (req: any, res: any) => {
 export const processDeleteChat = async (req: any, res: any) => {
     try {
         const { chatId } = req.params;
-        const targetProjectId = req.query.projectId || resolveProjectId(req) || (HistoryHandlerClass as any).PROJECT_ID || 'default';
+
+        const targetProjectId =
+            resolveProjectId(req) ||
+            HistoryHandlerClass.PROJECT_IDENTIFIER;
 
         if (!chatId) {
             return res.status(400).json({ success: false, error: 'Se requiere el ID del chat a eliminar.' });

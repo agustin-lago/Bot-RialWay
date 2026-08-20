@@ -1950,7 +1950,6 @@ export class HistoryHandler {
     }
 
     /**
-    /**
      * Asegura que un tag exista para un proyecto/tenant y devuelve su ID.
      */
     static async ensureTagExists(tagName: string, projectId: string): Promise<string | null> {
