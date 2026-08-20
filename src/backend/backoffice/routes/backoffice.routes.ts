@@ -3420,6 +3420,28 @@ export const registerBackofficeRoutes = (app: any) => {
     app.post('/api/backoffice/whatsapp/send-quick-template', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         const projectId = resolveProjectId(req);
         const serviceId = resolveServiceId(req);
+
+        const tenantResolution =
+            await depsHistoryHandler
+                .resolveTenantIdByProjectId(
+                    projectId
+                );
+
+        if (
+            !tenantResolution.resolved ||
+            tenantResolution.globalScope ||
+            !tenantResolution.tenantId
+        ) {
+            return res.status(403).json({
+                success: false,
+                error:
+                    'No se pudo resolver el tenant del proyecto.'
+            });
+        }
+
+        const tenantId =
+            tenantResolution.tenantId;
+
         await syncMetaProvider(projectId, serviceId);
         const { templateName, languageCode, startDate, endDate, tagIds } = req.body;
 
@@ -3432,6 +3454,42 @@ export const registerBackofficeRoutes = (app: any) => {
             const tagIdArray = Array.isArray(tagIds) ? tagIds : (typeof tagIds === 'string' ? tagIds.split(',').filter(Boolean) : []);
             let chatsList: any[] = [];
 
+            if (tagIdArray.length > 0) {
+                const { data: ownedTags, error: ownedTagsError } =
+                    await depsHistoryHandler
+                        .getSupabase()
+                        .from('tags')
+                        .select('id')
+                        .eq('tenant_id', tenantId)
+                        .eq('project_id', projectId)
+                        .in('id', tagIdArray);
+
+                if (ownedTagsError) {
+                    throw ownedTagsError;
+                }
+
+                const ownedIds =
+                    new Set(
+                        (ownedTags || [])
+                            .map((row: any) =>
+                                String(row.id)
+                            )
+                    );
+
+                if (
+                    tagIdArray.some(
+                        (id: any) =>
+                            !ownedIds.has(String(id))
+                    )
+                ) {
+                    return res.status(403).json({
+                        success: false,
+                        error:
+                            'Uno o más tags no pertenecen al tenant actual.'
+                    });
+                }
+            }
+
             if (tagIdArray.length === 1) {
                 chatsList = await depsHistoryHandler.listChats(10000, 0, undefined, tagIdArray[0], undefined, undefined, projectId, serviceId);
             } else if (tagIdArray.length > 1) {
@@ -3439,6 +3497,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 let tagQuery = supabase
                     .from('chat_tags')
                     .select('chat_id')
+                    .eq('tenant_id', tenantId)
                     .eq('project_id', projectId)
                     .in('tag_id', tagIdArray);
                 if (serviceId && serviceId !== 'default_service') {
@@ -3450,7 +3509,8 @@ export const registerBackofficeRoutes = (app: any) => {
                 if (matchingIds.length > 0) {
                     let chatsQuery = supabase
                         .from('chats')
-                        .select('id, type, name, last_message_at, last_human_message_at, assigned_to, bot_enabled, crm_status, crm_due_date, notes, email, source, is_lead, cuit_dni, tax_status, address, offered_product, unread_count, chat_tags(tag_id, tags(*))')
+                        .select('id, type, name, last_message_at, last_human_message_at, assigned_to, bot_enabled, crm_status, crm_due_date, notes, email, source, is_lead, cuit_dni, tax_status, address, offered_product, unread_count, chat_tags(tag_id, tenant_id, tags(*))')
+                        .eq('tenant_id', tenantId)
                         .eq('project_id', projectId)
                         .in('id', matchingIds);
                     if (serviceId && serviceId !== 'default_service') {
@@ -3458,10 +3518,23 @@ export const registerBackofficeRoutes = (app: any) => {
                     }
                     const { data: rawChats } = await chatsQuery;
 
-                    chatsList = (rawChats || []).map((chat: any) => ({
-                        ...chat,
-                        tags: chat.chat_tags ? chat.chat_tags.map((ct: any) => ct.tags).filter((t: any) => t !== null) : []
-                    }));
+                    chatsList = (rawChats || []).map((chat: any) => {
+                        const ownedChatTags =
+                            (chat.chat_tags || [])
+                                .filter(
+                                    (ct: any) =>
+                                        ct?.tenant_id === tenantId &&
+                                        ct?.tags?.tenant_id === tenantId
+                                );
+
+                        return {
+                            ...chat,
+                            chat_tags: ownedChatTags,
+                            tags: ownedChatTags
+                                .map((ct: any) => ct.tags)
+                                .filter(Boolean)
+                        };
+                    });
                 }
             } else {
                 chatsList = await depsHistoryHandler.listChats(10000, 0, undefined, undefined, undefined, undefined, projectId, serviceId);
