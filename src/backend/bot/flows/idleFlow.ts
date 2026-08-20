@@ -430,6 +430,9 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
                     flowDynamic,
                     gotoFlow,
                     maxAttempts: 3,
+                    customSeguimiento1: data.Seguimiento1 || data.seguimiento1 || data['Seguimiento 1'] || data.Seguimiento || data.seguimiento,
+                    customSeguimiento2: data.Seguimiento2 || data.seguimiento2 || data['Seguimiento 2'],
+                    customSeguimiento3: data.Seguimiento3 || data.seguimiento3 || data['Seguimiento 3'],
                     onSuccess: async (newData) => {
                         if (newData && (newData as any).userResponded) {
                             console.log(`[idleFlow] El usuario respondió al seguimiento. Dejando que el bot lo procese naturalmente.`);
@@ -493,6 +496,9 @@ const idleFlow = addKeyword(EVENTS.ACTION).addAction(
                     flowDynamic,
                     gotoFlow,
                     maxAttempts: 3,
+                    customSeguimiento1: data.Seguimiento1 || data.seguimiento1 || data['Seguimiento 1'] || data.Seguimiento || data.seguimiento,
+                    customSeguimiento2: data.Seguimiento2 || data.seguimiento2 || data['Seguimiento 2'],
+                    customSeguimiento3: data.Seguimiento3 || data.seguimiento3 || data['Seguimiento 3'],
                     onSuccess: async (newData) => {
                         if (newData && (newData as any).userResponded) {
                             console.log(`[idleFlow] El usuario respondió al seguimiento. Dejando que el bot lo procese naturalmente.`);

@@ -15,6 +15,9 @@ interface ReconectionOptions {
     gotoFlow: any;    // Navegación de flujo
     maxAttempts?: number; // Máximo de intentos de reconexión
     timeoutMs?: number; // Tiempo de espera entre intentos (ms)
+    customSeguimiento1?: string; // Mensaje de seguimiento 1 personalizado (ej. extraído del resumen IA)
+    customSeguimiento2?: string; // Mensaje de seguimiento 2 personalizado
+    customSeguimiento3?: string; // Mensaje de seguimiento 3 personalizado
     onSuccess: (data: any) => Promise<void>; // Callback si se obtiene el nombre
     onFail: () => Promise<void>; // Callback si se alcanzan los intentos máximos
 }
@@ -29,6 +32,9 @@ export class ReconectionFlow {
     private readonly provider: any; // Proveedor de mensajería
     private readonly flowDynamic: any; // Dinamismo del flujo
     private readonly gotoFlow: any; // Navegación de flujo
+    private customSeguimiento1?: string;
+    private customSeguimiento2?: string;
+    private customSeguimiento3?: string;
     private readonly onSuccess: (data: any) => Promise<void>; // Acción al obtener nombre
     private readonly onFail: () => Promise<void>; // Acción al fallar todos los intentos
     private readonly ASSISTANT_ID = process.env.ASSISTANT_ID ?? '';
@@ -41,6 +47,9 @@ export class ReconectionFlow {
         this.gotoFlow = options.gotoFlow;
         this.maxAttempts = options.maxAttempts ?? 3;
         this.timeoutMs = options.timeoutMs ?? 60000;
+        this.customSeguimiento1 = options.customSeguimiento1;
+        this.customSeguimiento2 = options.customSeguimiento2;
+        this.customSeguimiento3 = options.customSeguimiento3;
         this.onSuccess = options.onSuccess;
         this.onFail = options.onFail;
 
@@ -64,10 +73,14 @@ export class ReconectionFlow {
             ? this.state.get('assignedAssistantId') 
             : (this.state?.assignedAssistantId || await HistoryHandler.getConfig('ASSISTANT_ID', dynamicProjectId, dynamicServiceId) || this.ASSISTANT_ID);
 
-        // 1. Cargar mensajes de seguimiento dinámicamente si no están en process.env
-        const msj1 = await HistoryHandler.getConfig('msjSeguimiento1', dynamicProjectId, dynamicServiceId) || "";
-        const msj2 = await HistoryHandler.getConfig('msjSeguimiento2', dynamicProjectId, dynamicServiceId) || "";
-        const msj3 = await HistoryHandler.getConfig('msjSeguimiento3', dynamicProjectId, dynamicServiceId) || "";
+        // 1. Cargar mensajes de seguimiento: Priorizar los personalizados generados en el resumen sobre los de Supabase
+        const msj1 = this.customSeguimiento1 || await HistoryHandler.getConfig('msjSeguimiento1', dynamicProjectId, dynamicServiceId) || "";
+        const msj2 = this.customSeguimiento2 || await HistoryHandler.getConfig('msjSeguimiento2', dynamicProjectId, dynamicServiceId) || "";
+        const msj3 = this.customSeguimiento3 || await HistoryHandler.getConfig('msjSeguimiento3', dynamicProjectId, dynamicServiceId) || "";
+
+        if (this.customSeguimiento1) {
+            console.log(`[ReconectionFlow] 🎯 Usando Seguimiento1 personalizado generado por la IA para ${this.ctx?.from}`);
+        }
 
         const t2 = await HistoryHandler.getConfig('timeOutSeguimiento2', dynamicProjectId, dynamicServiceId);
         const t3 = await HistoryHandler.getConfig('timeOutSeguimiento3', dynamicProjectId, dynamicServiceId);
@@ -266,7 +279,9 @@ export class ReconectionFlow {
     public getState() {
         return {
             attempts: this.attempts,
-            // Puedes agregar más campos si necesitas persistir más información
+            customSeguimiento1: this.customSeguimiento1,
+            customSeguimiento2: this.customSeguimiento2,
+            customSeguimiento3: this.customSeguimiento3,
         };
     }
 
@@ -276,6 +291,9 @@ export class ReconectionFlow {
     public restoreState(state: any) {
         if (state && typeof state.attempts === 'number') {
             this.attempts = state.attempts;
+            if (state.customSeguimiento1) this.customSeguimiento1 = state.customSeguimiento1;
+            if (state.customSeguimiento2) this.customSeguimiento2 = state.customSeguimiento2;
+            if (state.customSeguimiento3) this.customSeguimiento3 = state.customSeguimiento3;
         }
     }
 }
