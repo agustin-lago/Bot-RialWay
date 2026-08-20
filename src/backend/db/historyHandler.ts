@@ -5393,157 +5393,94 @@ export class HistoryHandler {
                     ? targetServiceId
                     : HistoryHandler.SERVICE_IDENTIFIER;
 
-            const chatsMap =
-                new Map<string, any>();
-
+            const rawIds = new Set<string>();
             for (const chat of chats) {
-                const rawId =
-                    String(
-                        chat.id ||
-                        chat.phone ||
-                        ''
-                    ).trim();
-
-                const cleanId =
-                    rawId.replace(/\D/g, '') ||
-                    rawId;
-
-                if (!cleanId.trim()) {
-                    continue;
+                const rawId = String(chat.id || chat.phone || '').trim();
+                const cleanId = rawId.replace(/\D/g, '') || rawId;
+                if (cleanId.trim()) {
+                    rawIds.add(cleanId);
                 }
-
-                const existing =
-                    chatsMap.get(cleanId);
-
-                chatsMap.set(
-                    cleanId,
-                    {
-                        id: cleanId,
-                        tenant_id: tenantId,
-                        project_id:
-                            targetProjectId,
-                        service_id:
-                            effectiveServiceId,
-                        name:
-                            chat.name ||
-                            existing?.name ||
-                            null,
-                        type:
-                            chat.type ||
-                            'whatsapp',
-                        last_message_at:
-                            chat.last_message_at ||
-                            new Date().toISOString(),
-                        metadata:
-                            chat.metadata ||
-                            existing?.metadata ||
-                            {},
-                        is_lead:
-                            chat.is_lead !==
-                                undefined
-                                ? chat.is_lead
-                                : (
-                                    existing?.is_lead ??
-                                    false
-                                ),
-                        bot_enabled:
-                            chat.bot_enabled !==
-                                undefined
-                                ? chat.bot_enabled
-                                : (
-                                    existing
-                                        ?.bot_enabled ??
-                                    true
-                                ),
-                        assigned_agent:
-                            chat.assigned_agent ||
-                            existing
-                                ?.assigned_agent ||
-                            'asistente1'
-                    }
-                );
             }
 
-            const chatsToUpsert =
-                Array.from(
-                    chatsMap.values()
-                );
-
-            if (
-                chatsToUpsert.length === 0
-            ) {
-                return {
-                    success: true,
-                    data: []
-                };
-            }
-
-            /*
-             * Preflight anti-transferencia:
-             *
-             * Si la clave legacy que va a usar ON CONFLICT
-             * ya pertenece a OTRO tenant, abortar.
-             */
-            const ids =
-                chatsToUpsert.map(
-                    row => row.id
-                );
-
+            const idsArray = Array.from(rawIds);
+            const dbExistingChats = new Map<string, any>();
             const chunkSize = 200;
 
-            for (
-                let index = 0;
-                index < ids.length;
-                index += chunkSize
-            ) {
-                const chunk =
-                    ids.slice(
-                        index,
-                        index + chunkSize
-                    );
+            for (let index = 0; index < idsArray.length; index += chunkSize) {
+                const chunk = idsArray.slice(index, index + chunkSize);
 
-                const {
-                    data: existingRows,
-                    error: existingError
-                } = await supabase
+                const { data: existingRows, error: existingError } = await supabase
                     .from('chats')
-                    .select(
-                        'id, tenant_id, service_id'
-                    )
-                    .eq(
-                        'project_id',
-                        targetProjectId
-                    )
-                    .eq(
-                        'service_id',
-                        effectiveServiceId
-                    )
-                    .in(
-                        'id',
-                        chunk
-                    );
+                    .select('*')
+                    .eq('project_id', targetProjectId)
+                    .eq('service_id', effectiveServiceId)
+                    .in('id', chunk);
 
                 if (existingError) {
                     throw existingError;
                 }
 
-                const foreignOwner =
-                    (existingRows || [])
-                        .find(
-                            (row: any) =>
-                                !row.tenant_id ||
-                                row.tenant_id !==
-                                    tenantId
+                for (const row of existingRows || []) {
+                    if (!row.tenant_id || row.tenant_id !== tenantId) {
+                        throw new Error(
+                            `[Tenant] syncChats detectó un chat histórico de otro tenant: ${row.id}. No se transfiere ownership.`
                         );
-
-                if (foreignOwner) {
-                    throw new Error(
-                        `[Tenant] syncChats detectó ` +
-                        `un chat histórico de otro tenant: ` +
-                        `${foreignOwner.id}. ` +
-                        `No se transfiere ownership.`
-                    );
+                    }
+                    dbExistingChats.set(row.id, row);
                 }
+            }
+
+            const chatsMap = new Map<string, any>();
+
+            for (const chat of chats) {
+                const rawId = String(chat.id || chat.phone || '').trim();
+                const cleanId = rawId.replace(/\D/g, '') || rawId;
+                if (!cleanId.trim()) continue;
+
+                const existingMem = chatsMap.get(cleanId);
+                const dbChat = dbExistingChats.get(cleanId);
+
+                const isInvalidName = (n: any) => {
+                    if (!n || n === '[-]' || String(n).trim() === '') return true;
+                    const cleanName = String(n).replace(/\D/g, '');
+                    return cleanName === cleanId;
+                };
+
+                let finalName = null;
+                if (!isInvalidName(chat.name)) {
+                    finalName = chat.name;
+                } else if (existingMem && !isInvalidName(existingMem.name)) {
+                    finalName = existingMem.name;
+                } else if (dbChat && !isInvalidName(dbChat.name)) {
+                    finalName = dbChat.name;
+                }
+
+                const finalMetadata =
+                    (chat.metadata && Object.keys(chat.metadata).length > 0)
+                        ? chat.metadata
+                        : (existingMem?.metadata && Object.keys(existingMem.metadata).length > 0)
+                            ? existingMem.metadata
+                            : dbChat?.metadata || {};
+
+                chatsMap.set(cleanId, {
+                    id: cleanId,
+                    tenant_id: tenantId,
+                    project_id: targetProjectId,
+                    service_id: effectiveServiceId,
+                    name: finalName,
+                    type: chat.type || 'whatsapp',
+                    last_message_at: chat.last_message_at || new Date().toISOString(),
+                    metadata: finalMetadata,
+                    is_lead: chat.is_lead !== undefined ? chat.is_lead : (existingMem?.is_lead ?? dbChat?.is_lead ?? false),
+                    bot_enabled: chat.bot_enabled !== undefined ? chat.bot_enabled : (existingMem?.bot_enabled ?? dbChat?.bot_enabled ?? true),
+                    assigned_agent: chat.assigned_agent || existingMem?.assigned_agent || dbChat?.assigned_agent || 'asistente1'
+                });
+            }
+
+            const chatsToUpsert = Array.from(chatsMap.values());
+
+            if (chatsToUpsert.length === 0) {
+                return { success: true, data: [] };
             }
 
             const {

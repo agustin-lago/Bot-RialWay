@@ -503,7 +503,7 @@ export const registerProviderEvents = (provider: any, isGroupProvider: boolean =
             
             const chatsToSync = contacts.map(c => ({
                 id: c.wa_id,
-                name: c.profile?.name || 'User',
+                name: c.profile?.name || null,
                 type: 'whatsapp',
                 last_message_at: new Date().toISOString(),
                 metadata: {

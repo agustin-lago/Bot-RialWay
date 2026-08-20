@@ -1916,7 +1916,7 @@ export const registerBackofficeRoutes = (app: any) => {
                     cleanId = cleanId.replace(/@c\.us$/, '');
 
                     // Intentar obtener el mejor nombre posible
-                    let name = c.notify || c.name || c.subject || c.verifiedName || cleanId;
+                    let name = c.notify || c.name || c.subject || c.verifiedName || null;
                     if (name === '[-]') name = null;
 
                     return {
