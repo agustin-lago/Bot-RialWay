@@ -5251,6 +5251,8 @@ Hemos recibido tu pago con Ã©xito.
                 docType = 'INSTRUCCIONES_API_ENVIO_RECEPCION.md';
             } else if (req.query.type === 'webhook') {
                 docType = 'INSTRUCCIONES_WEBHOOK.md';
+            } else if (req.query.type === 'connect' || req.query.type === 'connet' || req.query.type === 'api_connect') {
+                docType = 'INSTRUCCIONES_CONNECT.md';
             }
             const rootDir = process.cwd();
             const docsPath = path.join(rootDir, 'docs', docType);

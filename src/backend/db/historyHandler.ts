@@ -2915,12 +2915,13 @@ export class HistoryHandler {
 
             const { data: ticket, error: tError } = await supabase
                 .from('tickets')
-                .select('chat_id, project_id')
+                .select('chat_id, project_id, service_id')
                 .eq('id', ticketId)
                 .single();
 
             if (tError || !ticket) throw new Error('Ticket no encontrado');
             const currentProjectId = ticket.project_id || HistoryHandler.PROJECT_IDENTIFIER;
+            const currentServiceId = (ticket as any).service_id || details.service_id || null;
 
             const ticketUpdate: any = { updated_at: new Date().toISOString() };
             if (details.titulo !== undefined) ticketUpdate.titulo = details.titulo;
