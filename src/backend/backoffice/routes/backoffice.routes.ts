@@ -3223,10 +3223,21 @@ export const registerBackofficeRoutes = (app: any) => {
     });
 
 
-    app.post('/api/backoffice/whatsapp/send-bulk-template', async (req: any, res: any) => {
-        await syncMetaProvider(resolveProjectId(req), resolveServiceId(req));
-        return processBulkTemplate(req, res);
-    });
+    app.post(
+        '/api/backoffice/whatsapp/send-bulk-template',
+        backofficeAuth,
+        async (req: any, res: any) => {
+            const projectId = resolveProjectId(req);
+            const serviceId = resolveServiceId(req);
+
+            await syncMetaProvider(
+                projectId,
+                serviceId
+            );
+
+            return processBulkTemplate(req, res);
+        }
+    );
 
     app.post('/api/backoffice/whatsapp/send-single-template', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         const projectId = resolveProjectId(req);
@@ -3965,9 +3976,15 @@ export const registerBackofficeRoutes = (app: any) => {
                 return res.status(401).json({
                     success: false,
                     error:
-                        'La sesi�n manual de Meta es inv�lida o expir�.'
+                        'La sesión manual de Meta es inválida o expiró.'
                 });
             }
+
+            // Consumir la sesión SINCRÓNICAMENTE antes del primer await.
+            //
+            // De esta forma dos requests concurrentes no pueden utilizar
+            // el mismo token de sesión al mismo tiempo.
+            legacyMetaManualSessions.delete(sessionToken);
 
             const {
                 projectId,
@@ -4024,10 +4041,6 @@ export const registerBackofficeRoutes = (app: any) => {
                     );
                 }
 
-                // La sesi�n es de un solo uso.
-                legacyMetaManualSessions.delete(
-                    sessionToken
-                );
 
                 try {
                     await triggerMetaSync(
@@ -4037,8 +4050,8 @@ export const registerBackofficeRoutes = (app: any) => {
                 } catch (syncErr: any) {
                     console.warn(
                         '[SYNC-MANUAL-CALLBACK] ' +
-                        'Sincronizaci�n SMB fall� ' +
-                        '(no bloquea la vinculaci�n):',
+                        'Sincronización SMB falló ' +
+                        '(no bloquea la vinculación):',
                         syncErr.response?.data ||
                         syncErr.message
                     );
@@ -4047,7 +4060,7 @@ export const registerBackofficeRoutes = (app: any) => {
                 setTimeout(() => {
                     console.log(
                         '[SYSTEM] Reiniciando bot por ' +
-                        'vinculaci�n manual Meta...'
+                        'vinculación manual Meta...'
                     );
 
                     process.exit(1);
