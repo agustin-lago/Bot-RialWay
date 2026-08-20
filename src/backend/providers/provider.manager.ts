@@ -506,8 +506,13 @@ export const registerProviderEvents = (provider: any, isGroupProvider: boolean =
                 name: c.profile?.name || null,
                 type: 'whatsapp',
                 metadata: {
-                    user_id: c.user_id, // BSUID
-                    profile: c.profile
+                    ...(c.user_id
+                        ? { user_id: c.user_id }
+                        : {}),
+                    ...(c.profile &&
+                        typeof c.profile === 'object'
+                        ? { profile: c.profile }
+                        : {})
                 }
             }));
 

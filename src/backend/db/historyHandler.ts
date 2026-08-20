@@ -5430,6 +5430,57 @@ export class HistoryHandler {
                 }
             }
 
+            const isPlainMetadataObject = (value: any) =>
+                !!value &&
+                typeof value === 'object' &&
+                !Array.isArray(value);
+
+            const cleanMetadataObject = (value: any) => {
+                if (!isPlainMetadataObject(value)) {
+                    return {};
+                }
+
+                return Object.fromEntries(
+                    Object.entries(value).filter(
+                        ([, item]) =>
+                            item !== undefined &&
+                            item !== null
+                    )
+                );
+            };
+
+            const mergeMetadataSafely = (...sources: any[]) => {
+                const result: Record<string, any> = {};
+
+                for (const source of sources) {
+                    const cleanSource =
+                        cleanMetadataObject(source);
+
+                    for (const [key, value] of
+                        Object.entries(cleanSource)) {
+
+                        if (
+                            isPlainMetadataObject(value) &&
+                            isPlainMetadataObject(result[key])
+                        ) {
+                            result[key] = {
+                                ...cleanMetadataObject(result[key]),
+                                ...cleanMetadataObject(value)
+                            };
+                        } else if (
+                            isPlainMetadataObject(value)
+                        ) {
+                            result[key] =
+                                cleanMetadataObject(value);
+                        } else {
+                            result[key] = value;
+                        }
+                    }
+                }
+
+                return result;
+            };
+
             const chatsMap = new Map<string, any>();
 
             for (const chat of chats) {
@@ -5455,32 +5506,12 @@ export class HistoryHandler {
                     finalName = dbChat.name;
                 }
 
-                const dbMetadata =
-                    dbChat?.metadata &&
-                    typeof dbChat.metadata === 'object' &&
-                    !Array.isArray(dbChat.metadata)
-                        ? dbChat.metadata
-                        : {};
-
-                const memMetadata =
-                    existingMem?.metadata &&
-                    typeof existingMem.metadata === 'object' &&
-                    !Array.isArray(existingMem.metadata)
-                        ? existingMem.metadata
-                        : {};
-
-                const incomingMetadata =
-                    chat.metadata &&
-                    typeof chat.metadata === 'object' &&
-                    !Array.isArray(chat.metadata)
-                        ? chat.metadata
-                        : {};
-
-                const finalMetadata = {
-                    ...dbMetadata,
-                    ...memMetadata,
-                    ...incomingMetadata
-                };
+                const finalMetadata =
+                    mergeMetadataSafely(
+                        dbChat?.metadata,
+                        existingMem?.metadata,
+                        chat.metadata
+                    );
 
                 chatsMap.set(cleanId, {
                     id: cleanId,
