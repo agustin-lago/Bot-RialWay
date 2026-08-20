@@ -1,6 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import { execSync, exec } from 'child_process';
+import { randomBytes } from 'crypto';
 import url from 'url';
 import bodyParser from 'body-parser';
 import axios from 'axios';
@@ -221,6 +222,29 @@ const CACHE_TTL = 1000 * 60 * 60; // 1 hora
 // Negative cache: chatIds sin foto de perfil (evita llamadas repetidas a WhatsApp)
 const profilePicNotFound = new Map<string, number>();
 const NOT_FOUND_TTL = 1000 * 60 * 10; // 10 minutos
+
+interface LegacyMetaManualSession {
+    projectId: string;
+    serviceId: string | null;
+    accessToken: string;
+    expiresAt: number;
+}
+
+const legacyMetaManualSessions =
+    new Map<string, LegacyMetaManualSession>();
+
+const LEGACY_META_MANUAL_SESSION_TTL_MS =
+    10 * 60 * 1000;
+
+setInterval(() => {
+    const now = Date.now();
+
+    for (const [token, session] of legacyMetaManualSessions.entries()) {
+        if (session.expiresAt <= now) {
+            legacyMetaManualSessions.delete(token);
+        }
+    }
+}, 60 * 1000);
 
 /**
  * Registra las rutas del backoffice en la instancia de Polka.
@@ -2719,11 +2743,13 @@ export const registerBackofficeRoutes = (app: any) => {
     });
 
     app.post('/api/backoffice/whatsapp/sync-manual', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
-        const { token: manualToken, wabaId, phoneNumberId, projectId: bodyProjectId } = req.body;
+        const { token: manualToken, wabaId, phoneNumberId } = req.body;
         if (!manualToken) return res.status(400).json({ success: false, error: 'Token is required' });
 
         try {
-            const projectId = bodyProjectId || resolveProjectId(req) || process.env.RAILWAY_PROJECT_ID;
+            const projectId =
+                resolveProjectId(req) ||
+                depsHistoryHandler.PROJECT_IDENTIFIER;
             const serviceId = resolveServiceId(req);
             let finalWabaId = wabaId;
             let finalPhoneId = phoneNumberId;
@@ -3704,7 +3730,7 @@ export const registerBackofficeRoutes = (app: any) => {
 
             // 3. VerificaciÃ³n de resultados y depuraciÃ³n de scopes si fallÃ³ todo
             if (!discovery.found && !pageDiscovery) {
-                console.warn('âš ï¸ [CALLBACK] No se pudo descubrir ningÃºn recurso automÃ¡ticamente.');
+                console.warn('⚠️ [CALLBACK] No se pudo descubrir ningún recurso automáticamente.');
 
                 const diagHtml = discovery.diagnostics.map(d => `
                     <div style="margin-bottom: 15px; border-bottom: 1px solid #edf2f7; padding-bottom: 10px;">
@@ -3721,6 +3747,21 @@ export const registerBackofficeRoutes = (app: any) => {
                         ${d.fbtrace_id ? `<p style="font-size: 10px; color: #a0aec0;">fbtrace_id: ${d.fbtrace_id}</p>` : ''}
                     </div>
                 `).join('');
+
+                const manualSessionToken =
+                    randomBytes(32).toString('hex');
+
+                legacyMetaManualSessions.set(
+                    manualSessionToken,
+                    {
+                        projectId,
+                        serviceId,
+                        accessToken,
+                        expiresAt:
+                            Date.now() +
+                            LEGACY_META_MANUAL_SESSION_TTL_MS
+                    }
+                );
 
                 const htmlError = `
                     <div style="font-family: sans-serif; padding: 40px; color: #2d3748; max-width: 800px; margin: 0 auto; line-height: 1.6; background: #f7fafc; min-height: 100vh;">
@@ -3764,9 +3805,8 @@ export const registerBackofficeRoutes = (app: any) => {
                         </div>
 
                         <script>
-                            const projectId = "${projectId}";
-                            const serviceId = "${serviceId}";
-                            const accessToken = "${accessToken}";
+                            const manualSession =
+                                "${manualSessionToken}";
 
                             function toggleLogs() {
                                 const section = document.getElementById('logSection');
@@ -3782,17 +3822,20 @@ export const registerBackofficeRoutes = (app: any) => {
                                 document.getElementById('btnSaveManual').disabled = true;
 
                                 try {
-                                    const res = await fetch('/api/backoffice/whatsapp/sync-manual', {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({
-                                            token: accessToken,
-                                            wabaId: waba,
-                                            phoneNumberId: phone,
-                                            projectId: projectId,
-                                            serviceId: serviceId
-                                        })
-                                    });
+                                    const res = await fetch(
+                                        '/api/backoffice/whatsapp/sync-manual-callback',
+                                        {
+                                            method: 'POST',
+                                            headers: {
+                                                'Content-Type': 'application/json'
+                                            },
+                                            body: JSON.stringify({
+                                                session: manualSession,
+                                                wabaId: waba,
+                                                phoneNumberId: phone
+                                            })
+                                        }
+                                    );
                                     const data = await res.json();
                                     if (data.success) {
                                         window.location.href = window.location.origin + "/dashboard.html?metaStatus=success";
@@ -3891,39 +3934,147 @@ export const registerBackofficeRoutes = (app: any) => {
      * Endpoint para vinculaciÃ³n manual de IDs si el auto-descubrimiento fallÃ³.
      * TambiÃ©n dispara la sincronizaciÃ³n SMB automÃ¡tica.
      */
-    app.post('/api/backoffice/whatsapp/sync-manual', bodyParser.json(), async (req: any, res: any) => {
-        const { token, wabaId, phoneNumberId, projectId, serviceId: bodyServiceId } = req.body;
-        if (!token || !wabaId || !phoneNumberId) {
-            return res.status(400).json({ success: false, error: 'Faltan campos obligatorios' });
-        }
-        const serviceId = bodyServiceId || resolveServiceId(req) || 'default_service';
+    app.post(
+        '/api/backoffice/whatsapp/sync-manual-callback',
+        bodyParser.json(),
+        async (req: any, res: any) => {
+            const {
+                session,
+                wabaId,
+                phoneNumberId
+            } = req.body || {};
 
-        try {
-            console.log(`📡 [SYNC-MANUAL] Vinculando manualmente para Proyecto: ${projectId}, Servicio: ${serviceId}`);
-            await depsHistoryHandler.saveMetaOnboardingData(wabaId, phoneNumberId, token, { manual: true }, projectId, serviceId);
-
-            // Disparar sincronizaciÃ³n SMB
-            try {
-                await triggerMetaSync(token, phoneNumberId);
-            } catch (syncErr: any) {
-                console.warn('âš ï¸ [SYNC-MANUAL] SincronizaciÃ³n automÃ¡tica manual fallÃ³ (omitiendo para no bloquear la vinculaciÃ³n):', syncErr.response?.data || syncErr.message);
+            if (!session || !wabaId || !phoneNumberId) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Faltan campos obligatorios'
+                });
             }
 
-            // Programar reinicio
-            setTimeout(() => {
-                console.log('ðŸ”„ [SYSTEM] Reiniciando bot por vinculaciÃ³n manual...');
-                process.exit(1);
-            }, 3000);
+            const sessionToken = String(session);
 
-            res.json({ success: true });
-        } catch (error: any) {
-            console.error('âŒ [SYNC-MANUAL] Error:', error);
-            res.status(500).json({ success: false, error: error.message });
+            const manualSession =
+                legacyMetaManualSessions.get(sessionToken);
+
+            if (
+                !manualSession ||
+                manualSession.expiresAt <= Date.now()
+            ) {
+                legacyMetaManualSessions.delete(sessionToken);
+
+                return res.status(401).json({
+                    success: false,
+                    error:
+                        'La sesi�n manual de Meta es inv�lida o expir�.'
+                });
+            }
+
+            const {
+                projectId,
+                serviceId,
+                accessToken
+            } = manualSession;
+
+            try {
+                const tenantResolution =
+                    await depsHistoryHandler.resolveTenantIdByProjectId(
+                        projectId
+                    );
+
+                if (
+                    !tenantResolution.resolved ||
+                    tenantResolution.globalScope ||
+                    !tenantResolution.tenantId
+                ) {
+                    legacyMetaManualSessions.delete(
+                        sessionToken
+                    );
+
+                    return res.status(403).json({
+                        success: false,
+                        error:
+                            'No se pudo resolver el tenant propietario del proyecto.'
+                    });
+                }
+
+                console.log(
+                    `[SYNC-MANUAL-CALLBACK] Vinculando Meta ` +
+                    `para Proyecto: ${projectId}, ` +
+                    `Servicio: ${serviceId}`
+                );
+
+                const saveResult =
+                    await depsHistoryHandler.saveMetaOnboardingData(
+                        wabaId,
+                        phoneNumberId,
+                        accessToken,
+                        {
+                            manual: true,
+                            syncedBy:
+                                'legacy-manual-callback'
+                        },
+                        projectId,
+                        serviceId
+                    );
+
+                if (!saveResult?.success) {
+                    throw new Error(
+                        saveResult?.error ||
+                        'No se pudo guardar Meta onboarding.'
+                    );
+                }
+
+                // La sesi�n es de un solo uso.
+                legacyMetaManualSessions.delete(
+                    sessionToken
+                );
+
+                try {
+                    await triggerMetaSync(
+                        accessToken,
+                        phoneNumberId
+                    );
+                } catch (syncErr: any) {
+                    console.warn(
+                        '[SYNC-MANUAL-CALLBACK] ' +
+                        'Sincronizaci�n SMB fall� ' +
+                        '(no bloquea la vinculaci�n):',
+                        syncErr.response?.data ||
+                        syncErr.message
+                    );
+                }
+
+                setTimeout(() => {
+                    console.log(
+                        '[SYSTEM] Reiniciando bot por ' +
+                        'vinculaci�n manual Meta...'
+                    );
+
+                    process.exit(1);
+                }, 3000);
+
+                return res.json({
+                    success: true
+                });
+            } catch (error: any) {
+                console.error(
+                    '[SYNC-MANUAL-CALLBACK] Error:',
+                    error
+                );
+
+                return res.status(500).json({
+                    success: false,
+                    error: error.message
+                });
+            }
         }
-    });
+    );
+
 
     app.post('/api/backoffice/whatsapp/sync-ids', backofficeAuth, async (req: any, res: any) => {
-        const projectId = resolveProjectId(req) || (req.query.projectId as string) || process.env.RAILWAY_PROJECT_ID || 'default';
+        const projectId =
+            resolveProjectId(req) ||
+            depsHistoryHandler.PROJECT_IDENTIFIER;
         const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
         console.log(`ðŸ”„ [SYNC-IDS] Iniciando sincronizacion para proyecto: ${projectId}, servicio: ${serviceId}`);
         try {
@@ -3978,7 +4129,9 @@ export const registerBackofficeRoutes = (app: any) => {
     });
 
     app.post('/api/backoffice/whatsapp/unlink-meta', backofficeAuth, async (req: any, res: any) => {
-        const projectId = resolveProjectId(req) || req.query.projectId || process.env.RAILWAY_PROJECT_ID || "default";
+        const projectId =
+            resolveProjectId(req) ||
+            depsHistoryHandler.PROJECT_IDENTIFIER;
         const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
         console.log(`ðŸ“¡ [UNLINK-META] Iniciando desvinculaciÃ³n de Meta para Proyecto: ${projectId}, Servicio: ${serviceId}`);
         try {
