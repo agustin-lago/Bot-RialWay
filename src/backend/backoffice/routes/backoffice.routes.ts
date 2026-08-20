@@ -1923,10 +1923,11 @@ export const registerBackofficeRoutes = (app: any) => {
                         id: cleanId,
                         name,
                         type: isGroup ? 'group' : 'whatsapp',
-                        is_lead: false,
                         last_message_at: c.conversationTimestamp
-                            ? new Date(c.conversationTimestamp * 1000).toISOString()
-                            : new Date().toISOString()
+                            ? new Date(
+                                c.conversationTimestamp * 1000
+                            ).toISOString()
+                            : undefined
                     };
                 });
 

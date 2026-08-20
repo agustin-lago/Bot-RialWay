@@ -505,7 +505,6 @@ export const registerProviderEvents = (provider: any, isGroupProvider: boolean =
                 id: c.wa_id,
                 name: c.profile?.name || null,
                 type: 'whatsapp',
-                last_message_at: new Date().toISOString(),
                 metadata: {
                     user_id: c.user_id, // BSUID
                     profile: c.profile

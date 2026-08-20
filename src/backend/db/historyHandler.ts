@@ -5455,12 +5455,32 @@ export class HistoryHandler {
                     finalName = dbChat.name;
                 }
 
-                const finalMetadata =
-                    (chat.metadata && Object.keys(chat.metadata).length > 0)
+                const dbMetadata =
+                    dbChat?.metadata &&
+                    typeof dbChat.metadata === 'object' &&
+                    !Array.isArray(dbChat.metadata)
+                        ? dbChat.metadata
+                        : {};
+
+                const memMetadata =
+                    existingMem?.metadata &&
+                    typeof existingMem.metadata === 'object' &&
+                    !Array.isArray(existingMem.metadata)
+                        ? existingMem.metadata
+                        : {};
+
+                const incomingMetadata =
+                    chat.metadata &&
+                    typeof chat.metadata === 'object' &&
+                    !Array.isArray(chat.metadata)
                         ? chat.metadata
-                        : (existingMem?.metadata && Object.keys(existingMem.metadata).length > 0)
-                            ? existingMem.metadata
-                            : dbChat?.metadata || {};
+                        : {};
+
+                const finalMetadata = {
+                    ...dbMetadata,
+                    ...memMetadata,
+                    ...incomingMetadata
+                };
 
                 chatsMap.set(cleanId, {
                     id: cleanId,
@@ -5468,8 +5488,16 @@ export class HistoryHandler {
                     project_id: targetProjectId,
                     service_id: effectiveServiceId,
                     name: finalName,
-                    type: chat.type || 'whatsapp',
-                    last_message_at: chat.last_message_at || new Date().toISOString(),
+                    type:
+                        chat.type ||
+                        existingMem?.type ||
+                        dbChat?.type ||
+                        'whatsapp',
+                    last_message_at:
+                        chat.last_message_at ||
+                        existingMem?.last_message_at ||
+                        dbChat?.last_message_at ||
+                        new Date().toISOString(),
                     metadata: finalMetadata,
                     is_lead: chat.is_lead !== undefined ? chat.is_lead : (existingMem?.is_lead ?? dbChat?.is_lead ?? false),
                     bot_enabled: chat.bot_enabled !== undefined ? chat.bot_enabled : (existingMem?.bot_enabled ?? dbChat?.bot_enabled ?? true),
