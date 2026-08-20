@@ -138,6 +138,7 @@ const PROJECT_NAME = process.env.RAILWAY_SERVICE_NAME || "Bot-RialWay";
 
 export interface Chat {
     id: string; // WAID (Teléfono) o identificador de Webchat
+    tenant_id?: string | null;
     user_id?: string | null; // BSUID (Meta Business-Scoped User ID)
     project_id: string;
     type: 'whatsapp' | 'webchat' | 'instagram' | 'messenger';
@@ -247,11 +248,27 @@ export class HistoryHandler {
         return tenantResolution.tenantId;
     }
 
-    private static invalidateChatCache(rawChatId: string, projectId?: string) {
+    private static invalidateChatCache(
+        rawChatId: string,
+        projectId?: string
+    ) {
         const chatId = this.normalizeId(rawChatId);
-        const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
-        const cacheKey = `${currentProjectId}:${chatId}`;
-        this.chatCache.delete(cacheKey);
+        const currentProjectId =
+            projectId || this.PROJECT_IDENTIFIER;
+
+        for (const key of this.chatCache.keys()) {
+            const belongsToProject =
+                key.startsWith(`${currentProjectId}:`) ||
+                key.includes(`:${currentProjectId}:`);
+
+            const belongsToChat =
+                key === `${currentProjectId}:${chatId}` ||
+                key.endsWith(`:${chatId}`);
+
+            if (belongsToProject && belongsToChat) {
+                this.chatCache.delete(key);
+            }
+        }
     }
 
     static getSupabase() {
@@ -989,45 +1006,130 @@ export class HistoryHandler {
     /**
      * Obtiene los detalles completos de un chat, incluyendo etiquetas
      */
-    static async getChat(rawChatId: string, forcedProjectId?: string, forcedServiceId?: string): Promise<any | null> {
+    static async getChat(
+        rawChatId: string,
+        forcedProjectId?: string,
+        forcedServiceId?: string
+    ): Promise<any | null> {
         const chatId = this.normalizeId(rawChatId);
-        const currentProjectId = forcedProjectId || this.PROJECT_IDENTIFIER;
-        const currentServiceId = forcedServiceId || this.SERVICE_IDENTIFIER;
-        if (process.env.STORAGE_MODE === "local") {
-            return LocalHistoryStore.getChat(chatId, currentProjectId);
-        }
-        const cacheKey = `${currentProjectId}:${currentServiceId}:${chatId}`;
-        const now = Date.now();
 
-        // 1. Intentar obtener desde cache en memoria
-        const cached = this.chatCache.get(cacheKey);
-        if (cached && (now - cached.timestamp < this.CHAT_CACHE_TTL_MS)) {
-            return cached.data;
+        const currentProjectId =
+            forcedProjectId ||
+            this.PROJECT_IDENTIFIER;
+
+        const currentServiceId =
+            forcedServiceId ||
+            this.SERVICE_IDENTIFIER;
+
+        if (process.env.STORAGE_MODE === 'local') {
+            return LocalHistoryStore.getChat(
+                chatId,
+                currentProjectId
+            );
         }
 
         try {
+            const tenantId =
+                await this.requireTenantIdByProjectId(
+                    currentProjectId,
+                    `getChat(${chatId})`
+                );
+
+            const cacheKey =
+                `${tenantId}:` +
+                `${currentProjectId}:` +
+                `${currentServiceId}:` +
+                `${chatId}`;
+
+            const now = Date.now();
+
+            const cached =
+                this.chatCache.get(cacheKey);
+
+            if (
+                cached &&
+                (
+                    now - cached.timestamp <
+                    this.CHAT_CACHE_TTL_MS
+                )
+            ) {
+                return cached.data;
+            }
+
             let query = supabase
                 .from('chats')
-                .select('*, chat_tags(tag_id, tags(*))')
+                .select(
+                    '*, ' +
+                    'chat_tags(' +
+                        'tag_id, ' +
+                        'tenant_id, ' +
+                        'tags(*)' +
+                    ')'
+                )
                 .eq('id', chatId)
-                .eq('project_id', currentProjectId);
+                .eq('tenant_id', tenantId)
+                .eq(
+                    'project_id',
+                    currentProjectId
+                );
 
-            if (currentServiceId && currentServiceId !== 'default_service') {
-                query = query.eq('service_id', currentServiceId);
+            if (
+                currentServiceId &&
+                currentServiceId !== 'default' &&
+                currentServiceId !==
+                    'default_service'
+            ) {
+                query =
+                    query.eq(
+                        'service_id',
+                        currentServiceId
+                    );
             }
 
-            const { data, error } = await query.maybeSingle();
+            const {
+                data,
+                error
+            } = await query.maybeSingle();
 
             if (error) throw error;
+
             if (data) {
-                data.tags = data.chat_tags ? data.chat_tags.map((ct: any) => ct.tags).filter((t: any) => t !== null) : [];
+                const ownedChatTags =
+                    (data.chat_tags || [])
+                        .filter(
+                            (ct: any) =>
+                                ct?.tenant_id ===
+                                    tenantId &&
+                                ct?.tags?.tenant_id ===
+                                    tenantId
+                        );
+
+                data.chat_tags = ownedChatTags;
+
+                data.tags =
+                    ownedChatTags
+                        .map(
+                            (ct: any) =>
+                                ct.tags
+                        )
+                        .filter(Boolean);
             }
 
-            // 2. Guardar en cache antes de retornar
-            this.chatCache.set(cacheKey, { data, timestamp: now });
+            this.chatCache.set(
+                cacheKey,
+                {
+                    data,
+                    timestamp: now
+                }
+            );
+
             return data;
         } catch (err) {
-            console.error('[HistoryHandler] Error en getChat:', err);
+            console.error(
+                '[HistoryHandler] Error en getChat:',
+                err
+            );
+
             return null;
         }
     }
@@ -1094,6 +1196,12 @@ export class HistoryHandler {
         if (name === '[-]') name = null;
 
         try {
+            const tenantId =
+                await this.requireTenantIdByProjectId(
+                    currentProjectId,
+                    `getOrCreateChat(${chatId})`
+                );
+
             let data: Chat | null = null;
             let error: any = null;
 
@@ -1103,6 +1211,7 @@ export class HistoryHandler {
                     .from('chats')
                     .select('*')
                     .eq('user_id', userId)
+                    .eq('tenant_id', tenantId)
                     .eq('project_id', currentProjectId);
 
                 if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
@@ -1121,6 +1230,7 @@ export class HistoryHandler {
                     .from('chats')
                     .select('*')
                     .eq('id', chatId)
+                    .eq('tenant_id', tenantId)
                     .eq('project_id', currentProjectId);
 
                 if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
@@ -1139,6 +1249,7 @@ export class HistoryHandler {
                     let updateQuery = supabase.from('chats')
                         .update({ user_id: userId })
                         .eq('id', chatId)
+                        .eq('tenant_id', tenantId)
                         .eq('project_id', currentProjectId);
 
                     if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
@@ -1154,8 +1265,60 @@ export class HistoryHandler {
             if (!data) {
                 this.invalidateChatCache(chatId, currentProjectId);
                 const isBlacklisted = await this.isContactBlacklisted(chatId, currentProjectId, currentServiceId);
+
+                let conflictQuery = supabase
+                    .from('chats')
+                    .select(
+                        'id, tenant_id, service_id'
+                    )
+                    .eq('id', chatId)
+                    .eq(
+                        'project_id',
+                        currentProjectId
+                    );
+
+                if (
+                    isScopedServiceId(
+                        currentServiceId
+                    )
+                ) {
+                    conflictQuery =
+                        conflictQuery.eq(
+                            'service_id',
+                            currentServiceId
+                        );
+                }
+
+                const {
+                    data: conflictingRows,
+                    error: conflictError
+                } = await conflictQuery.limit(10);
+
+                if (conflictError) {
+                    throw conflictError;
+                }
+
+                const foreignOwner =
+                    (conflictingRows || [])
+                        .find(
+                            (row: any) =>
+                                !row.tenant_id ||
+                                row.tenant_id !==
+                                    tenantId
+                        );
+
+                if (foreignOwner) {
+                    throw new Error(
+                        `[Tenant] Conflicto histórico: ` +
+                        `el chat ${chatId} del proyecto ` +
+                        `${currentProjectId} pertenece a ` +
+                        `otro tenant. No se transfiere ownership.`
+                    );
+                }
+
                 const insertData: any = {
                     id: chatId,
+                    tenant_id: tenantId,
                     user_id: userId,
                     project_id: currentProjectId,
                     type,
@@ -1188,6 +1351,7 @@ export class HistoryHandler {
                 let updateQuery = supabase.from('chats')
                     .update({ name })
                     .eq('id', chatId)
+                    .eq('tenant_id', tenantId)
                     .eq('project_id', currentProjectId);
 
                 if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
@@ -1244,6 +1408,12 @@ export class HistoryHandler {
         }
         if (contactName === '[-]') contactName = null;
         try {
+            const tenantId =
+                await this.requireTenantIdByProjectId(
+                    currentProjectId,
+                    `saveMessage(${chatId})`
+                );
+
             // Lógica de resolución de plataforma mejorada
             let resolvedPlatform: 'whatsapp' | 'webchat' | 'instagram' | 'messenger' = platformType || 'whatsapp';
 
@@ -1261,8 +1431,16 @@ export class HistoryHandler {
             // Asegurar que el chat existe
             const chatObj = await this.getOrCreateChat(chatId, resolvedPlatform, contactName, userId, currentProjectId, currentServiceId);
 
+            if (!chatObj) {
+                throw new Error(
+                    `[Tenant] No se pudo obtener un chat válido ` +
+                    `para ${chatId} en ${currentProjectId}`
+                );
+            }
+
             const msgData: any = {
                 chat_id: chatId,
+                tenant_id: tenantId,
                 project_id: currentProjectId,
                 role,
                 content,
@@ -1952,41 +2130,86 @@ export class HistoryHandler {
     /**
      * Asegura que un tag exista para un proyecto/tenant y devuelve su ID.
      */
-    static async ensureTagExists(tagName: string, projectId: string): Promise<string | null> {
+    static async ensureTagExists(
+        tagName: string,
+        projectId: string
+    ): Promise<string | null> {
         try {
-            const tenantId = await this.requireTenantIdByProjectId(
-                projectId,
-                `ensureTagExists(${tagName})`
-            );
+            const tenantId =
+                await this.requireTenantIdByProjectId(
+                    projectId,
+                    `ensureTagExists(${tagName})`
+                );
 
-            // 1. Buscar únicamente dentro del owner correcto.
-            const { data: existingTag, error: existingError } = await supabase
+            const currentServiceId =
+                HistoryHandler.SERVICE_IDENTIFIER;
+
+            let existingQuery = supabase
                 .from('tags')
-                .select('id')
+                .select('id, created_at')
                 .eq('tenant_id', tenantId)
                 .eq('project_id', projectId)
-                .eq('name', tagName)
+                .eq('name', tagName);
+
+            if (isScopedServiceId(currentServiceId)) {
+                existingQuery =
+                    existingQuery.eq(
+                        'service_id',
+                        currentServiceId
+                    );
+            } else {
+                existingQuery =
+                    existingQuery.or(
+                        'service_id.is.null,' +
+                        'service_id.eq.default,' +
+                        'service_id.eq.default_service'
+                    );
+            }
+
+            // Puede existir más de un tag histórico con el mismo nombre.
+            // Tomar uno canónico de forma determinística.
+            const {
+                data: existingTag,
+                error: existingError
+            } = await existingQuery
+                .order('created_at', {
+                    ascending: true
+                })
+                .limit(1)
                 .maybeSingle();
 
-            if (existingError) throw existingError;
-            if (existingTag) return existingTag.id;
+            if (existingError) {
+                throw existingError;
+            }
 
-            // 2. Si no existe, crearlo SIEMPRE con tenant_id.
-            const { data: newTag, error } = await supabase
+            if (existingTag) {
+                return existingTag.id;
+            }
+
+            const {
+                data: newTag,
+                error
+            } = await supabase
                 .from('tags')
                 .insert({
                     tenant_id: tenantId,
                     project_id: projectId,
-                    service_id: HistoryHandler.SERVICE_IDENTIFIER,
+                    service_id:
+                        currentServiceId,
                     name: tagName
                 })
                 .select('id')
                 .single();
 
             if (error) throw error;
+
             return newTag.id;
         } catch (err) {
-            console.error(`❌ [HistoryHandler] Error en ensureTagExists (${tagName}):`, err);
+            console.error(
+                `❌ [HistoryHandler] Error en ensureTagExists (${tagName}):`,
+                err
+            );
+
             return null;
         }
     }
@@ -2315,15 +2538,46 @@ export class HistoryHandler {
             const res = await LocalHistoryStore.listChats(limit, offset, search, tagId, assignedTo, platform, currentProjectId);
             return res.data;
         }
+
+        let tenantId: string;
+
+        try {
+            tenantId =
+                await this.requireTenantIdByProjectId(
+                    currentProjectId,
+                    'listChats'
+                );
+        } catch (err) {
+            console.error(
+                '[HistoryHandler] Error resolviendo tenant en listChats:',
+                err
+            );
+
+            return [];
+        }
+
         for (let _attempt = 0; _attempt < 2; _attempt++) {
             try {
                 let matchingChatIds: string[] | null = null;
                 if (tagId) {
-                    const { data: taggedEntries, error: tagErr } = await supabase
+                    const {
+                        data: taggedEntries,
+                        error: tagErr
+                    } = await supabase
                         .from('chat_tags')
                         .select('chat_id')
-                        .eq('project_id', currentProjectId)
-                        .eq('tag_id', tagId);
+                        .eq(
+                            'tenant_id',
+                            tenantId
+                        )
+                        .eq(
+                            'project_id',
+                            currentProjectId
+                        )
+                        .eq(
+                            'tag_id',
+                            tagId
+                        );
 
                     if (tagErr) throw tagErr;
                     matchingChatIds = (taggedEntries || []).map((te: any) => te.chat_id);
@@ -2332,7 +2586,13 @@ export class HistoryHandler {
                     }
                 }
 
-                const selectString = 'id, type, name, last_message_at, last_human_message_at, assigned_to, bot_enabled, crm_status, crm_due_date, notes, email, source, is_lead, cuit_dni, tax_status, address, offered_product, unread_count, chat_tags(tag_id, tags(*))';
+                const selectString =
+                    'id, tenant_id, type, name, last_message_at, ' +
+                    'last_human_message_at, assigned_to, bot_enabled, ' +
+                    'crm_status, crm_due_date, notes, email, source, ' +
+                    'is_lead, cuit_dni, tax_status, address, ' +
+                    'offered_product, unread_count, ' +
+                    'chat_tags(tag_id, tenant_id, tags(*))';
 
                 let query = supabase
                     .from('chats')
@@ -2340,6 +2600,10 @@ export class HistoryHandler {
 
                 // Filtrar por project_id y service_id para correcta segregación multi-servicio
                 query = query.eq('project_id', currentProjectId);
+                query = query.eq(
+                    'tenant_id',
+                    tenantId
+                );
                 // Prefer explicitly passed serviceId, then fall back to process.env
                 const currentServiceId = serviceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || this.SERVICE_IDENTIFIER;
                 if (currentServiceId && currentServiceId !== 'default_service') {
@@ -2379,10 +2643,33 @@ export class HistoryHandler {
 
                 if (error) throw error;
 
-                let finalChats = (data || []).map((chat: any) => ({
-                    ...chat,
-                    tags: chat.chat_tags ? chat.chat_tags.map((ct: any) => ct.tags).filter((t: any) => t !== null) : []
-                }));
+                let finalChats =
+                    (data || []).map(
+                        (chat: any) => {
+                            const ownedChatTags =
+                                (chat.chat_tags || [])
+                                    .filter(
+                                        (ct: any) =>
+                                            ct?.tenant_id ===
+                                                tenantId &&
+                                            ct?.tags?.tenant_id ===
+                                                tenantId
+                                    );
+
+                            return {
+                                ...chat,
+                                chat_tags:
+                                    ownedChatTags,
+                                tags:
+                                    ownedChatTags
+                                        .map(
+                                            (ct: any) =>
+                                                ct.tags
+                                        )
+                                        .filter(Boolean)
+                            };
+                        }
+                    );
 
                 // --- LÓGICA DE ANCLAJE (PINNED CHATS) ---
                 // Solo si estamos en la primera página (offset === 0) y no hay filtros o búsquedas activas
@@ -2415,14 +2702,35 @@ export class HistoryHandler {
                             const { data: missingGroups } = await supabase
                                 .from('chats')
                                 .select(selectString)
-                                .eq('project_id', this.PROJECT_IDENTIFIER)
-                                .in('id', missingGroupIds);
+                                .eq(
+                                    'project_id',
+                                    currentProjectId
+                                )
+                                .eq(
+                                    'tenant_id',
+                                    tenantId
+                                )
+                                .in(
+                                    'id',
+                                    missingGroupIds
+                                );
 
                             if (missingGroups && missingGroups.length > 0) {
                                 missingGroups.forEach((g: any) => {
+                                    const ownedChatTags =
+                                        (g.chat_tags || [])
+                                            .filter(
+                                                (ct: any) =>
+                                                    ct?.tenant_id === tenantId &&
+                                                    ct?.tags?.tenant_id === tenantId
+                                            );
+
                                     pinnedChats.push({
                                         ...g,
-                                        tags: g.chat_tags ? g.chat_tags.map((ct: any) => ct.tags).filter((t: any) => t !== null) : [],
+                                        chat_tags: ownedChatTags,
+                                        tags: ownedChatTags
+                                            .map((ct: any) => ct.tags)
+                                            .filter(Boolean),
                                         isPinned: true
                                     });
                                 });
@@ -2480,38 +2788,118 @@ export class HistoryHandler {
     /**
      * Obtiene los mensajes de un chat específico
      */
-    static async getMessages(rawChatId: string, limit: number = 50, offset: number = 0, projectId: string | null = null, serviceId: string | null = null) {
-        const chatId = this.normalizeId(rawChatId);
-        const targetProjectId = projectId || HistoryHandler.PROJECT_IDENTIFIER;
-        const currentServiceId = serviceId || process.env.SERVICE_ID || process.env.RAILWAY_SERVICE_ID || this.SERVICE_IDENTIFIER;
-        if (process.env.STORAGE_MODE === "local") {
-            const msgs = await LocalHistoryStore.getMessages(chatId, limit, offset, targetProjectId, currentServiceId);
+    static async getMessages(
+        rawChatId: string,
+        limit: number = 50,
+        offset: number = 0,
+        projectId: string | null = null,
+        serviceId: string | null = null
+    ) {
+        const chatId =
+            this.normalizeId(rawChatId);
+
+        const targetProjectId =
+            projectId ||
+            HistoryHandler.PROJECT_IDENTIFIER;
+
+        const currentServiceId =
+            serviceId ||
+            process.env.SERVICE_ID ||
+            process.env.RAILWAY_SERVICE_ID ||
+            this.SERVICE_IDENTIFIER;
+
+        if (process.env.STORAGE_MODE === 'local') {
+            const msgs =
+                await LocalHistoryStore.getMessages(
+                    chatId,
+                    limit,
+                    offset,
+                    targetProjectId,
+                    currentServiceId
+                );
+
             return msgs.reverse();
         }
+
         try {
+            const tenantId =
+                await this.requireTenantIdByProjectId(
+                    targetProjectId,
+                    `getMessages(${chatId})`
+                );
+
             let query = supabase
                 .from('messages')
                 .select('*')
-                .in('chat_id', [chatId, `${chatId}@s.whatsapp.net`, `${chatId}@c.us`])
-                .eq('project_id', targetProjectId);
+                .in(
+                    'chat_id',
+                    [
+                        chatId,
+                        `${chatId}@s.whatsapp.net`,
+                        `${chatId}@c.us`
+                    ]
+                )
+                .eq('tenant_id', tenantId)
+                .eq(
+                    'project_id',
+                    targetProjectId
+                );
 
-            if (currentServiceId && currentServiceId !== 'default_service') {
-                if (currentServiceId.includes(',')) {
-                    const servicesList = currentServiceId.split(',').map(s => s.trim()).filter(Boolean);
-                    query = query.in('service_id', servicesList);
+            if (
+                currentServiceId &&
+                currentServiceId !==
+                    'default_service'
+            ) {
+                if (
+                    currentServiceId.includes(',')
+                ) {
+                    const servicesList =
+                        currentServiceId
+                            .split(',')
+                            .map(
+                                service =>
+                                    service.trim()
+                            )
+                            .filter(Boolean);
+
+                    query =
+                        query.in(
+                            'service_id',
+                            servicesList
+                        );
                 } else {
-                    query = query.eq('service_id', currentServiceId);
+                    query =
+                        query.eq(
+                            'service_id',
+                            currentServiceId
+                        );
                 }
             }
 
-            const { data, error } = await query
-                .order('created_at', { ascending: false })
-                .range(offset, offset + limit - 1);
+            const {
+                data,
+                error
+            } = await query
+                .order(
+                    'created_at',
+                    {
+                        ascending: false
+                    }
+                )
+                .range(
+                    offset,
+                    offset + limit - 1
+                );
 
             if (error) throw error;
+
             return (data || []).reverse();
         } catch (err) {
-            console.error('[HistoryHandler] Error en getMessages:', err);
+            console.error(
+                '[HistoryHandler] Error en getMessages:',
+                err
+            );
+
             return [];
         }
     }
@@ -4868,16 +5256,29 @@ export class HistoryHandler {
 
             const { data: existingRows, error: existingError } = await supabase
                 .from('tags')
-                .select('id, name')
+                .select('id, name, created_at')
                 .eq('tenant_id', tenantId)
-                .eq('project_id', targetProjectId);
+                .eq('project_id', targetProjectId)
+                .order('created_at', {
+                    ascending: true
+                });
 
             if (existingError) throw existingError;
 
             const existingByName = new Map<string, string>();
 
             for (const row of existingRows || []) {
-                existingByName.set(String(row.name), row.id);
+                const tagName =
+                    String(row.name);
+
+                // Si existen duplicados históricos,
+                // conservar como canónico el más antiguo.
+                if (!existingByName.has(tagName)) {
+                    existingByName.set(
+                        tagName,
+                        row.id
+                    );
+                }
             }
 
             // Evitar que el mismo tag aparezca dos veces dentro del mismo UPSERT.
@@ -4949,53 +5350,233 @@ export class HistoryHandler {
     /**
      * Sincronización masiva de contactos (chats)
      */
-    static async syncChats(chats: any[], forcedProjectId?: string, forcedServiceId?: string | null) {
-        if (!supabase) return { success: false, error: 'Supabase not initialized' };
-        const targetProjectId = forcedProjectId || HistoryHandler.PROJECT_IDENTIFIER;
-        const targetServiceId = forcedServiceId || HistoryHandler.SERVICE_IDENTIFIER;
+    static async syncChats(
+        chats: any[],
+        forcedProjectId?: string,
+        forcedServiceId?: string | null
+    ) {
+        if (!supabase) {
+            return {
+                success: false,
+                error: 'Supabase not initialized'
+            };
+        }
+
+        const targetProjectId =
+            forcedProjectId ||
+            HistoryHandler.PROJECT_IDENTIFIER;
+
+        const targetServiceId =
+            forcedServiceId ||
+            HistoryHandler.SERVICE_IDENTIFIER;
 
         try {
-            if (chats.length === 0) return { success: true, data: [] };
-
-            // Deduplicar en memoria por cleanId para evitar "ON CONFLICT DO UPDATE command cannot affect row a second time" en Postgres
-            const chatsMap = new Map<string, any>();
-            for (const c of chats) {
-                const rawId = String(c.id || c.phone || '').trim();
-                const cleanId = rawId.replace(/\D/g, '') || rawId;
-                if (!cleanId || cleanId.trim() === '') continue;
-
-                const existing = chatsMap.get(cleanId);
-                const upsertData: any = {
-                    id: cleanId,
-                    project_id: targetProjectId,
-                    name: c.name || (existing ? existing.name : null),
-                    type: c.type || 'whatsapp',
-                    last_message_at: c.last_message_at || new Date().toISOString(),
-                    metadata: c.metadata || (existing ? existing.metadata : {}),
-                    is_lead: c.is_lead !== undefined ? c.is_lead : (existing ? existing.is_lead : false),
-                    bot_enabled: c.bot_enabled !== undefined ? c.bot_enabled : (existing ? existing.bot_enabled : true),
-                    assigned_agent: c.assigned_agent || (existing ? existing.assigned_agent : 'asistente1')
+            if (chats.length === 0) {
+                return {
+                    success: true,
+                    data: []
                 };
-                if (targetServiceId && targetServiceId !== 'default' && targetServiceId !== 'default_service') {
-                    upsertData.service_id = targetServiceId;
-                } else {
-                    upsertData.service_id = HistoryHandler.SERVICE_IDENTIFIER;
-                }
-                chatsMap.set(cleanId, upsertData);
             }
 
-            const chatsToUpsert = Array.from(chatsMap.values());
+            const tenantId =
+                await this.requireTenantIdByProjectId(
+                    targetProjectId,
+                    'syncChats'
+                );
 
-            const { data, error } = await supabase
+            const effectiveServiceId =
+                (
+                    targetServiceId &&
+                    targetServiceId !== 'default'
+                )
+                    ? targetServiceId
+                    : HistoryHandler.SERVICE_IDENTIFIER;
+
+            const chatsMap =
+                new Map<string, any>();
+
+            for (const chat of chats) {
+                const rawId =
+                    String(
+                        chat.id ||
+                        chat.phone ||
+                        ''
+                    ).trim();
+
+                const cleanId =
+                    rawId.replace(/\D/g, '') ||
+                    rawId;
+
+                if (!cleanId.trim()) {
+                    continue;
+                }
+
+                const existing =
+                    chatsMap.get(cleanId);
+
+                chatsMap.set(
+                    cleanId,
+                    {
+                        id: cleanId,
+                        tenant_id: tenantId,
+                        project_id:
+                            targetProjectId,
+                        service_id:
+                            effectiveServiceId,
+                        name:
+                            chat.name ||
+                            existing?.name ||
+                            null,
+                        type:
+                            chat.type ||
+                            'whatsapp',
+                        last_message_at:
+                            chat.last_message_at ||
+                            new Date().toISOString(),
+                        metadata:
+                            chat.metadata ||
+                            existing?.metadata ||
+                            {},
+                        is_lead:
+                            chat.is_lead !==
+                                undefined
+                                ? chat.is_lead
+                                : (
+                                    existing?.is_lead ??
+                                    false
+                                ),
+                        bot_enabled:
+                            chat.bot_enabled !==
+                                undefined
+                                ? chat.bot_enabled
+                                : (
+                                    existing
+                                        ?.bot_enabled ??
+                                    true
+                                ),
+                        assigned_agent:
+                            chat.assigned_agent ||
+                            existing
+                                ?.assigned_agent ||
+                            'asistente1'
+                    }
+                );
+            }
+
+            const chatsToUpsert =
+                Array.from(
+                    chatsMap.values()
+                );
+
+            if (
+                chatsToUpsert.length === 0
+            ) {
+                return {
+                    success: true,
+                    data: []
+                };
+            }
+
+            /*
+             * Preflight anti-transferencia:
+             *
+             * Si la clave legacy que va a usar ON CONFLICT
+             * ya pertenece a OTRO tenant, abortar.
+             */
+            const ids =
+                chatsToUpsert.map(
+                    row => row.id
+                );
+
+            const chunkSize = 200;
+
+            for (
+                let index = 0;
+                index < ids.length;
+                index += chunkSize
+            ) {
+                const chunk =
+                    ids.slice(
+                        index,
+                        index + chunkSize
+                    );
+
+                const {
+                    data: existingRows,
+                    error: existingError
+                } = await supabase
+                    .from('chats')
+                    .select(
+                        'id, tenant_id, service_id'
+                    )
+                    .eq(
+                        'project_id',
+                        targetProjectId
+                    )
+                    .eq(
+                        'service_id',
+                        effectiveServiceId
+                    )
+                    .in(
+                        'id',
+                        chunk
+                    );
+
+                if (existingError) {
+                    throw existingError;
+                }
+
+                const foreignOwner =
+                    (existingRows || [])
+                        .find(
+                            (row: any) =>
+                                !row.tenant_id ||
+                                row.tenant_id !==
+                                    tenantId
+                        );
+
+                if (foreignOwner) {
+                    throw new Error(
+                        `[Tenant] syncChats detectó ` +
+                        `un chat histórico de otro tenant: ` +
+                        `${foreignOwner.id}. ` +
+                        `No se transfiere ownership.`
+                    );
+                }
+            }
+
+            const {
+                data,
+                error
+            } = await supabase
                 .from('chats')
-                .upsert(chatsToUpsert, { onConflict: 'id,project_id,service_id' })
+                .upsert(
+                    chatsToUpsert,
+                    {
+                        onConflict:
+                            'id,project_id,service_id'
+                    }
+                )
                 .select();
 
-            if (error) throw error;
-            return { success: true, data };
+            if (error) {
+                throw error;
+            }
+
+            return {
+                success: true,
+                data
+            };
         } catch (err: any) {
-            console.error('[HistoryHandler] Error en syncChats:', err);
-            return { success: false, error: err.message };
+            console.error(
+                '[HistoryHandler] Error en syncChats:',
+                err
+            );
+
+            return {
+                success: false,
+                error: err.message
+            };
         }
     }
 

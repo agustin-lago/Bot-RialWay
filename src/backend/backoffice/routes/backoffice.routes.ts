@@ -6865,14 +6865,8 @@ export const processCreateIndividualContact = async (req: any, res: any) => {
             phone = `549${phone.slice(2)}`;
         }
 
-        const supabase = HistoryHandlerClass.getSupabase();
-        if (!supabase) {
-            return res.status(500).json({ success: false, error: 'Base de datos no disponible.' });
-        }
-
         const chatRow: any = {
             id: phone,
-            tenant_id: tenantId,
             project_id: targetProjectId,
             name: name && String(name).trim() !== ''
                 ? String(name).trim()
@@ -6889,13 +6883,36 @@ export const processCreateIndividualContact = async (req: any, res: any) => {
             chatRow.service_id = HistoryHandlerClass.SERVICE_IDENTIFIER;
         }
 
-        const { error: chatErr } = await supabase
-            .from('chats')
-            .upsert(chatRow, { onConflict: 'id,project_id,service_id' });
+        const chatSyncResult =
+            await HistoryHandlerClass.syncChats(
+                [chatRow],
+                targetProjectId,
+                targetServiceId
+            );
 
-        if (chatErr) {
-            console.error('[create-individual] Error guardando chat:', chatErr);
-            return res.status(500).json({ success: false, error: chatErr.message });
+        if (!chatSyncResult.success) {
+            const message =
+                chatSyncResult.error ||
+                'No se pudo crear el contacto.';
+
+            console.error(
+                '[create-individual] Error guardando chat:',
+                message
+            );
+
+            const statusCode =
+                String(message).includes(
+                    '[Tenant]'
+                )
+                    ? 409
+                    : 500;
+
+            return res
+                .status(statusCode)
+                .json({
+                    success: false,
+                    error: message
+                });
         }
 
         if (Array.isArray(tagIds) && tagIds.length > 0) {
@@ -6952,6 +6969,29 @@ export const processDeleteChat = async (req: any, res: any) => {
             resolveProjectId(req) ||
             HistoryHandlerClass.PROJECT_IDENTIFIER;
 
+        const tenantResolution =
+            await HistoryHandlerClass
+                .resolveTenantIdByProjectId(
+                    targetProjectId
+                );
+
+        if (
+            !tenantResolution.resolved ||
+            tenantResolution.globalScope ||
+            !tenantResolution.tenantId
+        ) {
+            return res
+                .status(403)
+                .json({
+                    success: false,
+                    error:
+                        'No se pudo resolver el tenant propietario del proyecto.'
+                });
+        }
+
+        const tenantId =
+            tenantResolution.tenantId;
+
         if (!chatId) {
             return res.status(400).json({ success: false, error: 'Se requiere el ID del chat a eliminar.' });
         }
@@ -6968,7 +7008,8 @@ export const processDeleteChat = async (req: any, res: any) => {
             .from('messages')
             .delete()
             .eq('chat_id', chatId)
-            .eq('project_id', targetProjectId);
+            .eq('project_id', targetProjectId)
+            .eq('tenant_id', tenantId);
 
         if (msgErr) {
             console.error('[DeleteChat] Error eliminando mensajes del proyecto:', msgErr.message);
@@ -6980,7 +7021,8 @@ export const processDeleteChat = async (req: any, res: any) => {
                 .from('tickets')
                 .delete()
                 .eq('chat_id', chatId)
-                .eq('project_id', targetProjectId);
+                .eq('project_id', targetProjectId)
+            .eq('tenant_id', tenantId);
         } catch (tErr) { /* ignore */ }
 
         // 3. Eliminar chat Ãºnicamente para ESTE project_id (aislamiento estricto por proyecto)
@@ -6988,7 +7030,8 @@ export const processDeleteChat = async (req: any, res: any) => {
             .from('chats')
             .delete()
             .eq('id', chatId)
-            .eq('project_id', targetProjectId);
+            .eq('project_id', targetProjectId)
+            .eq('tenant_id', tenantId);
 
         if (chatErr) {
             console.error('[DeleteChat] Error eliminando registro de chat:', chatErr);
