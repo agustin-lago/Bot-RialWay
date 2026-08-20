@@ -1094,8 +1094,9 @@ export class HistoryHandler {
             if (error) throw error;
 
             if (data) {
+                const dataAny = data as any;
                 const ownedChatTags =
-                    (data.chat_tags || [])
+                    (dataAny.chat_tags || [])
                         .filter(
                             (ct: any) =>
                                 ct?.tenant_id ===
@@ -1104,9 +1105,9 @@ export class HistoryHandler {
                                     tenantId
                         );
 
-                data.chat_tags = ownedChatTags;
+                dataAny.chat_tags = ownedChatTags;
 
-                data.tags =
+                dataAny.tags =
                     ownedChatTags
                         .map(
                             (ct: any) =>
