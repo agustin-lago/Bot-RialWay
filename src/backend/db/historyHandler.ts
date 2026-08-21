@@ -2834,7 +2834,8 @@ export class HistoryHandler {
                                                 await this.getSetting(
                                                     'BLACKLIST_ACTIVE',
                                                     currentProjectId,
-                                                    serviceId
+                                                    serviceId,
+                                                    true
                                                 )
                                             ) === 'true'
                                     })
@@ -4670,10 +4671,23 @@ export class HistoryHandler {
         const cacheKey = `${targetProjectId}:${targetServiceId || 'default'}:${key}`;
         const now = Date.now();
 
-        // 1. Intentar obtener desde cache en memoria (excepto credenciales para garantizar realtime)
-        if (key !== 'ADMIN_USER' && key !== 'ADMIN_PASS') {
-            const cached = this.settingsCache.get(cacheKey);
-            if (cached && (now - cached.timestamp < this.CACHE_TTL_MS)) {
+        // Las lecturas strictService nunca deben reutilizar un valor
+        // que pudo haber sido obtenido mediante fallback de otro service.
+        //
+        // Se omite cache para strictService para garantizar aislamiento
+        // exacto por service_id.
+        if (
+            !strictService &&
+            key !== 'ADMIN_USER' &&
+            key !== 'ADMIN_PASS'
+        ) {
+            const cached =
+                this.settingsCache.get(cacheKey);
+
+            if (
+                cached &&
+                (now - cached.timestamp < this.CACHE_TTL_MS)
+            ) {
                 return cached.value;
             }
         }
@@ -4761,8 +4775,17 @@ export class HistoryHandler {
             }
         }
 
-        // 2. Guardar en cache antes de retornar
-        this.settingsCache.set(cacheKey, { value, timestamp: now });
+        // Las lecturas strictService no se cachean para impedir
+        // contaminacion con lecturas que permiten fallback.
+        if (!strictService) {
+            this.settingsCache.set(
+                cacheKey,
+                {
+                    value,
+                    timestamp: now
+                }
+            );
+        }
 
         return value;
     }
