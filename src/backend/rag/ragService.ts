@@ -10,6 +10,56 @@ import {
     getOpenAIProxyHeaders
 } from '../apis/openai/openaiHelper.js';
 
+interface RagScope {
+    tenantId: string | null;
+    serviceId: string;
+}
+
+async function resolveRagScope(
+    projectId: string,
+    serviceId?: string | null
+): Promise<RagScope> {
+    const tenantResolution =
+        await HistoryHandler
+            .resolveTenantIdByProjectId(
+                projectId
+            );
+
+    if (!tenantResolution.resolved) {
+        throw new Error(
+            `[RAG][Tenant] No se pudo resolver ` +
+            `tenant_id para project=${projectId}`
+        );
+    }
+
+    if (
+        !tenantResolution.globalScope &&
+        !tenantResolution.tenantId
+    ) {
+        throw new Error(
+            `[RAG][Tenant] Proyecto ${projectId} ` +
+            `sin tenant propietario`
+        );
+    }
+
+    const targetServiceId =
+        String(
+            serviceId ||
+            HistoryHandler.SERVICE_IDENTIFIER ||
+            'default_service'
+        ).trim() || 'default_service';
+
+    return {
+        tenantId:
+            tenantResolution.globalScope
+                ? null
+                : tenantResolution.tenantId,
+
+        serviceId:
+            targetServiceId
+    };
+}
+
 async function getOpenAIClient(
     projectId?: string,
     serviceId?: string
@@ -146,6 +196,12 @@ export async function indexDocumentForRAG(projectId: string, fileId: string, fil
     }
 
     try {
+        const scope =
+            await resolveRagScope(
+                projectId,
+                serviceId
+            );
+
         console.log(`🧠 [RAG] Indexando documento "${fileName}" (ID: ${fileId}) para proyecto ${projectId}...`);
         
         const rawText = await extractTextFromFile(filePath, fileName);
@@ -170,23 +226,68 @@ export async function indexDocumentForRAG(projectId: string, fileId: string, fil
             .from('knowledge_chunks')
             .delete()
             .eq('project_id', projectId)
+            .eq('service_id', scope.serviceId)
             .eq('file_id', fileId);
 
-        if (serviceId) {
-            deleteQuery = deleteQuery.eq('service_id', serviceId);
+        if (scope.tenantId) {
+            deleteQuery =
+                deleteQuery.eq(
+                    'tenant_id',
+                    scope.tenantId
+                );
+        } else {
+            deleteQuery =
+                deleteQuery.is(
+                    'tenant_id',
+                    null
+                );
         }
 
-        await deleteQuery;
+        const {
+            error: deleteError
+        } = await deleteQuery;
 
-        const rowsToInsert = chunks.map((content, idx) => ({
-            project_id: projectId,
-            service_id: serviceId || HistoryHandler.SERVICE_IDENTIFIER || null,
-            file_id: fileId,
-            file_name: fileName,
-            content: content,
-            chunk_index: idx,
-            embedding: JSON.stringify(embeddings[idx])
-        }));
+        if (deleteError) {
+            console.error(
+                '[RAG] Error eliminando chunks anteriores:',
+                deleteError.message
+            );
+
+            return false;
+        }
+
+        const rowsToInsert =
+            chunks.map(
+                (
+                    content,
+                    idx
+                ) => ({
+                    tenant_id:
+                        scope.tenantId,
+
+                    project_id:
+                        projectId,
+
+                    service_id:
+                        scope.serviceId,
+
+                    file_id:
+                        fileId,
+
+                    file_name:
+                        fileName,
+
+                    content,
+
+                    chunk_index:
+                        idx,
+
+                    embedding:
+                        JSON.stringify(
+                            embeddings[idx]
+                        )
+                })
+            );
 
         for (let i = 0; i < rowsToInsert.length; i += 50) {
             const batch = rowsToInsert.slice(i, i + 50);
@@ -212,6 +313,12 @@ export async function searchKnowledgeBase(projectId: string, query: string, topK
     if (!supabase || !openai || !query || !query.trim()) return '';
 
     try {
+        const scope =
+            await resolveRagScope(
+                projectId,
+                serviceId
+            );
+
         const embRes = await openai.embeddings.create({
             model: 'text-embedding-3-small',
             input: query
@@ -219,10 +326,25 @@ export async function searchKnowledgeBase(projectId: string, query: string, topK
         const queryEmbedding = embRes.data[0].embedding;
 
         const { data, error } = await supabase.rpc('match_knowledge_chunks', {
-            p_project_id: projectId,
-            query_embedding: JSON.stringify(queryEmbedding),
-            match_threshold: 0.2,
-            match_count: topK
+            p_tenant_id:
+                scope.tenantId,
+
+            p_project_id:
+                projectId,
+
+            p_service_id:
+                scope.serviceId,
+
+            query_embedding:
+                JSON.stringify(
+                    queryEmbedding
+                ),
+
+            match_threshold:
+                0.2,
+
+            match_count:
+                topK
         });
 
         if (error) {
@@ -234,15 +356,7 @@ export async function searchKnowledgeBase(projectId: string, query: string, topK
             return '';
         }
 
-        const scopedData = serviceId
-            ? data.filter((item: any) => !item.service_id || item.service_id === serviceId)
-            : data;
-
-        if (!scopedData || scopedData.length === 0) {
-            return '';
-        }
-
-        const resultsText = scopedData.map((item: any) => `[Fuente: ${item.file_name}]\n${item.content}`).join('\n\n---\n\n');
+        const resultsText = data.map((item: any) => `[Fuente: ${item.file_name}]\n${item.content}`).join('\n\n---\n\n');
         return resultsText;
     } catch (err: any) {
         console.error('❌ [RAG] Error consultando base de conocimientos:', err?.message || err);
