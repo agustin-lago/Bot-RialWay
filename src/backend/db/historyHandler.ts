@@ -2803,17 +2803,74 @@ export class HistoryHandler {
                 }
 
                 // --- FILTRO LISTA NEGRA (bloqueado_crm) ---
-                // El tenant ya fue resuelto al comienzo de listChats().
+                // Respetar tenant + project + service.
+                //
+                // listChats puede recibir uno o varios service_id separados
+                // por coma, por eso resolvemos BLACKLIST_ACTIVE por cada
+                // servicio visible y aplicamos solamente los scopes activos.
                 try {
-                    const blacklistActive = await this.getSetting(
-                        'BLACKLIST_ACTIVE',
-                        currentProjectId
-                    );
+                    const requestedBlacklistServiceIds =
+                        currentServiceId
+                            ? currentServiceId
+                                .split(',')
+                                .map((id: string) => id.trim())
+                                .filter(
+                                    (id: string) =>
+                                        isScopedServiceId(id)
+                                )
+                            : [];
 
-                    if (blacklistActive === 'true') {
-                        const { data: blockedEntries, error: blacklistError } = await supabase
+                    let blacklistActive = false;
+                    let activeBlacklistServiceIds: string[] = [];
+
+                    if (requestedBlacklistServiceIds.length > 0) {
+                        const serviceStates =
+                            await Promise.all(
+                                requestedBlacklistServiceIds.map(
+                                    async (serviceId: string) => ({
+                                        serviceId,
+                                        active:
+                                            (
+                                                await this.getSetting(
+                                                    'BLACKLIST_ACTIVE',
+                                                    currentProjectId,
+                                                    serviceId
+                                                )
+                                            ) === 'true'
+                                    })
+                                )
+                            );
+
+                        activeBlacklistServiceIds =
+                            serviceStates
+                                .filter(
+                                    ({ active }) => active
+                                )
+                                .map(
+                                    ({ serviceId }) =>
+                                        serviceId
+                                );
+
+                        blacklistActive =
+                            activeBlacklistServiceIds.length > 0;
+                    } else {
+                        blacklistActive =
+                            (
+                                await this.getSetting(
+                                    'BLACKLIST_ACTIVE',
+                                    currentProjectId,
+                                    currentServiceId
+                                )
+                            ) === 'true';
+                    }
+
+                    if (blacklistActive) {
+                        const {
+                            data: blockedEntries,
+                            error: blacklistError
+                        } = await supabase
                             .from('blacklist')
-                            .select('chat_id')
+                            .select('chat_id, service_id')
                             .eq('tenant_id', tenantId)
                             .eq('project_id', currentProjectId)
                             .eq('bloqueado_crm', true);
@@ -2822,13 +2879,61 @@ export class HistoryHandler {
                             throw blacklistError;
                         }
 
-                        if (blockedEntries && blockedEntries.length > 0) {
-                            const blockedIds = new Set(blockedEntries.map((e: any) => e.chat_id));
-                            finalChats = finalChats.filter((c: any) => !blockedIds.has(c.id));
+                        let applicableBlockedEntries =
+                            blockedEntries || [];
+
+                        // Si listChats está mostrando uno o varios servicios
+                        // concretos, solamente aplicar blacklist de esos
+                        // servicios activos.
+                        //
+                        // Las filas legacy/globales (NULL/default/default_service)
+                        // siguen aplicando como fallback, igual que en
+                        // isContactBlacklisted().
+                        if (
+                            requestedBlacklistServiceIds.length > 0
+                        ) {
+                            const activeServiceSet =
+                                new Set(
+                                    activeBlacklistServiceIds
+                                );
+
+                            applicableBlockedEntries =
+                                applicableBlockedEntries.filter(
+                                    (entry: any) =>
+                                        !entry.service_id ||
+                                        entry.service_id === 'default' ||
+                                        entry.service_id === 'default_service' ||
+                                        activeServiceSet.has(
+                                            entry.service_id
+                                        )
+                                );
+                        }
+
+                        if (
+                            applicableBlockedEntries.length > 0
+                        ) {
+                            const blockedIds =
+                                new Set(
+                                    applicableBlockedEntries.map(
+                                        (entry: any) =>
+                                            entry.chat_id
+                                    )
+                                );
+
+                            finalChats =
+                                finalChats.filter(
+                                    (chat: any) =>
+                                        !blockedIds.has(
+                                            chat.id
+                                        )
+                                );
                         }
                     }
                 } catch (blErr) {
-                    console.warn('[HistoryHandler] No se pudo aplicar filtro de lista negra:', blErr);
+                    console.warn(
+                        '[HistoryHandler] No se pudo aplicar filtro de lista negra:',
+                        blErr
+                    );
                 }
 
                 return finalChats;
