@@ -1,7 +1,11 @@
 import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
 import { HistoryHandler } from "../../db/historyHandler";
-import { syncAssistantTools, getOpenAIBaseUrl } from "./openaiHelper";
+import {
+    syncAssistantTools,
+    getOpenAIBaseUrl,
+    getOpenAIProxyHeaders
+} from "./openaiHelper";
 import { vault } from "../../db/vault";
 
 /**
@@ -30,11 +34,32 @@ export async function autoUpdateBotAbilities(tableNames: string[], projectId: st
         }
 
         const supabase = createClient(supabaseUrl, supabaseKey);
-        const baseURL = getOpenAIBaseUrl();
-        const openai = new OpenAI({ 
-            apiKey: openaiKey,
-            ...(baseURL ? { baseURL } : {})
-        });
+        const baseURL =
+            getOpenAIBaseUrl();
+
+        const proxyHeaders =
+            getOpenAIProxyHeaders(
+                baseURL
+            );
+
+        const openai =
+            new OpenAI({
+                apiKey:
+                    openaiKey,
+
+                ...(baseURL
+                    ? {
+                        baseURL
+                    }
+                    : {}),
+
+                ...(proxyHeaders
+                    ? {
+                        defaultHeaders:
+                            proxyHeaders
+                    }
+                    : {})
+            });
 
         // 1. Actualizar DB_TABLES en la configuración (filtrando por proyecto/servicio)
         const dbTablesStr = tableNames.join(',');

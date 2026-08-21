@@ -11,54 +11,142 @@ import { withRetry } from "../../../utils/retryHelper";
 const webChatManager = new WebChatManager();
 
 function getWebchatClientKey(req: any): string {
+    // El frontend ya genera un identificador estable por navegador.
+    // Usarlo antes que la IP evita compartir sesiones entre usuarios
+    // que esten detras de la misma NAT/proxy.
+    const rawClientId = String(
+        req.body?.clientId ||
+        req.query?.clientId ||
+        ''
+    ).trim();
+
+    if (
+        /^wc_[A-Za-z0-9_-]{8,128}$/.test(
+            rawClientId
+        )
+    ) {
+        return rawClientId;
+    }
+
+    // Compatibilidad con clientes legacy que todavia no manden clientId.
     let ip = '';
-    const xff = req.headers['x-forwarded-for'];
+
+    const xff =
+        req.headers['x-forwarded-for'];
+
     if (typeof xff === 'string') {
         ip = xff.split(',')[0].trim();
-    } else if (Array.isArray(xff) && xff.length > 0) {
+    } else if (
+        Array.isArray(xff) &&
+        xff.length > 0
+    ) {
         ip = xff[0].trim();
     } else {
-        ip = (req as any).ip || req.socket?.remoteAddress || (req as any).connection?.remoteAddress || '127.0.0.1';
+        ip =
+            (req as any).ip ||
+            req.socket?.remoteAddress ||
+            (req as any).connection?.remoteAddress ||
+            '127.0.0.1';
     }
+
     ip = ip.replace(/^::ffff:/, '');
+
     return ip || '127.0.0.1';
+}
+
+function getWebchatScope(
+    req: any,
+    HistoryHandler: any
+): {
+    projectId: string;
+    serviceId: string;
+} {
+    // Nunca confiar en projectId/serviceId enviados por el frontend.
+    // backofficeAuth ya determina el scope autorizado.
+    const projectId = String(
+        req.auth?.projectId ||
+        process.env.RAILWAY_PROJECT_ID ||
+        HistoryHandler.PROJECT_IDENTIFIER ||
+        ''
+    ).trim();
+
+    const serviceId = String(
+        req.auth?.serviceId ||
+        process.env.RAILWAY_SERVICE_ID ||
+        HistoryHandler.SERVICE_IDENTIFIER ||
+        ''
+    ).trim();
+
+    return {
+        projectId,
+        serviceId
+    };
 }
 
 export const registerWebchatRoutes = (app: any) => {
 
     app.post('/webchat-api/command', backofficeAuth, async (req: any, res: any) => {
         const command = String(req.body?.command || '').trim().toUpperCase();
-        const ip = getWebchatClientKey(req);
+        const clientKey = getWebchatClientKey(req);
 
         try {
             const { HistoryHandler } = await import("../../../db/historyHandler");
-            const projectId = String(req.body?.projectId || req.query?.projectId || process.env.RAILWAY_PROJECT_ID || HistoryHandler.PROJECT_IDENTIFIER || '').trim();
-            const serviceId = String(req.body?.serviceId || req.query?.serviceId || process.env.RAILWAY_SERVICE_ID || HistoryHandler.SERVICE_IDENTIFIER || '').trim();
-            const session = webChatManager.getSession(ip);
+            const {
+                projectId,
+                serviceId
+            } = getWebchatScope(
+                req,
+                HistoryHandler
+            );
+            const session = webChatManager.getSession(clientKey);
 
             if (command === 'RESET' || command === '#RESET#') {
                 session.thread_id = null;
-                await HistoryHandler.setAssignedAgent(ip, 'asistente1', projectId, serviceId || undefined);
-                await HistoryHandler.saveThreadId(ip, '', projectId);
+                await HistoryHandler.setAssignedAgent(clientKey, 'asistente1', projectId, serviceId || undefined);
+                await HistoryHandler.saveThreadId(clientKey, '', projectId);
                 return res.json({ success: true, command: 'RESET', message: 'Reset aplicado solo al webchat.' });
             }
 
             if (command === 'HILO_NUEVO' || command === '#HILO_NUEVO#') {
                 session.clear();
-                await HistoryHandler.clearChatHistory(ip, projectId, serviceId || undefined);
-                await HistoryHandler.setAssignedAgent(ip, 'asistente1', projectId, serviceId || undefined);
-                await HistoryHandler.saveThreadId(ip, '', projectId);
+                await HistoryHandler.clearChatHistory(clientKey, projectId, serviceId || undefined);
+                await HistoryHandler.setAssignedAgent(clientKey, 'asistente1', projectId, serviceId || undefined);
+                await HistoryHandler.saveThreadId(clientKey, '', projectId);
                 return res.json({ success: true, command: 'HILO_NUEVO', clearChat: true, message: 'Hilo nuevo iniciado solo para el webchat.' });
             }
 
-            if (command === 'CLEAR_CONTEXT' || command === '#CLEAR_CONTEXT#') {
+            if (
+                command === 'CLEAR_CONTEXT' ||
+                command === '#CLEAR_CONTEXT#'
+            ) {
+                // 1. Limpiar contexto temporal del WebChatSession.
+                //
+                // history y thread_id se conservan intencionalmente.
+                // Para borrar tambien el historial existe HILO_NUEVO.
                 const keys = Object.keys(session);
-                for (const k of keys) {
-                    if (k !== 'history' && k !== 'thread_id') {
-                        delete session[k];
+
+                for (const key of keys) {
+                    if (
+                        key !== 'history' &&
+                        key !== 'thread_id'
+                    ) {
+                        delete session[key];
                     }
                 }
-                return res.json({ success: true, command: 'CLEAR_CONTEXT', message: 'Contexto de cliente eliminado de la sesión del webchat.' });
+
+                // 2. Limpiar contexto persistido en chats.
+                await HistoryHandler.clearWebchatClientContext(
+                    clientKey,
+                    projectId,
+                    serviceId || undefined
+                );
+
+                return res.json({
+                    success: true,
+                    command: 'CLEAR_CONTEXT',
+                    message:
+                        'Contexto de cliente eliminado correctamente.'
+                });
             }
 
             return res.status(400).json({ success: false, error: 'Comando no soportado para webchat.' });
@@ -69,9 +157,13 @@ export const registerWebchatRoutes = (app: any) => {
     });
 
     app.get('/webchat-api/history', backofficeAuth, async (req: any, res: any) => {
-        const ip = getWebchatClientKey(req);
+        const clientKey =
+            getWebchatClientKey(req);
         try {
-            const session = webChatManager.getSession(ip);
+            const session =
+                webChatManager.getSession(
+                    clientKey
+                );
             return res.json({ success: true, history: session.history });
         } catch (err: any) {
             console.error('[Webchat History] Error:', err.message);
@@ -79,13 +171,14 @@ export const registerWebchatRoutes = (app: any) => {
         }
     });
 
-    app.post('/webchat-api', async (req: any, res: any) => {
+    app.post('/webchat-api', backofficeAuth, async (req: any, res: any) => {
         if (!req.body || (!req.body.message && !req.body.file)) {
             return res.status(400).json({ error: "Falta 'message' o 'file'" });
         }
         try {
             let message = req.body.message || "";
-            const ip = getWebchatClientKey(req);
+            const clientKey =
+                getWebchatClientKey(req);
 
             if (req.body.file) {
                 const file = req.body.file;
@@ -151,7 +244,14 @@ export const registerWebchatRoutes = (app: any) => {
             }
 
             const { HistoryHandler } = await import("../../../db/historyHandler");
-            const session = webChatManager.getSession(ip);
+            const {
+                projectId,
+                serviceId
+            } = getWebchatScope(
+                req,
+                HistoryHandler
+            );
+            const session = webChatManager.getSession(clientKey);
             let replyText = '';
 
             if (message.trim().toLowerCase() === "#reset") {
@@ -162,14 +262,16 @@ export const registerWebchatRoutes = (app: any) => {
 
                 // Guardar mensaje del usuario en el historial persistente (Backoffice)
                 await HistoryHandler.saveMessage(
-                    ip,
+                    clientKey,
                     'user',
                     message,
                     'text',
                     'Webchat User',
-                    ip,
+                    clientKey,
                     null,
-                    'whatsapp'
+                    'webchat',
+                    projectId,
+                    serviceId || undefined
                 );
 
                 // Estado compatible con safeToAsk
@@ -190,10 +292,9 @@ export const registerWebchatRoutes = (app: any) => {
                     clear: async () => session.clear(),
                 };
 
-                const projectId = process.env.RAILWAY_PROJECT_ID || '';
-                const assigned: string = (await HistoryHandler.getAssignedAgent(ip, projectId)) as string || 'asistente1';
+                const assigned: string = (await HistoryHandler.getAssignedAgent(clientKey, projectId)) as string || 'asistente1';
                 const assistantMap = await aiManagerInstance.getAssistantMap(projectId);
-                const currentAssistantId = await aiManagerInstance.getAssignedAssistantId(ip, projectId);
+                const currentAssistantId = await aiManagerInstance.getAssignedAssistantId(clientKey, projectId);
                 
                 // Función adaptadora para recursión en AssistantResponseProcessor
                 const webChatAdapterFn = async (
@@ -235,7 +336,7 @@ export const registerWebchatRoutes = (app: any) => {
                     }
                 };
 
-                const reply = await safeToAsk(currentAssistantId, message, state, ip, undefined, 5, true, projectId, true, assigned);
+                const reply = await safeToAsk(currentAssistantId, message, state, clientKey, undefined, 5, true, projectId, true, assigned);
 
                 const flowDynamic = async (arr: any) => {
                     const text = Array.isArray(arr) ? arr.map(a => a.body).join('\n') : arr;
@@ -244,7 +345,7 @@ export const registerWebchatRoutes = (app: any) => {
 
                 await AssistantResponseProcessor.procesarHandoverYDerivacion(
                     reply as string,
-                    { type: 'webchat', from: ip, thread_id: session.thread_id, body: message },
+                    { type: 'webchat', from: clientKey, thread_id: session.thread_id, body: message },
                     flowDynamic,
                     state,
                     undefined,

@@ -20,7 +20,10 @@ let currentFileId: string | null = null;
 
 
 import { createGoogleAuth } from "./googleAuth";
-import { getOpenAIBaseUrl } from "../openai/openaiHelper";
+import {
+    getOpenAIBaseUrl,
+    getOpenAIProxyHeaders
+} from "../openai/openaiHelper";
 
 // Se eliminaron las inicializaciones estáticas para evitar errores de autenticación antes de cargar settings
 
@@ -30,14 +33,58 @@ const getSheetsClient = () => {
     return google.sheets({ version: "v4", auth });
 };
 
-const getOpenAIClient = async (projectId?: string, serviceId?: string) => {
-    let key = projectId ? await HistoryHandler.getConfig('OPENAI_API_KEY', projectId, serviceId) : null;
-    if (!key) key = process.env.OPENAI_API_KEY || null;
-    const baseURL = getOpenAIBaseUrl();
-    return key ? new OpenAI({ 
+const getOpenAIClient = async (
+    projectId?: string,
+    serviceId?: string
+) => {
+    let key =
+        projectId
+            ? await HistoryHandler.getConfig(
+                'OPENAI_API_KEY',
+                projectId,
+                serviceId
+            )
+            : null;
+
+
+    if (!key) {
+        key =
+            process.env
+                .OPENAI_API_KEY ||
+            null;
+    }
+
+
+    if (!key) {
+        return null;
+    }
+
+
+    const baseURL =
+        getOpenAIBaseUrl();
+
+    const proxyHeaders =
+        getOpenAIProxyHeaders(
+            baseURL
+        );
+
+
+    return new OpenAI({
         apiKey: key,
-        ...(baseURL ? { baseURL } : {})
-    }) : null;
+
+        ...(baseURL
+            ? {
+                baseURL
+            }
+            : {}),
+
+        ...(proxyHeaders
+            ? {
+                defaultHeaders:
+                    proxyHeaders
+            }
+            : {})
+    });
 };
 
 

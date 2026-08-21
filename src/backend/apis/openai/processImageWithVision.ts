@@ -1,7 +1,10 @@
 import axios from "axios";
 import { OpenAI } from "openai";
 import fs from "fs";
-import { getOpenAIBaseUrl } from "./openaiHelper";
+import {
+  getOpenAIBaseUrl,
+  getOpenAIProxyHeaders
+} from "./openaiHelper";
 
 const IMGUR_CLIENT_ID = "dbe415c6bbb950d";
 
@@ -50,11 +53,32 @@ export async function processImageWithVision(
       || await HistoryHandler.getConfig('ASSISTANT_PROMPT_MP_OCR', projectId, serviceId)) || undefined;
   }
 
-  const baseURL = getOpenAIBaseUrl();
-  const openai = new OpenAI({ 
-      apiKey: openaiKey,
-      ...(baseURL ? { baseURL } : {})
-  });
+  const baseURL =
+    getOpenAIBaseUrl();
+
+  const proxyHeaders =
+    getOpenAIProxyHeaders(
+      baseURL
+    );
+
+  const openai =
+    new OpenAI({
+      apiKey:
+        openaiKey,
+
+      ...(baseURL
+        ? {
+          baseURL
+        }
+        : {}),
+
+      ...(proxyHeaders
+        ? {
+          defaultHeaders:
+            proxyHeaders
+        }
+        : {})
+    });
 
   // Subir imagen a Imgur
   const imgurRes = await axios.post(

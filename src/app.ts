@@ -242,35 +242,115 @@ const main = async () => {
     
     const groupResumenId = await HistoryHandler.getConfig('ID_GRUPO_RESUMEN', HistoryHandler.PROJECT_IDENTIFIER, HistoryHandler.SERVICE_IDENTIFIER) || "";
     errorReporter = new ErrorReporter(adapterProvider, groupResumenId);
-    await updateMain();
-    
-    // 4.1. Sincronizar herramientas con OpenAI Assistant (Ahora que el entorno está listo)
-    const ASSISTANT_ID = await HistoryHandler.getConfig('ASSISTANT_ID', HistoryHandler.PROJECT_IDENTIFIER, HistoryHandler.SERVICE_IDENTIFIER);
-    if (ASSISTANT_ID) {
-        // Auto-sincronizar definición de herramientas del módulo en la DB antes de sincronizar con OpenAI
-        const slug = await HistoryHandler.getConfig('CLIENT_SLUG', HistoryHandler.PROJECT_IDENTIFIER, HistoryHandler.SERVICE_IDENTIFIER);
-        if (slug) {
-            const cleanSlug = slug.trim().toLowerCase();
-            try {
-                const { moduleRegistry } = await import('./backend/bot/toolRegistry');
-                const activeModule = (moduleRegistry as any)[cleanSlug];
-                if (activeModule && activeModule.openAiTools) {
-                    console.log(`🤖 [App/OpenAI] Sincronizando definición de herramientas para el módulo '${cleanSlug}' en DB...`);
-                    await HistoryHandler.saveSetting(
-                        'OPENAI_TOOLS_DEFINITION', 
-                        JSON.stringify(activeModule.openAiTools), 
-                        HistoryHandler.PROJECT_IDENTIFIER, 
-                        HistoryHandler.SERVICE_IDENTIFIER
+
+    // Las sincronizaciones externas de Google/OpenAI NO deben
+    // bloquear el arranque HTTP del Backoffice.
+    //
+    // Se mantienen secuenciales entre ellas para no generar
+    // una rafaga simultanea contra OpenAI/proxy.
+    void (async () => {
+        try {
+            await updateMain(
+                HistoryHandler.PROJECT_IDENTIFIER,
+                HistoryHandler.SERVICE_IDENTIFIER
+            );
+
+
+            const ASSISTANT_ID =
+                await HistoryHandler.getConfig(
+                    'ASSISTANT_ID',
+                    HistoryHandler.PROJECT_IDENTIFIER,
+                    HistoryHandler.SERVICE_IDENTIFIER
+                );
+
+
+            if (!ASSISTANT_ID) {
+                return;
+            }
+
+
+            // Auto-sincronizar definicion de herramientas
+            // del modulo en DB.
+            const slug =
+                await HistoryHandler.getConfig(
+                    'CLIENT_SLUG',
+                    HistoryHandler.PROJECT_IDENTIFIER,
+                    HistoryHandler.SERVICE_IDENTIFIER
+                );
+
+
+            if (slug) {
+                const cleanSlug =
+                    slug
+                        .trim()
+                        .toLowerCase();
+
+                try {
+                    const {
+                        moduleRegistry
+                    } =
+                        await import(
+                            './backend/bot/toolRegistry'
+                        );
+
+                    const activeModule =
+                        (moduleRegistry as any)[
+                            cleanSlug
+                        ];
+
+
+                    if (
+                        activeModule &&
+                        activeModule.openAiTools
+                    ) {
+                        console.log(
+                            `[App/OpenAI] Sincronizando definicion de herramientas para el modulo '${cleanSlug}' en DB...`
+                        );
+
+                        await HistoryHandler.saveSetting(
+                            'OPENAI_TOOLS_DEFINITION',
+                            JSON.stringify(
+                                activeModule.openAiTools
+                            ),
+                            HistoryHandler.PROJECT_IDENTIFIER,
+                            HistoryHandler.SERVICE_IDENTIFIER
+                        );
+                    }
+                } catch (err: any) {
+                    console.error(
+                        '[App/OpenAI] Error sincronizando herramientas del modulo en DB al inicio:',
+                        err?.message || err
                     );
                 }
-            } catch (err: any) {
-                console.error(`⚠️ [App/OpenAI] Error sincronizando herramientas del módulo en DB al inicio:`, err.message);
             }
-        }
 
-        console.log(`[App] 🔄 Iniciando sincronización de tools para Assistant: ${ASSISTANT_ID}`);
-        await syncAssistantTools(ASSISTANT_ID, HistoryHandler.PROJECT_IDENTIFIER, HistoryHandler.SERVICE_IDENTIFIER);
-    }
+
+            console.log(
+                `[App] Iniciando sincronizacion de tools para Assistant: ${ASSISTANT_ID}`
+            );
+
+
+            const synced =
+                await syncAssistantTools(
+                    ASSISTANT_ID,
+                    HistoryHandler.PROJECT_IDENTIFIER,
+                    HistoryHandler.SERVICE_IDENTIFIER
+                );
+
+
+            if (!synced) {
+                console.warn(
+                    '[App/OpenAI] La sincronizacion inicial de tools no pudo completarse. El Backoffice continua operativo.'
+                );
+            }
+
+        } catch (err: any) {
+            console.error(
+                '[App/StartupSync] Error en sincronizacion externa de inicio:',
+                err?.message || err
+            );
+        }
+    })();
 
 
     const app = adapterProvider.server;

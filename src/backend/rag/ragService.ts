@@ -5,16 +5,66 @@ const require = createRequire(import.meta.url);
 const pdfParse = require('pdf-parse');
 import OpenAI from 'openai';
 import { HistoryHandler } from '../db/historyHandler.js';
-import { getOpenAIBaseUrl } from '../apis/openai/openaiHelper.js';
+import {
+    getOpenAIBaseUrl,
+    getOpenAIProxyHeaders
+} from '../apis/openai/openaiHelper.js';
 
-async function getOpenAIClient(projectId?: string, serviceId?: string) {
-    let key = projectId ? await HistoryHandler.getConfig('OPENAI_API_KEY', projectId, serviceId) : null;
-    if (!key) key = process.env.OPENAI_API_KEY || null;
-    const baseURL = getOpenAIBaseUrl();
-    return (key && key.length > 5) ? new OpenAI({
+async function getOpenAIClient(
+    projectId?: string,
+    serviceId?: string
+) {
+    let key =
+        projectId
+            ? await HistoryHandler.getConfig(
+                'OPENAI_API_KEY',
+                projectId,
+                serviceId
+            )
+            : null;
+
+
+    if (!key) {
+        key =
+            process.env
+                .OPENAI_API_KEY ||
+            null;
+    }
+
+
+    if (
+        !key ||
+        key.length <= 5
+    ) {
+        return null;
+    }
+
+
+    const baseURL =
+        getOpenAIBaseUrl();
+
+    const proxyHeaders =
+        getOpenAIProxyHeaders(
+            baseURL
+        );
+
+
+    return new OpenAI({
         apiKey: key,
-        ...(baseURL ? { baseURL } : {})
-    }) : null;
+
+        ...(baseURL
+            ? {
+                baseURL
+            }
+            : {}),
+
+        ...(proxyHeaders
+            ? {
+                defaultHeaders:
+                    proxyHeaders
+            }
+            : {})
+    });
 }
 
 // Extrae el texto plano de archivos .docx, .pdf, .txt o .doc

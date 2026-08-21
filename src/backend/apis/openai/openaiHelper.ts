@@ -4,74 +4,294 @@ import { executeDbQuery } from "../../db/dbHandler";
 import { SystemLogger } from "../../utils/logger.js";
 import { RagToolManager } from "../../rag/ragToolManager.js";
 
-// Instancias perezosas para Hot-update con caché multi-tenant
-const _openaiMap = new Map<string, OpenAI>();
-const _openaiVisionMap = new Map<string, OpenAI>();
+// Instancias perezosas para Hot-update con cache multi-tenant.
+const _openaiMap =
+    new Map<string, OpenAI>();
 
-export function getOpenAIBaseUrl(): string | undefined {
-    const envBaseURL = process.env.OPENAI_BASE_URL;
-    if (!envBaseURL) {
-        return "https://proxy.duskcodes.com.ar/v1";
+const _openaiVisionMap =
+    new Map<string, OpenAI>();
+
+
+export function getOpenAIProxyHeaders(
+    baseURL: string | undefined
+): Record<string, string> | undefined {
+    const token =
+        process.env
+            .PROXY_AUTH_TOKEN
+            ?.trim();
+
+    if (
+        !token ||
+        !baseURL
+    ) {
+        return undefined;
     }
 
-    let clean = envBaseURL.trim();
-    // Eliminar comillas simples o dobles envolventes si existen
-    if ((clean.startsWith("'") && clean.endsWith("'")) || (clean.startsWith('"') && clean.endsWith('"'))) {
-        clean = clean.slice(1, -1).trim();
-    }
-
-    return clean.toLowerCase() === 'direct' ? undefined : clean;
+    return {
+        "x-proxy-token":
+            token
+    };
 }
 
-/**
- * Obtiene la instancia de OpenAI principal de forma dinámica.
- */
-export async function getOpenAI(projectId?: string, serviceId?: string): Promise<OpenAI | null> {
-    const { HistoryHandler } = await import("../../db/historyHandler");
-    const targetProjectId = projectId || HistoryHandler.PROJECT_IDENTIFIER;
-    const targetServiceId = serviceId || HistoryHandler.SERVICE_IDENTIFIER;
-    const key = await HistoryHandler.getConfig('OPENAI_API_KEY', targetProjectId, targetServiceId);
 
-    if (!key || key.includes('*****') || key === 'tu_api_key_aqui' || key.trim() === '') {
-        console.warn(`📡 [OpenAI] ⚠️ No se detectó una OPENAI_API_KEY válida (vacía o por defecto) para proyecto ${targetProjectId}. getOpenAI() retornará null.`);
+export function getOpenAIBaseUrl():
+    string | undefined {
+
+    const envBaseURL =
+        process.env.OPENAI_BASE_URL;
+
+
+    // Neurolinks usa su proxy propio por defecto.
+    if (!envBaseURL) {
+        return "https://openai-proxy.clientesneurolinks.com/v1";
+    }
+
+
+    let clean =
+        envBaseURL.trim();
+
+
+    if (
+        (
+            clean.startsWith("'") &&
+            clean.endsWith("'")
+        ) ||
+        (
+            clean.startsWith('"') &&
+            clean.endsWith('"')
+        )
+    ) {
+        clean =
+            clean
+                .slice(1, -1)
+                .trim();
+    }
+
+
+    return clean
+        .toLowerCase() ===
+        'direct'
+            ? undefined
+            : clean;
+}
+
+
+/**
+ * Obtiene la instancia OpenAI principal.
+ */
+export async function getOpenAI(
+    projectId?: string,
+    serviceId?: string
+): Promise<OpenAI | null> {
+
+    const {
+        HistoryHandler
+    } =
+        await import(
+            "../../db/historyHandler"
+        );
+
+
+    const targetProjectId =
+        projectId ||
+        HistoryHandler
+            .PROJECT_IDENTIFIER;
+
+    const targetServiceId =
+        serviceId ||
+        HistoryHandler
+            .SERVICE_IDENTIFIER;
+
+
+    const key =
+        await HistoryHandler.getConfig(
+            'OPENAI_API_KEY',
+            targetProjectId,
+            targetServiceId
+        );
+
+
+    if (
+        !key ||
+        key.includes('*****') ||
+        key === 'tu_api_key_aqui' ||
+        key.trim() === ''
+    ) {
+        console.warn(
+            `[OpenAI] No se detecto una OPENAI_API_KEY valida para proyecto ${targetProjectId}.`
+        );
+
         return null;
     }
 
-    const cacheKey = `${targetProjectId}:${targetServiceId}:${key}`;
-    if (!_openaiMap.has(cacheKey)) {
-        console.log(`📡 [OpenAI] Inicializando nueva instancia para ${targetProjectId}:${targetServiceId} con Key: ${key.slice(0, 8)}...`);
-        const baseURL = getOpenAIBaseUrl();
-        const instance = new OpenAI({
-            apiKey: key,
-            ...(baseURL ? { baseURL } : {})
-        });
-        _openaiMap.set(cacheKey, instance);
+
+    const baseURL =
+        getOpenAIBaseUrl();
+
+    const proxyHeaders =
+        getOpenAIProxyHeaders(
+            baseURL
+        );
+
+
+    // baseURL forma parte de la cache.
+    //
+    // Si OPENAI_BASE_URL cambia en caliente,
+    // no reutilizar una instancia creada contra
+    // el proxy anterior.
+    const cacheKey =
+        `${targetProjectId}:` +
+        `${targetServiceId}:` +
+        `${key}:` +
+        `${baseURL || 'direct'}`;
+
+
+    if (
+        !_openaiMap.has(
+            cacheKey
+        )
+    ) {
+        console.log(
+            `[OpenAI] Inicializando nueva instancia para ${targetProjectId}:${targetServiceId}`
+        );
+
+
+        const instance =
+            new OpenAI({
+                apiKey: key,
+
+                ...(baseURL
+                    ? {
+                        baseURL
+                    }
+                    : {}),
+
+                ...(proxyHeaders
+                    ? {
+                        defaultHeaders:
+                            proxyHeaders
+                    }
+                    : {})
+            });
+
+
+        _openaiMap.set(
+            cacheKey,
+            instance
+        );
     }
-    return _openaiMap.get(cacheKey) || null;
+
+
+    return (
+        _openaiMap.get(
+            cacheKey
+        ) ||
+        null
+    );
 }
 
+
 /**
- * Obtiene la instancia de OpenAI para visión/imágenes de forma dinámica.
+ * Obtiene instancia OpenAI para vision/imagenes.
  */
-export async function getOpenAIVision(projectId?: string, serviceId?: string): Promise<OpenAI | null> {
-    const { HistoryHandler } = await import("../../db/historyHandler");
-    const targetProjectId = projectId || HistoryHandler.PROJECT_IDENTIFIER;
-    const targetServiceId = serviceId || HistoryHandler.SERVICE_IDENTIFIER;
-    const key = await HistoryHandler.getConfig('OPENAI_API_KEY_IMG', targetProjectId, targetServiceId);
+export async function getOpenAIVision(
+    projectId?: string,
+    serviceId?: string
+): Promise<OpenAI | null> {
 
-    if (!key) return await getOpenAI(targetProjectId, targetServiceId); // Fallback al principal
+    const {
+        HistoryHandler
+    } =
+        await import(
+            "../../db/historyHandler"
+        );
 
-    const cacheKey = `${targetProjectId}:${targetServiceId}:${key}`;
-    if (!_openaiVisionMap.has(cacheKey)) {
-        console.log(`📡 [OpenAI-Vision] Inicializando nueva instancia para ${targetProjectId}:${targetServiceId} con Key: ${key.slice(0, 8)}...`);
-        const baseURL = getOpenAIBaseUrl();
-        const instance = new OpenAI({
-            apiKey: key,
-            ...(baseURL ? { baseURL } : {})
-        });
-        _openaiVisionMap.set(cacheKey, instance);
+
+    const targetProjectId =
+        projectId ||
+        HistoryHandler
+            .PROJECT_IDENTIFIER;
+
+    const targetServiceId =
+        serviceId ||
+        HistoryHandler
+            .SERVICE_IDENTIFIER;
+
+
+    const key =
+        await HistoryHandler.getConfig(
+            'OPENAI_API_KEY_IMG',
+            targetProjectId,
+            targetServiceId
+        );
+
+
+    if (!key) {
+        return await getOpenAI(
+            targetProjectId,
+            targetServiceId
+        );
     }
-    return _openaiVisionMap.get(cacheKey) || null;
+
+
+    const baseURL =
+        getOpenAIBaseUrl();
+
+    const proxyHeaders =
+        getOpenAIProxyHeaders(
+            baseURL
+        );
+
+
+    const cacheKey =
+        `${targetProjectId}:` +
+        `${targetServiceId}:` +
+        `${key}:` +
+        `${baseURL || 'direct'}`;
+
+
+    if (
+        !_openaiVisionMap.has(
+            cacheKey
+        )
+    ) {
+        console.log(
+            `[OpenAI-Vision] Inicializando nueva instancia para ${targetProjectId}:${targetServiceId}`
+        );
+
+
+        const instance =
+            new OpenAI({
+                apiKey: key,
+
+                ...(baseURL
+                    ? {
+                        baseURL
+                    }
+                    : {}),
+
+                ...(proxyHeaders
+                    ? {
+                        defaultHeaders:
+                            proxyHeaders
+                    }
+                    : {})
+            });
+
+
+        _openaiVisionMap.set(
+            cacheKey,
+            instance
+        );
+    }
+
+
+    return (
+        _openaiVisionMap.get(
+            cacheKey
+        ) ||
+        null
+    );
 }
 
 /**
@@ -285,7 +505,11 @@ export const askWithFunctions = async (assistantId: string, message: string, sta
         if (state && typeof state.get === 'function') {
             preContextData = state.get('datosClienteContext') || {};
         }
-        const dbContext = await HistoryHandler.getClientContext(userId);
+        const dbContext = await HistoryHandler.getClientContext(
+            userId,
+            targetProjectId,
+            chatServiceId
+        );
         if (dbContext) {
             preContextData = {
                 ...dbContext,

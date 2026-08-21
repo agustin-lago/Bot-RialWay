@@ -904,10 +904,26 @@ export class HistoryHandler {
         return cleanId;
     }
 
-    static async getClientContext(rawChatId: string): Promise<any | null> {
+    static async getClientContext(
+        rawChatId: string,
+        forcedProjectId?: string,
+        forcedServiceId?: string
+    ): Promise<any | null> {
         const chatId = this.normalizeId(rawChatId);
+
+        const currentProjectId =
+            forcedProjectId ||
+            this.PROJECT_IDENTIFIER;
+
+        const currentServiceId =
+            forcedServiceId ||
+            this.SERVICE_IDENTIFIER;
+
         if (process.env.STORAGE_MODE === "local") {
-            const chat = await LocalHistoryStore.getChat(chatId, this.PROJECT_IDENTIFIER);
+            const chat = await LocalHistoryStore.getChat(
+                chatId,
+                currentProjectId
+            );
             if (!chat) return null;
             const meta = chat.metadata || {};
             return {
@@ -923,7 +939,11 @@ export class HistoryHandler {
         }
 
         try {
-            const chat = await this.getChat(chatId);
+            const chat = await this.getChat(
+                chatId,
+                currentProjectId,
+                currentServiceId
+            );
             if (!chat) return null;
 
             const meta = chat.metadata || {};
@@ -1001,6 +1021,226 @@ export class HistoryHandler {
         } catch (err) {
             console.error('[HistoryHandler] Error en saveClientContext:', err);
         }
+    }
+
+    static async clearWebchatClientContext(
+        rawChatId: string,
+        forcedProjectId?: string,
+        forcedServiceId?: string
+    ): Promise<boolean> {
+        const chatId =
+            this.normalizeId(rawChatId);
+
+        const currentProjectId =
+            forcedProjectId ||
+            this.PROJECT_IDENTIFIER;
+
+        const currentServiceId =
+            forcedServiceId ||
+            this.SERVICE_IDENTIFIER;
+
+        const clearMetadata = (
+            rawMetadata: any
+        ) => {
+            const metadata = {
+                ...(rawMetadata || {})
+            };
+
+            // Eliminar solamente informacion de cliente.
+            //
+            // NO reemplazar metadata por {}, porque puede contener
+            // flags tecnicos que no forman parte del contexto.
+            const contextKeys = [
+                'nombre',
+                'nombreCliente',
+                'apellido',
+                'direccion',
+                'address',
+                'domicilio',
+                'domicilioCompleto',
+                'email',
+                'telefono',
+                'phone',
+                'dni_cuit',
+                'cuit_dni',
+                'numCliente',
+                'cliente_id',
+                'tax_status',
+                'tipoCliente',
+                'tipo_cliente',
+                'offered_product',
+                'esCliente',
+                'incidencias_ids',
+                'numIncidencias'
+            ];
+
+            for (const key of contextKeys) {
+                delete metadata[key];
+            }
+
+            return metadata;
+        };
+
+        if (
+            process.env.STORAGE_MODE === 'local'
+        ) {
+            const chat =
+                await LocalHistoryStore.getChat(
+                    chatId,
+                    currentProjectId
+                );
+
+            if (!chat) {
+                return true;
+            }
+
+            await LocalHistoryStore.updateContactDetails(
+                chatId,
+                {
+                    metadata:
+                        clearMetadata(
+                            chat.metadata
+                        ),
+
+                    // Restaurar identidad neutra del webchat.
+                    name:
+                        'Webchat User',
+
+                    // Estos campos son inyectados directamente
+                    // en el prompt por openaiHelper.
+                    email:
+                        null,
+
+                    cuit_dni:
+                        null,
+
+                    address:
+                        null,
+
+                    tax_status:
+                        null,
+
+                    offered_product:
+                        null,
+
+                    notes:
+                        null,
+
+                    // Puede contener resultados con informacion
+                    // del cliente y tambien se inyecta al prompt.
+                    last_db_result:
+                        null
+                },
+                currentProjectId
+            );
+
+            return true;
+        }
+
+        const tenantId =
+            await this.requireTenantIdByProjectId(
+                currentProjectId,
+                `clearWebchatClientContext(${chatId})`
+            );
+
+        const chat =
+            await this.getChat(
+                chatId,
+                currentProjectId,
+                currentServiceId
+            );
+
+        // Si todavia no existe chat persistido,
+        // no hay nada que borrar.
+        if (!chat) {
+            return true;
+        }
+
+        const updatePayload = {
+            metadata:
+                clearMetadata(
+                    chat.metadata
+                ),
+
+            name:
+                'Webchat User',
+
+            email:
+                null,
+
+            cuit_dni:
+                null,
+
+            address:
+                null,
+
+            tax_status:
+                null,
+
+            offered_product:
+                null,
+
+            notes:
+                null,
+
+            last_db_result:
+                null
+        };
+
+        this.invalidateChatCache(
+            chatId,
+            currentProjectId
+        );
+
+        let query = supabase
+            .from('chats')
+            .update(updatePayload)
+            .eq(
+                'id',
+                chatId
+            )
+            .eq(
+                'tenant_id',
+                tenantId
+            )
+            .eq(
+                'project_id',
+                currentProjectId
+            );
+
+        if (
+            isScopedServiceId(
+                currentServiceId
+            )
+        ) {
+            query =
+                query.eq(
+                    'service_id',
+                    currentServiceId
+                );
+        }
+
+        const { error } =
+            await query;
+
+        if (error) {
+            console.error(
+                '[HistoryHandler] Error en clearWebchatClientContext:',
+                error
+            );
+
+            throw error;
+        }
+
+        // Invalidar nuevamente despues del UPDATE para
+        // evitar que el siguiente mensaje reutilice chatData
+        // previo desde cache.
+        this.invalidateChatCache(
+            chatId,
+            currentProjectId
+        );
+
+        return true;
     }
 
     /**
