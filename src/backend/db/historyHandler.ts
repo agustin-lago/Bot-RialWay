@@ -70,6 +70,7 @@ const getReplyPreviewContent = (content: any, type: string): string => {
 
 const resolveReplyMetadata = async (
     chatId: string,
+    tenantId: string,
     projectId: string,
     serviceId: string | null,
     rawReplyTo: string | null,
@@ -85,9 +86,10 @@ const resolveReplyMetadata = async (
         const buildQuery = () => {
             let query = supabase
                 .from('messages')
-                .select('id, external_id, role, content, type')
+                .select('id, external_id, role, content, type, tenant_id')
                 .in('chat_id', [chatId, `${chatId}@s.whatsapp.net`, `${chatId}@c.us`])
-                .eq('project_id', projectId);
+                .eq('project_id', projectId)
+                .or(`tenant_id.eq.${tenantId},tenant_id.is.null`);
 
             if (isScopedServiceId(serviceId)) {
                 query = query.eq('service_id', serviceId);
@@ -155,8 +157,10 @@ export interface Chat {
 
 export interface Message {
     id?: string;
+    tenant_id?: string | null;
     chat_id: string;
     project_id: string;
+    service_id?: string | null;
     role: 'user' | 'assistant' | 'system';
     content: string;
     type: 'text' | 'image' | 'audio' | 'video' | 'location' | 'document';
@@ -1704,7 +1708,7 @@ export class HistoryHandler {
                 : rawPayload;
             const rawReplyTo = fallbackRawPayload?.replyTo || fallbackRawPayload?.reply_to || fallbackRawPayload?.context?.id || fallbackRawPayload?.context?.message_id || null;
             const rawReplyPreview = fallbackRawPayload?.replyPreview || fallbackRawPayload?.reply_preview || null;
-            const { replyTo, replyPreview } = await resolveReplyMetadata(chatId, currentProjectId, currentServiceId, rawReplyTo, rawReplyPreview, chatObj);
+            const { replyTo, replyPreview } = await resolveReplyMetadata(chatId, tenantId, currentProjectId, currentServiceId, rawReplyTo, rawReplyPreview, chatObj);
             const enrichedRawPayload = fallbackRawPayload
                 ? {
                     ...fallbackRawPayload,
@@ -1723,19 +1727,32 @@ export class HistoryHandler {
                     .from('messages')
                     .select('*')
                     .eq('external_id', external_id)
+                    .eq('project_id', currentProjectId)
+                    .eq('service_id', currentServiceId)
+                    .or(`tenant_id.eq.${tenantId},tenant_id.is.null`)
                     .maybeSingle();
 
                 if (!exactError && exactMatch) {
-                    if ((replyTo && !exactMatch.reply_to) || (replyPreview && !exactMatch.reply_preview) || (safeRawPayload && !exactMatch.raw_payload)) {
+                    let messageToReturn = exactMatch;
+                    if (!exactMatch.tenant_id || (replyTo && !exactMatch.reply_to) || (replyPreview && !exactMatch.reply_preview) || (safeRawPayload && !exactMatch.raw_payload)) {
                         const updatePayload: any = {};
+                        if (!exactMatch.tenant_id) updatePayload.tenant_id = tenantId;
                         if (replyTo && !exactMatch.reply_to) updatePayload.reply_to = replyTo;
                         if (replyPreview && !exactMatch.reply_preview) updatePayload.reply_preview = replyPreview;
                         if (safeRawPayload && !exactMatch.raw_payload) updatePayload.raw_payload = safeRawPayload;
-                        const { data: updatedRows, error: updateError } = await supabase.from('messages').update(updatePayload).eq('id', exactMatch.id).select();
+                        const { data: updatedRows, error: updateError } = await supabase
+                            .from('messages')
+                            .update(updatePayload)
+                            .eq('id', exactMatch.id)
+                            .eq('project_id', currentProjectId)
+                            .eq('service_id', currentServiceId)
+                            .or(`tenant_id.eq.${tenantId},tenant_id.is.null`)
+                            .select();
                         if (updateError) {
                             console.warn('[HistoryHandler] No se pudo enriquecer mensaje existente con reply/raw_payload:', updateError.message);
                         }
                         const updatedMsg = updatedRows?.[0] || { ...exactMatch, ...updatePayload };
+                        messageToReturn = updatedMsg;
                         historyEvents.emit('new_message', {
                             ...updatedMsg,
                             chat_id: chatId,
@@ -1747,9 +1764,10 @@ export class HistoryHandler {
                             rawPayload: updatedMsg.raw_payload
                         });
                     }
-                    return [exactMatch]; // Ya existe, retornamos sin emitir evento repetido
+                    return [messageToReturn]; // Ya existe, retornamos sin emitir evento repetido
                 }
             }
+
 
             // 2. BUSQUEDA POR CONTENIDO + TIEMPO (Deduplicación Difusa)
             // Esto evita duplicados cuando el sistema guarda el mensaje antes de enviarlo (ID nulo)
@@ -1758,9 +1776,11 @@ export class HistoryHandler {
 
             const { data: recentlySaved, error: searchError } = await supabase
                 .from('messages')
-                .select('id, external_id')
+                .select('id, external_id, tenant_id')
                 .eq('chat_id', chatId)
                 .eq('project_id', currentProjectId)
+                .eq('service_id', currentServiceId)
+                .or(`tenant_id.eq.${tenantId},tenant_id.is.null`)
                 .eq('role', role)
                 .eq('content', content)
                 .gt('created_at', thirtySecondsAgo)
@@ -1774,12 +1794,14 @@ export class HistoryHandler {
                 if (existing.external_id && external_id && existing.external_id !== external_id) {
                     // Continuar con la inserción normal
                 } else {
-                    const shouldEnrichExisting = (!existing.external_id && external_id) || !!replyTo || !!replyPreview || !!safeRawPayload;
+                    const shouldEnrichExisting = !existing.tenant_id || (!existing.external_id && external_id) || !!replyTo || !!replyPreview || !!safeRawPayload;
+                    let recentlySavedResponse: any = recentlySaved;
                     if (shouldEnrichExisting) {
                         if (!existing.external_id && external_id) {
                             console.log(`[HistoryHandler] 🔄 Vinculando ID externo a mensaje existente: ${existing.id} -> ${external_id}`);
                         }
                         const updatePayload: any = {};
+                        if (!existing.tenant_id) updatePayload.tenant_id = tenantId;
                         if (!existing.external_id && external_id) updatePayload.external_id = external_id;
                         if (replyTo) updatePayload.reply_to = replyTo;
                         if (replyPreview) updatePayload.reply_preview = replyPreview;
@@ -1789,11 +1811,15 @@ export class HistoryHandler {
                                 .from('messages')
                                 .update(updatePayload)
                                 .eq('id', existing.id)
+                                .eq('project_id', currentProjectId)
+                                .eq('service_id', currentServiceId)
+                                .or(`tenant_id.eq.${tenantId},tenant_id.is.null`)
                                 .select();
                             if (updateError) {
                                 console.warn('[HistoryHandler] No se pudo enriquecer mensaje difuso con reply/raw_payload:', updateError.message);
                             }
                             const updatedMsg = updatedRows?.[0] || { ...existing, ...updatePayload, chat_id: chatId, role, content, type };
+                            recentlySavedResponse = [updatedMsg];
                             historyEvents.emit('new_message', {
                                 ...updatedMsg,
                                 chat_id: chatId,
@@ -1806,13 +1832,14 @@ export class HistoryHandler {
                             });
                         }
                     }
-                    return recentlySaved;
+                    return recentlySavedResponse;
                 }
             }
 
             // 3. INSERCIÓN NORMAL (Si no se encontró duplicado)
             const insertPayload = {
                 chat_id: chatId,
+                tenant_id: tenantId,
                 project_id: currentProjectId,
                 service_id: currentServiceId,
                 role,
@@ -1862,6 +1889,7 @@ export class HistoryHandler {
                 .from('chats')
                 .update(chatUpdate)
                 .eq('id', chatId)
+                .eq('tenant_id', tenantId)
                 .eq('project_id', currentProjectId);
             if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
                 chatUpdateQuery = chatUpdateQuery.eq('service_id', currentServiceId);
