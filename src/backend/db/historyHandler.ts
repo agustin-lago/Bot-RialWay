@@ -2358,37 +2358,82 @@ export class HistoryHandler {
     }
 
     /**
-     * Verifica si un contacto está en lista negra (sin_bot o bloqueado_crm)
+     * Verifica si un contacto esta en lista negra
+     * (sin_bot o bloqueado_crm).
+     *
+     * El tenant SIEMPRE se resuelve server-side.
      */
     static async isContactBlacklisted(rawChatId: string, projectId?: string | null, serviceId?: string | null): Promise<boolean> {
         if (!supabase) return false;
-        try {
-            const chatId = this.normalizeId(rawChatId);
-            const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
-            const currentServiceId = serviceId || this.SERVICE_IDENTIFIER;
 
+        if (process.env.STORAGE_MODE === 'local') {
+            return false;
+        }
+
+        const chatId = this.normalizeId(rawChatId);
+        const currentProjectId = projectId || this.PROJECT_IDENTIFIER;
+        const currentServiceId = serviceId || this.SERVICE_IDENTIFIER;
+
+        let tenantId: string;
+
+        try {
+            const tenantResolution = await this.resolveTenantIdByProjectId(currentProjectId);
+
+            if (tenantResolution.globalScope) {
+                return false;
+            }
+
+            if (!tenantResolution.resolved || !tenantResolution.tenantId) {
+                console.warn(
+                    `[HistoryHandler] [Tenant] No se pudo resolver tenant ` +
+                    `para isContactBlacklisted(${chatId}) ` +
+                    `project=${currentProjectId}`
+                );
+
+                return true;
+            }
+
+            tenantId = tenantResolution.tenantId;
+        } catch (err: any) {
+            console.warn(
+                `[HistoryHandler] [Tenant] Error resolviendo tenant ` +
+                `en isContactBlacklisted(${chatId}):`,
+                err?.message || err
+            );
+
+            return true;
+        }
+
+        try {
             const possibleIds = Array.from(new Set([chatId, `${chatId}@s.whatsapp.net`, `${chatId}@c.us`, rawChatId])).filter(Boolean);
 
             let query = supabase
                 .from('blacklist')
                 .select('sin_bot, bloqueado_crm')
                 .in('chat_id', possibleIds)
+                .eq('tenant_id', tenantId)
                 .eq('project_id', currentProjectId)
                 .or('sin_bot.eq.true,bloqueado_crm.eq.true');
 
             if (isScopedServiceId(currentServiceId)) {
-                query = query.or(`service_id.eq.${currentServiceId},service_id.is.null,service_id.eq.default,service_id.eq.default_service`);
+                query = query.or(
+                    `service_id.eq.${currentServiceId},` +
+                    'service_id.is.null,' +
+                    'service_id.eq.default,' +
+                    'service_id.eq.default_service'
+                );
             }
 
             const { data, error } = await query.limit(1);
             if (error) {
                 console.warn('[HistoryHandler] Error consultando isContactBlacklisted:', error.message);
+
                 return false;
             }
 
             return !!(data && data.length > 0);
         } catch (err: any) {
-            console.warn('[HistoryHandler] Excepción en isContactBlacklisted:', err?.message || err);
+            console.warn('[HistoryHandler] Excepcion en isContactBlacklisted:', err?.message || err);
             return false;
         }
     }
@@ -2437,11 +2482,17 @@ export class HistoryHandler {
         this.invalidateChatCache(chatId, currentProjectId);
 
         try {
+            const tenantId = await this.requireTenantIdByProjectId(
+                currentProjectId,
+                `toggleBot(${chatId})`
+            );
+
             // Obtener el chat actual para ver su metadata antes de actualizar
             const { data: currentChat } = await supabase
                 .from('chats')
                 .select('metadata')
                 .eq('id', chatId)
+                .eq('tenant_id', tenantId)
                 .eq('project_id', currentProjectId)
                 .maybeSingle();
 
@@ -2472,6 +2523,7 @@ export class HistoryHandler {
                 .from('chats')
                 .update(updateData)
                 .eq('id', chatId)
+                .eq('tenant_id', tenantId)
                 .eq('project_id', currentProjectId);
 
             if (currentServiceId && currentServiceId !== 'default' && currentServiceId !== 'default_service') {
@@ -2751,15 +2803,25 @@ export class HistoryHandler {
                 }
 
                 // --- FILTRO LISTA NEGRA (bloqueado_crm) ---
-                // Si la integración está activa, ocultamos los chats bloqueados del CRM
+                // El tenant ya fue resuelto al comienzo de listChats().
                 try {
-                    const blacklistActive = await this.getSetting('BLACKLIST_ACTIVE');
+                    const blacklistActive = await this.getSetting(
+                        'BLACKLIST_ACTIVE',
+                        currentProjectId
+                    );
+
                     if (blacklistActive === 'true') {
-                        const { data: blockedEntries } = await supabase
+                        const { data: blockedEntries, error: blacklistError } = await supabase
                             .from('blacklist')
                             .select('chat_id')
-                            .eq('project_id', this.PROJECT_IDENTIFIER)
+                            .eq('tenant_id', tenantId)
+                            .eq('project_id', currentProjectId)
                             .eq('bloqueado_crm', true);
+
+                        if (blacklistError) {
+                            throw blacklistError;
+                        }
+
                         if (blockedEntries && blockedEntries.length > 0) {
                             const blockedIds = new Set(blockedEntries.map((e: any) => e.chat_id));
                             finalChats = finalChats.filter((c: any) => !blockedIds.has(c.id));

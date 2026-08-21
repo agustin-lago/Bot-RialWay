@@ -5604,6 +5604,24 @@ Hemos recibido tu pago con Ã©xito.
 
     // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // LISTA NEGRA
+    const resolveBlacklistTenantId = async (
+        projectId: string
+    ): Promise<string | null> => {
+        const tenantResolution =
+            await depsHistoryHandler.resolveTenantIdByProjectId(
+                projectId
+            );
+
+        if (
+            !tenantResolution.resolved ||
+            tenantResolution.globalScope ||
+            !tenantResolution.tenantId
+        ) {
+            return null;
+        }
+
+        return tenantResolution.tenantId;
+    };
     // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /** GET /api/backoffice/blacklist/status â€” Â¿EstÃ¡ activa la integraciÃ³n? */
@@ -5630,15 +5648,24 @@ Hemos recibido tu pago con Ã©xito.
         }
     });
 
-    /** POST /api/backoffice/blacklist/deactivate â€” Desactiva y elimina todos los registros */
+    /** POST /api/backoffice/blacklist/deactivate - Desactiva y elimina todos los registros */
     app.post('/api/backoffice/blacklist/deactivate', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
             const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
-            // 1. Eliminar todas las entradas de blacklist del proyecto/servicio
+            const tenantId = await resolveBlacklistTenantId(projectId);
+
+            if (!tenantId) {
+                return res.status(403).json({
+                    success: false,
+                    error: 'No se pudo resolver el tenant propietario del proyecto.'
+                });
+            }
+
             let blQuery = supabase
                 .from('blacklist')
                 .delete()
+                .eq('tenant_id', tenantId)
                 .eq('project_id', projectId);
 
             if (serviceId && serviceId !== 'default' && serviceId !== 'default_service') {
@@ -5647,7 +5674,7 @@ Hemos recibido tu pago con Ã©xito.
 
             const { error: delErr } = await blQuery;
             if (delErr) throw delErr;
-            // 2. Desactivar el setting
+
             await depsHistoryHandler.saveSetting('BLACKLIST_ACTIVE', 'false', projectId, serviceId && serviceId !== 'default' && serviceId !== 'default_service' ? serviceId : null);
             res.json({ success: true });
         } catch (e: any) {
@@ -5655,14 +5682,24 @@ Hemos recibido tu pago con Ã©xito.
         }
     });
 
-    /** GET /api/backoffice/blacklist â€” Lista todas las entradas del proyecto */
+    /** GET /api/backoffice/blacklist - Lista todas las entradas del proyecto */
     app.get('/api/backoffice/blacklist', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
             const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+            const tenantId = await resolveBlacklistTenantId(projectId);
+
+            if (!tenantId) {
+                return res.status(403).json({
+                    success: false,
+                    error: 'No se pudo resolver el tenant propietario del proyecto.'
+                });
+            }
+
             let blQuery = supabase
                 .from('blacklist')
                 .select('chat_id, sin_bot, bloqueado_crm, notes, updated_at')
+                .eq('tenant_id', tenantId)
                 .eq('project_id', projectId);
 
             if (serviceId && serviceId !== 'default' && serviceId !== 'default_service') {
@@ -5671,7 +5708,7 @@ Hemos recibido tu pago con Ã©xito.
 
             const { data, error } = await blQuery.order('updated_at', { ascending: false });
             if (error) throw error;
-            // Enriquecer con nombre del contacto desde chats
+
             const chatIds = (data || []).map((r: any) => r.chat_id);
             const chatNames: Record<string, string> = {};
             if (chatIds.length > 0) {
@@ -5679,13 +5716,16 @@ Hemos recibido tu pago con Ã©xito.
                     .from('chats')
                     .select('id, name')
                     .in('id', chatIds)
+                    .eq('tenant_id', tenantId)
                     .eq('project_id', projectId);
 
                 if (serviceId && serviceId !== 'default' && serviceId !== 'default_service') {
                     chatQuery = chatQuery.eq('service_id', serviceId);
                 }
 
-                const { data: chatRows } = await chatQuery;
+                const { data: chatRows, error: chatError } = await chatQuery;
+                if (chatError) throw chatError;
+
                 (chatRows || []).forEach((c: any) => { chatNames[c.id] = c.name || c.id; });
             }
             const enriched = (data || []).map((r: any) => ({
@@ -5698,16 +5738,25 @@ Hemos recibido tu pago con Ã©xito.
         }
     });
 
-    /** POST /api/backoffice/blacklist — Upsert de una entrada */
+    /** POST /api/backoffice/blacklist - Upsert de una entrada */
     app.post('/api/backoffice/blacklist', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         try {
             const { chat_id, sin_bot, bloqueado_crm, notes } = req.body;
             if (!chat_id) return res.status(400).json({ success: false, error: 'chat_id requerido' });
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
             const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+            const tenantId = await resolveBlacklistTenantId(projectId);
+
+            if (!tenantId) {
+                return res.status(403).json({
+                    success: false,
+                    error: 'No se pudo resolver el tenant propietario del proyecto.'
+                });
+            }
 
             const upsertData: any = {
                 chat_id,
+                tenant_id: tenantId,
                 project_id: projectId,
                 sin_bot: !!sin_bot,
                 bloqueado_crm: !!bloqueado_crm,
@@ -5733,11 +5782,20 @@ Hemos recibido tu pago con Ã©xito.
         }
     });
 
-    /** DELETE /api/backoffice/blacklist/:chatId — Elimina una entrada */
+    /** DELETE /api/backoffice/blacklist/:chatId - Elimina una entrada */
     app.delete('/api/backoffice/blacklist/:chatId', backofficeAuth, async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
             const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+            const tenantId = await resolveBlacklistTenantId(projectId);
+
+            if (!tenantId) {
+                return res.status(403).json({
+                    success: false,
+                    error: 'No se pudo resolver el tenant propietario del proyecto.'
+                });
+            }
+
             const chatId = req.params.chatId;
             const normId = depsHistoryHandler.normalizeId(chatId);
             const possibleIds = Array.from(new Set([chatId, normId, `${normId}@s.whatsapp.net`, `${normId}@c.us`]));
@@ -5746,6 +5804,7 @@ Hemos recibido tu pago con Ã©xito.
                 .from('blacklist')
                 .delete()
                 .in('chat_id', possibleIds)
+                .eq('tenant_id', tenantId)
                 .eq('project_id', projectId);
 
             if (serviceId && serviceId !== 'default' && serviceId !== 'default_service') {
@@ -5774,18 +5833,27 @@ Hemos recibido tu pago con Ã©xito.
         }
     });
 
-    /** POST /api/backoffice/blacklist/toggle/:chatId — Agrega o quita de lista negra (toggle rápido desde header) */
+    /** POST /api/backoffice/blacklist/toggle/:chatId - Agrega o quita de lista negra */
     app.post('/api/backoffice/blacklist/toggle/:chatId', backofficeAuth, bodyParser.json(), async (req: any, res: any) => {
         try {
             const projectId = resolveProjectId(req) || depsHistoryHandler.PROJECT_IDENTIFIER;
             const serviceId = resolveServiceId(req) || depsHistoryHandler.SERVICE_IDENTIFIER;
+            const tenantId = await resolveBlacklistTenantId(projectId);
+
+            if (!tenantId) {
+                return res.status(403).json({
+                    success: false,
+                    error: 'No se pudo resolver el tenant propietario del proyecto.'
+                });
+            }
+
             const chatId = req.params.chatId;
             const { inBlacklist } = req.body;
 
             if (inBlacklist) {
-                // Agregar con sin_bot=true por defecto
                 const upsertData: any = {
                     chat_id: chatId,
+                    tenant_id: tenantId,
                     project_id: projectId,
                     sin_bot: true,
                     bloqueado_crm: false,
@@ -5801,10 +5869,8 @@ Hemos recibido tu pago con Ã©xito.
                     .upsert(upsertData, { onConflict: 'chat_id,project_id' });
                 if (error) throw error;
 
-                // Desactivar el bot inmediatamente para este contacto
                 await depsHistoryHandler.toggleBot(chatId, false, projectId, serviceId);
             } else {
-                // Quitar de la lista
                 const normId = depsHistoryHandler.normalizeId(chatId);
                 const possibleIds = Array.from(new Set([chatId, normId, `${normId}@s.whatsapp.net`, `${normId}@c.us`]));
 
@@ -5812,6 +5878,7 @@ Hemos recibido tu pago con Ã©xito.
                     .from('blacklist')
                     .delete()
                     .in('chat_id', possibleIds)
+                    .eq('tenant_id', tenantId)
                     .eq('project_id', projectId);
 
                 if (serviceId && serviceId !== 'default' && serviceId !== 'default_service') {
