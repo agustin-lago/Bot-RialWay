@@ -2681,6 +2681,46 @@ export const registerBackofficeRoutes = (app: any) => {
         if (isAbsent(mergedConfig.phone_number_id) && process.env.META_PHONE_ID)     mergedConfig.phone_number_id = process.env.META_PHONE_ID;
         if (isAbsent(mergedConfig.access_token)   && process.env.META_ACCESS_TOKEN) mergedConfig.access_token   = process.env.META_ACCESS_TOKEN;
 
+        const hasMetaValue = (value: any): boolean => {
+            if (value === undefined || value === null) {
+                return false;
+            }
+
+            const normalized =
+                String(value).trim();
+
+            return (
+                normalized !== '' &&
+                normalized !== 'PENDING'
+            );
+        };
+
+        const hasAccessToken =
+            hasMetaValue(
+                mergedConfig.access_token
+            );
+
+        const hasWabaId =
+            hasMetaValue(
+                mergedConfig.waba_id
+            );
+
+        const hasPhoneNumberId =
+            hasMetaValue(
+                mergedConfig.phone_number_id
+            );
+
+        const connectionState =
+            (
+                hasAccessToken &&
+                hasWabaId &&
+                hasPhoneNumberId
+            )
+                ? 'connected'
+                : hasAccessToken
+                    ? 'partial'
+                    : 'disconnected';
+
         const dbAppId = await depsHistoryHandler.getConfig('META_APP_ID', projectId, serviceId);
         const dbAppSecret = await depsHistoryHandler.getConfig('META_APP_SECRET', projectId, serviceId);
         const dbConfigId = await depsHistoryHandler.getConfig('META_CONFIG_ID', projectId, serviceId);
@@ -2692,6 +2732,7 @@ export const registerBackofficeRoutes = (app: any) => {
             configId: dbConfigId || process.env.META_CONFIG_ID,
             railwayProjectId: projectId,
             serviceId: serviceId,
+            connectionState,
             config: mergedConfig
         });
     });
@@ -3813,9 +3854,38 @@ export const registerBackofficeRoutes = (app: any) => {
                 await depsHistoryHandler.saveSetting('MESSENGER_VISIBLE', 'on', projectId, serviceId);
             }
 
+            const isValidMetaId = (
+                value: any
+            ): boolean => {
+                if (
+                    value === undefined ||
+                    value === null
+                ) {
+                    return false;
+                }
+
+                const normalized =
+                    String(value).trim();
+
+                return (
+                    normalized !== '' &&
+                    normalized !== 'PENDING'
+                );
+            };
+
+            const hasCompleteWhatsAppIds =
+                isValidMetaId(finalWabaId) &&
+                isValidMetaId(finalPhoneId);
+
             // 3. VerificaciÃ³n de resultados y depuraciÃ³n de scopes si fallÃ³ todo
-            if (!discovery.found && !pageDiscovery) {
-                console.warn('⚠️ [CALLBACK] No se pudo descubrir ningún recurso automáticamente.');
+            if (!hasCompleteWhatsAppIds) {
+                console.warn(
+                    '[CALLBACK] Meta fue autorizado pero la configuración ' +
+                    'de WhatsApp está incompleta. ' +
+                    `WABA=${finalWabaId || 'null'}, ` +
+                    `Phone=${finalPhoneId || 'null'}. ` +
+                    'Se conservará únicamente la autorización para permitir sincronización posterior.'
+                );
 
                 const diagHtml = discovery.diagnostics.map(d => `
                     <div style="margin-bottom: 15px; border-bottom: 1px solid #edf2f7; padding-bottom: 10px;">
@@ -3938,7 +4008,31 @@ export const registerBackofficeRoutes = (app: any) => {
                 `;
 
                 // Guardar solo el token para futuras referencias
-                await depsHistoryHandler.saveMetaOnboardingData(null as any, null as any, accessToken, { diagnostics: discovery.diagnostics }, projectId, serviceId);
+                const partialSaveResult =
+                    await depsHistoryHandler
+                        .saveMetaOnboardingData(
+                            null as any,
+                            null as any,
+                            accessToken,
+                            {
+                                diagnostics:
+                                    discovery.diagnostics,
+                                pendingSync: true
+                            },
+                            projectId,
+                            serviceId
+                        );
+
+                if (
+                    !partialSaveResult?.success
+                ) {
+                    console.error(
+                        '[CALLBACK] No se pudo persistir ' +
+                        'el estado parcial de Meta:',
+                        partialSaveResult?.error
+                    );
+                }
+
                 return res.send(htmlError);
             }
 
@@ -3973,7 +4067,28 @@ export const registerBackofficeRoutes = (app: any) => {
                     console.warn('âš ï¸ [CALLBACK] No se pudo suscribir a smb_message_echoes:', smbErr?.response?.data || smbErr.message);
                 }
 
-                await depsHistoryHandler.saveMetaOnboardingData(finalWabaId, finalPhoneId, tokenToUse, { verified_name: finalVerifiedName }, projectId, serviceId);
+                const saveResult =
+                    await depsHistoryHandler
+                        .saveMetaOnboardingData(
+                            finalWabaId,
+                            finalPhoneId,
+                            tokenToUse,
+                            {
+                                verified_name:
+                                    finalVerifiedName
+                            },
+                            projectId,
+                            serviceId
+                        );
+
+                if (
+                    !saveResult?.success
+                ) {
+                    throw new Error(
+                        saveResult?.error ||
+                        'No se pudo persistir la configuración de Meta.'
+                    );
+                }
 
                 // --- SINCRONIZACIÃ“N AUTOMÃTICA SMB ---
                 // Solicitamos contactos e historial inmediatamente tras la vinculaciÃ³n

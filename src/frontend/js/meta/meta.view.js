@@ -243,39 +243,237 @@ window.metaView = (() => {
     }
 
     // ── Verificacion de conexion ──────────────────────────────────────────
+    function setMetaOnboardingButtonState(state) {
+        const btn =
+            document.getElementById(
+                'meta-onboard-btn'
+            );
+
+        if (!btn) {
+            return;
+        }
+
+        btn.disabled = false;
+
+        if (state === 'partial') {
+            btn.innerHTML =
+                '<i class="fas fa-rotate"></i> ' +
+                'Sincronizar y guardar';
+
+            btn.onclick =
+                syncAndSaveConnection;
+
+            return;
+        }
+
+        btn.innerHTML =
+            '<i class="fab fa-meta"></i> ' +
+            'Vincular con META';
+
+        btn.onclick =
+            launchMetaOnboardingView;
+    }
+
     async function checkMetaConnection(silent = false) {
         try {
-            const sId = (typeof window !== 'undefined' && window.railwayServiceId) ? window.railwayServiceId : '';
-            const pId = (typeof window !== 'undefined' && window.railwayProjectId) ? window.railwayProjectId : '';
-            const res  = await fetch(`/api/backoffice/whatsapp/config?token=${_token}&serviceId=${sId}&projectId=${pId}`);
-            const data = await res.json();
-            _metaConfig = (data && data.config) || {};
-            const validId = (v) => v && v !== 'PENDING';
-            const connected = validId(_metaConfig.waba_id) && validId(_metaConfig.phone_number_id);
+            const sId =
+                (
+                    typeof window !== 'undefined' &&
+                    window.railwayServiceId
+                )
+                    ? window.railwayServiceId
+                    : '';
 
-            if (connected) {
-                const libLink = document.getElementById('link-meta-library');
-                const newLink = document.getElementById('link-meta-new');
-                if (libLink) libLink.href = `https://business.facebook.com/latest/whatsapp_manager/template_library?asset_id=${_metaConfig.waba_id}`;
-                if (newLink) newLink.href  = `https://business.facebook.com/latest/whatsapp_manager/message_templates?asset_id=${_metaConfig.waba_id}`;
+            const pId =
+                (
+                    typeof window !== 'undefined' &&
+                    window.railwayProjectId
+                )
+                    ? window.railwayProjectId
+                    : '';
 
-                const notConn = document.getElementById('meta-not-connected');
-                if (notConn) notConn.style.display = 'none';
+            const params =
+                new URLSearchParams({
+                    token: _token
+                });
 
-                const badgeBar = document.getElementById('meta-view-badge-bar');
-                if (badgeBar) badgeBar.style.display = 'flex';
+            if (sId) {
+                params.set(
+                    'serviceId',
+                    sId
+                );
+            }
 
-                const area = document.getElementById('meta-connected-area');
-                if (area) area.style.display = 'block';
+            if (pId) {
+                params.set(
+                    'projectId',
+                    pId
+                );
+            }
+
+            const res =
+                await fetch(
+                    `/api/backoffice/whatsapp/config?${params.toString()}`
+                );
+
+            const data =
+                await res.json();
+
+            _metaConfig =
+                (
+                    data &&
+                    data.config
+                ) ||
+                {};
+
+            const validValue = (value) => {
+                if (
+                    value === undefined ||
+                    value === null
+                ) {
+                    return false;
+                }
+
+                const normalized =
+                    String(value).trim();
+
+                return (
+                    normalized !== '' &&
+                    normalized !== 'PENDING'
+                );
+            };
+
+            const fallbackState =
+                (
+                    validValue(
+                        _metaConfig.access_token
+                    ) &&
+                    validValue(
+                        _metaConfig.waba_id
+                    ) &&
+                    validValue(
+                        _metaConfig.phone_number_id
+                    )
+                )
+                    ? 'connected'
+                    : validValue(
+                        _metaConfig.access_token
+                    )
+                        ? 'partial'
+                        : 'disconnected';
+
+            const connectionState =
+                data?.connectionState ||
+                fallbackState;
+
+            const notConn =
+                document.getElementById(
+                    'meta-not-connected'
+                );
+
+            const badgeBar =
+                document.getElementById(
+                    'meta-view-badge-bar'
+                );
+
+            const area =
+                document.getElementById(
+                    'meta-connected-area'
+                );
+
+            if (
+                connectionState ===
+                'connected'
+            ) {
+                const libLink =
+                    document.getElementById(
+                        'link-meta-library'
+                    );
+
+                const newLink =
+                    document.getElementById(
+                        'link-meta-new'
+                    );
+
+                if (libLink) {
+                    libLink.href =
+                        'https://business.facebook.com/latest/' +
+                        'whatsapp_manager/template_library?' +
+                        `asset_id=${_metaConfig.waba_id}`;
+                }
+
+                if (newLink) {
+                    newLink.href =
+                        'https://business.facebook.com/latest/' +
+                        'whatsapp_manager/message_templates?' +
+                        `asset_id=${_metaConfig.waba_id}`;
+                }
+
+                if (notConn) {
+                    notConn.style.display =
+                        'none';
+                }
+
+                if (badgeBar) {
+                    badgeBar.style.display =
+                        'flex';
+                }
+
+                if (area) {
+                    area.style.display =
+                        'block';
+                }
 
                 loadTags();
                 loadTemplates();
-            } else if (!silent) {
-                const notConn = document.getElementById('meta-not-connected');
-                if (notConn) notConn.style.display = 'block';
+
+                return 'connected';
             }
+
+            if (badgeBar) {
+                badgeBar.style.display =
+                    'none';
+            }
+
+            if (area) {
+                area.style.display =
+                    'none';
+            }
+
+            if (!silent && notConn) {
+                notConn.style.display =
+                    'block';
+            }
+
+            setMetaOnboardingButtonState(
+                connectionState
+            );
+
+            return connectionState;
+
         } catch (e) {
-            console.error('[MetaView] Error al verificar conexion:', e);
+            console.error(
+                '[MetaView] Error al verificar conexion:',
+                e
+            );
+
+            if (!silent) {
+                const notConn =
+                    document.getElementById(
+                        'meta-not-connected'
+                    );
+
+                if (notConn) {
+                    notConn.style.display =
+                        'block';
+                }
+
+                setMetaOnboardingButtonState(
+                    'disconnected'
+                );
+            }
+
+            return 'unknown';
         }
     }
 
@@ -775,6 +973,11 @@ window.metaView = (() => {
 
     // ── Onboarding (estado no-conectado) ─────────────────────────────────
     function launchMetaOnboardingView() {
+        const onboardBtn =
+            document.getElementById(
+                'meta-onboard-btn'
+            );
+
         // Abrir popup ANTES del fetch para preservar el gesto del usuario
         const w = 600, h = 800;
         const left = (window.screen.width / 2) - (w / 2);
@@ -783,8 +986,16 @@ window.metaView = (() => {
             `width=${w},height=${h},top=${top},left=${left},scrollbars=yes,status=no,menubar=no`);
 
         if (!popup) {
+            if (onboardBtn) {
+                onboardBtn.disabled = false;
+            }
+
             showToast('⚠️ El navegador bloqueó la ventana emergente. Permitila e intenta de nuevo.', 'error');
             return;
+        }
+
+        if (onboardBtn) {
+            onboardBtn.disabled = true;
         }
 
         const statusEl = document.getElementById('meta-onboard-status');
@@ -798,6 +1009,9 @@ window.metaView = (() => {
                 if (!data.appId) {
                     popup.close();
                     if (statusEl) statusEl.style.display = 'none';
+                    setMetaOnboardingButtonState(
+                        'disconnected'
+                    );
                     showToast('⚠️ Faltan credenciales de Meta en el servidor', 'error');
                     return;
                 }
@@ -818,22 +1032,32 @@ window.metaView = (() => {
                 popup.location.href = url.toString();
 
                 if (_popupCheckInterval) clearInterval(_popupCheckInterval);
-                _popupCheckInterval = setInterval(() => {
+                _popupCheckInterval = setInterval(async () => {
                     if (popup.closed) {
-                        clearInterval(_popupCheckInterval);
-                        _popupCheckInterval = null;
-                        if (statusEl) statusEl.style.display = 'none';
-                        const btn = document.getElementById('meta-onboard-btn');
-                        if (btn) {
-                            btn.innerHTML = '<i class="fas fa-rotate"></i> Sincronizar y guardar';
-                            btn.onclick = syncAndSaveConnection;
+                        clearInterval(
+                            _popupCheckInterval
+                        );
+
+                        _popupCheckInterval =
+                            null;
+
+                        if (statusEl) {
+                            statusEl.style.display =
+                                'none';
                         }
+
+                        await checkMetaConnection(
+                            false
+                        );
                     }
                 }, 1000);
             })
             .catch(() => {
                 popup.close();
                 if (statusEl) statusEl.style.display = 'none';
+                setMetaOnboardingButtonState(
+                    'disconnected'
+                );
                 showToast('❌ Error al obtener configuracion', 'error');
             });
     }
@@ -845,13 +1069,40 @@ window.metaView = (() => {
             btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Sincronizando...';
         }
         try {
-            const res = await fetch('/api/backoffice/whatsapp/sync-ids?token=' + _token, { method: 'POST' });
-            const data = await res.json();
+            const params =
+                new URLSearchParams({
+                    token: _token
+                });
+
+            if (window.railwayProjectId) {
+                params.set(
+                    'projectId',
+                    window.railwayProjectId
+                );
+            }
+
+            if (window.railwayServiceId) {
+                params.set(
+                    'serviceId',
+                    window.railwayServiceId
+                );
+            }
+
+            const res =
+                await fetch(
+                    `/api/backoffice/whatsapp/sync-ids?${params.toString()}`,
+                    {
+                        method: 'POST'
+                    }
+                );
+
+            const data =
+                await res.json();
+
             if (!data.success) {
-                if (btn) {
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="fas fa-rotate"></i> Sincronizar y guardar';
-                }
+                await checkMetaConnection(
+                    false
+                );
                 showToast('Hubo un problema interno con las credenciales de vinculacion. Soporte sera notificado de este ticket.', 'error');
                 return;
             }
@@ -861,20 +1112,18 @@ window.metaView = (() => {
                 showToast('Credenciales sincronizadas y guardadas correctamente.', 'success');
             }
         } catch (_) {
-            if (btn) {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-rotate"></i> Sincronizar y guardar';
-            }
+            await checkMetaConnection(
+                false
+            );
             showToast('Hubo un problema interno con las credenciales de vinculacion. Soporte sera notificado de este ticket.', 'error');
             return;
         }
         try {
             await checkMetaConnection(false);
         } catch (_) {
-            if (btn) {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-rotate"></i> Sincronizar y guardar';
-            }
+            await checkMetaConnection(
+                false
+            );
             showToast('Hubo un problema interno con las credenciales de vinculacion. Soporte sera notificado de este ticket.', 'error');
         }
     }
