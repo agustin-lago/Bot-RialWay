@@ -148,7 +148,8 @@ export const welcomeFlowVoice = addKeyword<any, any>(EVENTS.VOICE_NOTE)
                 ctx.userId,
                 null,
                 ctx.platform || 'whatsapp',
-                dynamicProjectId
+                dynamicProjectId,
+                dynamicServiceId
             );
         } catch (dbErr) {
             console.error("❌ Error guardando transcripción en base de datos:", dbErr);
