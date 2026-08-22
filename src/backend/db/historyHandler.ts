@@ -86,10 +86,10 @@ const resolveReplyMetadata = async (
         const buildQuery = () => {
             let query = supabase
                 .from('messages')
-                .select('id, external_id, role, content, type, tenant_id')
+                .select('id, external_id, role, content, type')
                 .in('chat_id', [chatId, `${chatId}@s.whatsapp.net`, `${chatId}@c.us`])
-                .eq('project_id', projectId)
-                .or(`tenant_id.eq.${tenantId},tenant_id.is.null`);
+                .eq('tenant_id', tenantId)
+                .eq('project_id', projectId);
 
             if (isScopedServiceId(serviceId)) {
                 query = query.eq('service_id', serviceId);
@@ -406,7 +406,7 @@ export class HistoryHandler {
                     role TEXT NOT NULL,
                     content TEXT NOT NULL,
                     type TEXT DEFAULT 'text',
-                    external_id TEXT UNIQUE,
+                    external_id TEXT,
                     reply_to TEXT,
                     reply_preview JSONB,
                     raw_payload JSONB,
@@ -414,6 +414,16 @@ export class HistoryHandler {
                     created_at TIMESTAMPTZ DEFAULT NOW(),
                     FOREIGN KEY (chat_id, project_id) REFERENCES chats(id, project_id) ON UPDATE CASCADE ON DELETE CASCADE
                 );
+                CREATE UNIQUE INDEX IF NOT EXISTS
+                    uq_messages_scope_external_id
+                ON messages (
+                    COALESCE(tenant_id::text, '__global__'),
+                    project_id,
+                    COALESCE(service_id, 'default_service'),
+                    chat_id,
+                    external_id
+                )
+                WHERE external_id IS NOT NULL;
                 GRANT ALL ON TABLE messages TO service_role;
                 GRANT ALL ON TABLE messages TO authenticated;
                 GRANT SELECT ON TABLE messages TO anon;`
@@ -1727,16 +1737,16 @@ export class HistoryHandler {
                     .from('messages')
                     .select('*')
                     .eq('external_id', external_id)
+                    .eq('chat_id', chatId)
+                    .eq('tenant_id', tenantId)
                     .eq('project_id', currentProjectId)
                     .eq('service_id', currentServiceId)
-                    .or(`tenant_id.eq.${tenantId},tenant_id.is.null`)
                     .maybeSingle();
 
                 if (!exactError && exactMatch) {
                     let messageToReturn = exactMatch;
-                    if (!exactMatch.tenant_id || (replyTo && !exactMatch.reply_to) || (replyPreview && !exactMatch.reply_preview) || (safeRawPayload && !exactMatch.raw_payload)) {
+                    if ((replyTo && !exactMatch.reply_to) || (replyPreview && !exactMatch.reply_preview) || (safeRawPayload && !exactMatch.raw_payload)) {
                         const updatePayload: any = {};
-                        if (!exactMatch.tenant_id) updatePayload.tenant_id = tenantId;
                         if (replyTo && !exactMatch.reply_to) updatePayload.reply_to = replyTo;
                         if (replyPreview && !exactMatch.reply_preview) updatePayload.reply_preview = replyPreview;
                         if (safeRawPayload && !exactMatch.raw_payload) updatePayload.raw_payload = safeRawPayload;
@@ -1744,9 +1754,10 @@ export class HistoryHandler {
                             .from('messages')
                             .update(updatePayload)
                             .eq('id', exactMatch.id)
+                            .eq('chat_id', chatId)
+                            .eq('tenant_id', tenantId)
                             .eq('project_id', currentProjectId)
                             .eq('service_id', currentServiceId)
-                            .or(`tenant_id.eq.${tenantId},tenant_id.is.null`)
                             .select();
                         if (updateError) {
                             console.warn('[HistoryHandler] No se pudo enriquecer mensaje existente con reply/raw_payload:', updateError.message);
@@ -1776,11 +1787,11 @@ export class HistoryHandler {
 
             const { data: recentlySaved, error: searchError } = await supabase
                 .from('messages')
-                .select('id, external_id, tenant_id')
+                .select('id, external_id')
                 .eq('chat_id', chatId)
+                .eq('tenant_id', tenantId)
                 .eq('project_id', currentProjectId)
                 .eq('service_id', currentServiceId)
-                .or(`tenant_id.eq.${tenantId},tenant_id.is.null`)
                 .eq('role', role)
                 .eq('content', content)
                 .gt('created_at', thirtySecondsAgo)
@@ -1794,14 +1805,13 @@ export class HistoryHandler {
                 if (existing.external_id && external_id && existing.external_id !== external_id) {
                     // Continuar con la inserción normal
                 } else {
-                    const shouldEnrichExisting = !existing.tenant_id || (!existing.external_id && external_id) || !!replyTo || !!replyPreview || !!safeRawPayload;
+                    const shouldEnrichExisting = (!existing.external_id && external_id) || !!replyTo || !!replyPreview || !!safeRawPayload;
                     let recentlySavedResponse: any = recentlySaved;
                     if (shouldEnrichExisting) {
                         if (!existing.external_id && external_id) {
                             console.log(`[HistoryHandler] 🔄 Vinculando ID externo a mensaje existente: ${existing.id} -> ${external_id}`);
                         }
                         const updatePayload: any = {};
-                        if (!existing.tenant_id) updatePayload.tenant_id = tenantId;
                         if (!existing.external_id && external_id) updatePayload.external_id = external_id;
                         if (replyTo) updatePayload.reply_to = replyTo;
                         if (replyPreview) updatePayload.reply_preview = replyPreview;
@@ -1811,9 +1821,10 @@ export class HistoryHandler {
                                 .from('messages')
                                 .update(updatePayload)
                                 .eq('id', existing.id)
+                                .eq('chat_id', chatId)
+                                .eq('tenant_id', tenantId)
                                 .eq('project_id', currentProjectId)
                                 .eq('service_id', currentServiceId)
-                                .or(`tenant_id.eq.${tenantId},tenant_id.is.null`)
                                 .select();
                             if (updateError) {
                                 console.warn('[HistoryHandler] No se pudo enriquecer mensaje difuso con reply/raw_payload:', updateError.message);
@@ -1871,9 +1882,54 @@ export class HistoryHandler {
 
             if (insertError) {
                 // Manejar race conditions de inserción concurrente
-                if (insertError.code === '23505') {
-                    console.log(`[HistoryHandler] ⏩ Mensaje con external_id ${external_id} insertado concurrentemente.`);
-                    return null;
+                if (insertError.code === '23505' && external_id) {
+                    console.log(
+                        `[HistoryHandler] ⏩ Mensaje con external_id ${external_id} ` +
+                        `insertado concurrentemente en el mismo scope.`
+                    );
+
+                    const {
+                        data: concurrentMessage,
+                        error: concurrentLookupError
+                    } =
+                        await supabase
+                            .from('messages')
+                            .select('*')
+                            .eq(
+                                'external_id',
+                                external_id
+                            )
+                            .eq(
+                                'chat_id',
+                                chatId
+                            )
+                            .eq(
+                                'tenant_id',
+                                tenantId
+                            )
+                            .eq(
+                                'project_id',
+                                currentProjectId
+                            )
+                            .eq(
+                                'service_id',
+                                currentServiceId
+                            )
+                            .maybeSingle();
+
+                    if (concurrentLookupError) {
+                        console.warn(
+                            '[HistoryHandler] No se pudo recuperar ' +
+                            'el mensaje concurrente:',
+                            concurrentLookupError.message
+                        );
+
+                        return null;
+                    }
+
+                    return concurrentMessage
+                        ? [concurrentMessage]
+                        : null;
                 }
                 console.error('[HistoryHandler] Error en inserción de mensaje fallback:', insertError);
             }
