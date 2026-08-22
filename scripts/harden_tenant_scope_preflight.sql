@@ -480,3 +480,56 @@ WHERE
 GROUP BY
     old.project_id,
     old.file_id;
+
+-- ================================================================
+-- 11. ESTADO DEL NUEVO INDICE SCOPED DE messages
+-- ================================================================
+
+SELECT
+    c.relname AS index_name,
+
+    i.indisunique AS is_unique,
+    i.indisvalid AS is_valid,
+    i.indisready AS is_ready,
+
+    pg_get_indexdef(
+        i.indexrelid
+    ) AS definition
+
+FROM
+    pg_index i
+
+JOIN
+    pg_class c
+        ON c.oid =
+           i.indexrelid
+
+JOIN
+    pg_namespace n
+        ON n.oid =
+           c.relnamespace
+
+WHERE
+    n.nspname = 'public'
+
+    AND c.relname =
+        'uq_messages_scope_external_id';
+
+
+-- RESULTADOS POSIBLES:
+--
+-- 0 filas:
+--     indice todavia no existe.
+--     Es el estado esperado antes de CREATE INDEX.
+--
+-- is_valid = true
+-- is_ready = true
+-- is_unique = true:
+--     indice ya existe correctamente.
+--
+-- is_valid = false
+-- o
+-- is_ready = false:
+--     DETENER MIGRACION.
+--     Existe un indice incompleto/invalido.
+--     NO ejecutar FINALIZE.

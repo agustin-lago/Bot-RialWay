@@ -4,6 +4,13 @@
 -- Ejecutar unicamente despues de validar completamente:
 -- scripts/harden_tenant_scope_preflight.sql
 --
+-- Orden de ejecucion:
+-- 1. harden_tenant_scope_preflight.sql
+-- 2. harden_tenant_scope_apply.sql
+-- 3. harden_tenant_scope_create_index.sql
+-- 4. harden_tenant_scope_preflight.sql
+-- 5. harden_tenant_scope_finalize.sql
+--
 -- NO ejecutar automaticamente durante deploy/startup.
 -- ================================================================
 
@@ -192,79 +199,7 @@ SET DEFAULT
 
 
 -- ================================================================
--- 4. NUEVA UNIQUE INDEX DE MESSAGES
--- ================================================================
-
-CREATE UNIQUE INDEX IF NOT EXISTS
-    uq_messages_scope_external_id
-
-ON public.messages (
-
-    COALESCE(
-        tenant_id::text,
-        '__global__'
-    ),
-
-    project_id,
-
-    COALESCE(
-        service_id,
-        'default_service'
-    ),
-
-    chat_id,
-
-    external_id
-)
-
-WHERE
-    external_id IS NOT NULL;
-
-
--- ================================================================
--- 5. ELIMINAR CONSTRAINT GLOBAL external_id
--- ================================================================
-
-DO $$
-DECLARE
-    constraint_row RECORD;
-BEGIN
-
-    FOR constraint_row IN
-
-        SELECT
-            c.conname
-
-        FROM
-            pg_constraint c
-
-        WHERE
-            c.conrelid =
-                'public.messages'::regclass
-
-            AND
-            c.contype = 'u'
-
-            AND
-            pg_get_constraintdef(
-                c.oid
-            ) = 'UNIQUE (external_id)'
-
-    LOOP
-
-        EXECUTE format(
-            'ALTER TABLE public.messages DROP CONSTRAINT %I',
-            constraint_row.conname
-        );
-
-    END LOOP;
-
-END;
-$$;
-
-
--- ================================================================
--- 6. DB GUARD: TENANT OBLIGATORIO PARA PROYECTOS DE CLIENTE
+-- 4. DB GUARD: TENANT OBLIGATORIO PARA PROYECTOS DE CLIENTE
 -- ================================================================
 
 ALTER TABLE
@@ -282,15 +217,35 @@ ADD CONSTRAINT
 
 CHECK (
 
-    project_id IN (
-        'default_project',
-        'defaul',
-        'neurolinks-control'
+    project_id IS NULL
+
+    OR
+
+    (
+        project_id IN (
+            'default_project',
+            'defaul',
+            'neurolinks-control'
+        )
+
+        AND
+
+        tenant_id IS NULL
     )
 
     OR
 
-    tenant_id IS NOT NULL
+    (
+        project_id NOT IN (
+            'default_project',
+            'defaul',
+            'neurolinks-control'
+        )
+
+        AND
+
+        tenant_id IS NOT NULL
+    )
 )
 
 NOT VALID;
@@ -304,7 +259,7 @@ VALIDATE CONSTRAINT
 
 
 -- ================================================================
--- 7. DB GUARD: KNOWLEDGE TENANT
+-- 5. DB GUARD: KNOWLEDGE TENANT
 -- ================================================================
 
 ALTER TABLE
@@ -322,15 +277,35 @@ ADD CONSTRAINT
 
 CHECK (
 
-    project_id IN (
-        'default_project',
-        'defaul',
-        'neurolinks-control'
+    project_id IS NULL
+
+    OR
+
+    (
+        project_id IN (
+            'default_project',
+            'defaul',
+            'neurolinks-control'
+        )
+
+        AND
+
+        tenant_id IS NULL
     )
 
     OR
 
-    tenant_id IS NOT NULL
+    (
+        project_id NOT IN (
+            'default_project',
+            'defaul',
+            'neurolinks-control'
+        )
+
+        AND
+
+        tenant_id IS NOT NULL
+    )
 )
 
 NOT VALID;
