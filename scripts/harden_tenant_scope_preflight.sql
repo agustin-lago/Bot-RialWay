@@ -2,8 +2,15 @@
 -- NEUROLINKS MULTI-TENANT HARDENING PREFLIGHT
 --
 -- READ ONLY.
--- Ejecutar y revisar todos los resultados antes de usar:
--- scripts/harden_tenant_scope_apply.sql
+--
+-- Orden de ejecucion:
+-- 1. harden_tenant_scope_preflight.sql
+-- 2. harden_tenant_scope_apply.sql
+-- 3. harden_tenant_scope_create_index.sql
+-- 4. harden_tenant_scope_preflight.sql
+-- 5. harden_tenant_scope_finalize.sql
+-- 6. harden_tenant_scope_drop_legacy_index.sql
+-- 7. verificacion final
 -- ================================================================
 
 
@@ -482,15 +489,15 @@ GROUP BY
     old.file_id;
 
 -- ================================================================
--- 11. ESTADO DEL NUEVO INDICE SCOPED DE messages
+-- 11. ESTADO DE INDICES external_id DE messages
 -- ================================================================
 
 SELECT
     c.relname AS index_name,
 
-    i.indisunique AS is_unique,
-    i.indisvalid AS is_valid,
-    i.indisready AS is_ready,
+    i.indisunique,
+    i.indisvalid,
+    i.indisready,
 
     pg_get_indexdef(
         i.indexrelid
@@ -512,24 +519,32 @@ JOIN
 WHERE
     n.nspname = 'public'
 
-    AND c.relname =
-        'uq_messages_scope_external_id';
+    AND c.relname IN (
+        'uq_messages_scope_external_id',
+        'idx_messages_external_id'
+    )
+
+ORDER BY
+    c.relname;
 
 
 -- RESULTADOS POSIBLES:
 --
 -- 0 filas:
---     indice todavia no existe.
---     Es el estado esperado antes de CREATE INDEX.
+--     ninguno de los dos indices existe.
 --
--- is_valid = true
--- is_ready = true
--- is_unique = true:
---     indice ya existe correctamente.
+-- indisvalid = true
+-- indisready = true
+-- indisunique = true:
+--     uq_messages_scope_external_id ya existe correctamente.
 --
--- is_valid = false
+-- idx_messages_external_id:
+--     si aparece, eliminarlo recien en el paso 6 con:
+--     harden_tenant_scope_drop_legacy_index.sql
+--
+-- indisvalid = false
 -- o
--- is_ready = false:
+-- indisready = false:
 --     DETENER MIGRACION.
 --     Existe un indice incompleto/invalido.
 --     NO ejecutar FINALIZE.

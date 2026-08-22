@@ -10,6 +10,8 @@
 -- 3. harden_tenant_scope_create_index.sql
 -- 4. harden_tenant_scope_preflight.sql
 -- 5. harden_tenant_scope_finalize.sql
+-- 6. harden_tenant_scope_drop_legacy_index.sql
+-- 7. verificacion final
 --
 -- NO ejecutar automaticamente durante deploy/startup.
 -- ================================================================

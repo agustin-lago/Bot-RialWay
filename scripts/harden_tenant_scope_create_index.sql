@@ -4,10 +4,16 @@
 --
 -- IMPORTANTE:
 --
--- Ejecutar SOLAMENTE despues de:
---
+-- Orden de ejecucion:
 -- 1. harden_tenant_scope_preflight.sql
 -- 2. harden_tenant_scope_apply.sql
+-- 3. harden_tenant_scope_create_index.sql
+-- 4. harden_tenant_scope_preflight.sql
+-- 5. harden_tenant_scope_finalize.sql
+-- 6. harden_tenant_scope_drop_legacy_index.sql
+-- 7. verificacion final
+--
+-- Ejecutar este archivo como paso 3.
 --
 -- ESTA SENTENCIA DEBE EJECUTARSE FUERA DE BEGIN / COMMIT.
 --
