@@ -44,6 +44,11 @@ ALTER TABLE public.knowledge_chunks
     ADD COLUMN IF NOT EXISTS service_id TEXT;
 
 
+ALTER TABLE public.knowledge_chunks
+    ALTER COLUMN service_id
+    SET DEFAULT 'default_service';
+
+
 CREATE INDEX IF NOT EXISTS
     idx_knowledge_chunks_project_id
 ON public.knowledge_chunks (
