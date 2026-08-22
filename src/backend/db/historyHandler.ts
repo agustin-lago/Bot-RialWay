@@ -414,16 +414,7 @@ export class HistoryHandler {
                     created_at TIMESTAMPTZ DEFAULT NOW(),
                     FOREIGN KEY (chat_id, project_id) REFERENCES chats(id, project_id) ON UPDATE CASCADE ON DELETE CASCADE
                 );
-                CREATE UNIQUE INDEX IF NOT EXISTS
-                    uq_messages_scope_external_id
-                ON messages (
-                    COALESCE(tenant_id::text, '__global__'),
-                    project_id,
-                    COALESCE(service_id, 'default_service'),
-                    chat_id,
-                    external_id
-                )
-                WHERE external_id IS NOT NULL;
+
                 GRANT ALL ON TABLE messages TO service_role;
                 GRANT ALL ON TABLE messages TO authenticated;
                 GRANT SELECT ON TABLE messages TO anon;`
